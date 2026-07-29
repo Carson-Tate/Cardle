@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cardle — Daily Poker Puzzle</title>
+  <link rel="stylesheet" href="/public/styles.css" />
+</head>
+<body>
+  <header id="site-header">
+    <div class="site-header-left">
+      <button type="button" id="header-logo" class="header-logo">Cardle</button>
+      <button type="button" id="header-help" class="header-help" aria-label="How to play">?</button>
+    </div>
+    <div class="site-header-right">
+      <div id="header-auth-slot"></div>
+      <button type="button" id="header-friends-btn" class="header-friends-btn">Friends</button>
+    </div>
+  </header>
+  <div id="app">
+    <header>
+      <p id="day-label">Loading today's hand…</p>
+      <p id="modifier-banner" class="modifier-banner" hidden></p>
+    </header>
+    <main>
+      <div id="hand-row" class="hand-row"></div>
+      <div id="controls">
+        <p id="discard-hint"></p>
+        <div id="wager-prompt" class="wager-prompt" hidden>
+          <p id="wager-prompt-text">You've seen 2 cards. Go for it?</p>
+          <div class="wager-prompt-actions">
+            <button id="wager-yes-btn" class="wager-btn wager-btn--risk">🎲 Double or Nothing</button>
+            <button id="wager-no-btn" class="wager-btn wager-btn--safe">🛡️ Play It Safe</button>
+          </div>
+        </div>
+        <button id="lock-in-btn">Lock In</button>
+      </div>
+      <section id="result" class="result" hidden></section>
+    </main>
+  </div>
+  <script type="module" src="/src/ui/main.js"></script>
+</body>
+</html>

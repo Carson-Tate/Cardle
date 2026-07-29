@@ -1,0 +1,14 @@
+{
+  "name": "cardle",
+  "version": "0.1.0",
+  "description": "A daily poker puzzle — build the strongest hand you can from one deal.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "dev": "node tools/dev-server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

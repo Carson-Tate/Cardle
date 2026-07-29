@@ -1,0 +1,1308 @@
+import { dealHand, suitGlyph, rankLabel, RANKS, SUITS, createDeck, createRng, shuffle, rarityForRoll } from '../core/deck.js';
+import { evaluateHand } from '../core/hand-evaluator.js';
+import { scoreRun } from '../core/scoring.js';
+import { solveOptimalDiscard, findEV, decisionRating } from '../core/ev-solver.js';
+import { computeMeters } from '../core/meters.js';
+import { classifyPersonality, PERSONALITIES } from '../core/personality.js';
+import { evaluateAchievements, ACHIEVEMENTS } from '../core/achievements.js';
+import { getTodayResult, saveTodayResult, dayNumber } from '../state/persistence.js';
+import { resolveRunConfig } from '../state/test-mode.js';
+import { recordRun, markAchievementsUnlocked } from '../state/stats.js';
+import { generateStory, getStoryOptions, getDefaultSelections } from '../story/generator.js';
+import { SLOT_META } from '../story/templates.js';
+import { RARITIES, TOTAL_SPECIAL_CHANCE, jokerTierForRoll } from '../core/rarity.js';
+import { getDailyModifier, buildModifierById, modifierScoringMultiplier, MODIFIERS } from '../core/modifiers.js';
+import { createCardElement } from './card-view.js';
+import { delay, animateCountUp, flipReplaceCard, flySparks } from './animations.js';
+
+const DEFAULT_MAX_DISCARDS = 3; // overridden per day by a discardLimit-type modifier (DESIGN.md §4)
+
+// Owner request: a description + card-proof for every score-breakdown line,
+// "like the attached picture" (RNGDLE's badge breakdown) — see
+// buildScoreBadges() below, which is what actually consumes these.
+const SKILL_META = {
+  perfectKeep: { emoji: '⭐', label: 'Perfect Keep', description: 'Held all 5 cards and still landed an excellent hand.' },
+  optimalDiscard: { emoji: '🎯', label: 'Optimal Discard', description: 'Your discard matched the mathematically best play.' },
+  longShot: { emoji: '🔥', label: 'Long Shot', description: 'Improved by 3 or more hand ranks after drawing.' },
+  cleanFinish: { emoji: '💎', label: 'Clean Finish', description: 'Every card in the final hand contributes — no dead weight.' },
+};
+
+const HAND_DESCRIPTIONS = {
+  HIGH_CARD: 'No pair, no flush, no straight.',
+  PAIR: 'Two cards share a rank.',
+  THREE_STRAIGHT: 'Three ranks in a row, no pair.',
+  TWO_PAIR: 'Two separate pairs.',
+  FOUR_STRAIGHT: 'Four ranks in a row, one card short of a straight.',
+  THREE_OF_A_KIND: 'Three cards share a rank.',
+  STRAIGHT: 'Five ranks in a row.',
+  FLUSH: 'All five cards share a suit.',
+  FULL_HOUSE: 'Three of a kind plus a pair.',
+  FOUR_OF_A_KIND: 'Four cards share a rank.',
+  STRAIGHT_FLUSH: 'Five in a row, all one suit.',
+  ROYAL_FLUSH: '10 through Ace, all one suit — the best hand in poker.',
+};
+
+const METER_META = {
+  luck: { emoji: '🍀', label: 'Luck' },
+  skill: { emoji: '🎯', label: 'Skill' },
+  risk: { emoji: '🎲', label: 'Risk' },
+};
+
+const STORY_SLOT_ORDER = ['opening', 'action', 'object', 'connector', 'ending', 'emoji'];
+
+// How long a card's flip takes, by rarity — common stays snappy (180ms,
+// matching the original animation); rare tiers slow down and add a glow
+// pulse once they land, so a rare card's reveal reads as unmistakably
+// different (owner request). Same maps drive both the initial deal and a
+// discard's replacement reveal — see flipReplaceCard in animations.js.
+// Diamond (rarer than Joker, §3o) gets the most dramatic timing of all.
+const FLIP_DURATION_BY_RARITY = { bronze: 350, silver: 500, gold: 700, joker: 1000, diamond: 1200 };
+// A brief hold before a rare card even starts its flip, so its moment
+// doesn't get lost in the normal cascading reveal.
+const ANTICIPATION_BY_RARITY = { bronze: 150, silver: 250, gold: 350, joker: 500, diamond: 650 };
+// How long the card sits showing its face-down back, mid-flip, before
+// turning to reveal its face — rare tiers linger longer for extra suspense.
+const HOLD_BY_RARITY = { bronze: 300, silver: 400, gold: 550, joker: 800, diamond: 950 };
+
+export function initBoard(root) {
+  const handRow = root.querySelector('#hand-row');
+  const discardHint = root.querySelector('#discard-hint');
+  const lockInBtn = root.querySelector('#lock-in-btn');
+  const dayLabel = root.querySelector('#day-label');
+  const modifierBanner = root.querySelector('#modifier-banner');
+  const resultPanel = root.querySelector('#result');
+  const wagerPrompt = root.querySelector('#wager-prompt');
+  const wagerYesBtn = root.querySelector('#wager-yes-btn');
+  const wagerNoBtn = root.querySelector('#wager-no-btn');
+
+  const today = new Date();
+  const config = resolveRunConfig();
+
+  // Mutable — real daily play never changes these after the initial
+  // resolution below, but the test-mode admin panel's modifier picker
+  // (owner request: "a thing in the admin page to change the modifiers")
+  // needs to swap them on demand without a full page reload.
+  let dailyModifier;
+  let maxDiscards;
+  let lockedIndex;
+
+  function applyModifier(modifier, { forced = false } = {}) {
+    dailyModifier = modifier;
+    // Second Look (§4d) starts on its own, lower round-1 cap rather than the
+    // usual `.maxDiscards` field — `maxDiscards` gets reassigned to
+    // `round2MaxDiscards` mid-run once round 1 finishes, see startRoundTwo().
+    maxDiscards = modifier.type === 'twoRoundDiscard' ? modifier.round1MaxDiscards : (modifier.maxDiscards ?? DEFAULT_MAX_DISCARDS);
+    lockedIndex = modifier.lockedIndex ?? null;
+    renderModifierBanner(modifierBanner, modifier, forced);
+  }
+
+  function isTwoRoundModifier() {
+    return dailyModifier?.type === 'twoRoundDiscard';
+  }
+
+  function isPeekWagerModifier() {
+    return dailyModifier?.type === 'peekWager';
+  }
+
+  // A pure function of the real calendar date by default — always today's
+  // actual modifier, even in test mode/admin redeals (same reasoning as the
+  // caption pool's daily rotation, §6d: it's tied to the day, not to
+  // whichever hand/seed happens to be on screen right now) — unless the
+  // admin panel below overrides it via startHand's `forceModifier`.
+  applyModifier(getDailyModifier(today));
+
+  if (config.isTestMode) {
+    renderAdminPanel(root, (options) => startHand(options));
+    renderTestBanner(root, config);
+  }
+
+  dayLabel.textContent = config.isTestMode
+    ? `🧪 Test hand (seed: ${config.seedLabel})`
+    : `Cardle #${dayNumber(today)} — ${today.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}`;
+
+  const existingResult = config.persist ? getTodayResult(today) : null;
+  if (existingResult) {
+    renderAlreadyPlayed(existingResult);
+    return;
+  }
+
+  let originalHand;
+  let drawPile;
+  const selected = new Set();
+  let cardEls = [];
+  // Which discard round is currently active for Second Look (§4d) — 1 or 2,
+  // meaningless (but harmless) for every other modifier. Reset on every
+  // fresh deal, same as `selected`.
+  let discardRound = 1;
+  // Bumped every time startHand() fires — every in-flight animation loop
+  // (dealInitialHand, revealDrawnCards, lockIn) captures the token it was
+  // started with and bails the moment it no longer matches. Without this, a
+  // redeal mid-animation (bug report: "click new random hand" while the
+  // opening deal is still flipping) left the OLD loop still running against
+  // `cardEls`/`originalHand`/`handRow`, which the NEW startHand() call had
+  // already reassigned/cleared out from under it — both loops fighting over
+  // the same 5 card slots at once.
+  let dealToken = 0;
+
+  startHand({ seed: config.seed });
+
+  lockInBtn.addEventListener('click', () => {
+    if (isTwoRoundModifier() && discardRound === 1) {
+      startRoundTwo();
+    } else {
+      lockIn(originalHand, drawPile, selected);
+    }
+  });
+
+  wagerYesBtn.addEventListener('click', () => resolveWager(true));
+  wagerNoBtn.addEventListener('click', () => resolveWager(false));
+
+  // Deals a fresh hand and animates it in. The real opening deal always
+  // calls this with just `seed` (config.seed), so normal daily play is
+  // completely unaffected. `luckMultiplier`/`forceRarity`/`forceJokerTier`
+  // /`customSlots`/`forceModifier` are only ever passed by the test-mode
+  // admin panel below, as a way to preview rare cards (and, for Joker, its
+  // nested sub-tier) on demand instead of hunting through ?test= seeds
+  // (owner request), or — for `customSlots` — to hand-pick every card's
+  // rank/suit/rarity exactly (owner request: "i would like for the admin
+  // page to be more advanced so i can add a certain card/rarity in each of
+  // the slots"), or — for `forceModifier` — to preview any Daily Modifier on
+  // demand (owner request: "a thing in the admin page to change the
+  // modifiers"). `forceModifier` is sticky (like the luck slider's value):
+  // omitting it on a later redeal just leaves whichever modifier is already
+  // active, real or forced, rather than silently reverting — the special
+  // value `'__today__'` is the explicit reset back to the real day's.
+  function startHand({ seed, luckMultiplier = 1, forceRarity = null, forceJokerTier = null, customSlots = null, forceModifier = null } = {}) {
+    const myToken = ++dealToken;
+    if (forceModifier === '__today__') {
+      applyModifier(getDailyModifier(today));
+    } else if (forceModifier) {
+      const modifier = buildModifierById(forceModifier);
+      if (modifier) applyModifier(modifier, { forced: true });
+    }
+    let dealt;
+    if (customSlots) {
+      dealt = buildCustomHand(customSlots);
+      if (config.isTestMode) dayLabel.textContent = '🧪 Test hand (custom hand builder)';
+    } else {
+      const usedSeed = seed ?? freshSeed();
+      if (seed === undefined && config.isTestMode) {
+        const forcedLabel = forceRarity === 'joker' && forceJokerTier ? `${forceJokerTier} joker` : forceRarity;
+        const luckNote = forceRarity ? `, forced ${forcedLabel}` : luckMultiplier > 1 ? `, luck ×${luckMultiplier}` : '';
+        dayLabel.textContent = `🧪 Test hand (admin redeal${luckNote})`;
+      }
+
+      dealt = dealHand(usedSeed, 5, { luckMultiplier });
+      if (forceRarity) {
+        const index = Math.floor(Math.random() * dealt.hand.length);
+        const jokerTier = forceRarity === 'joker' ? forceJokerTier ?? 'common' : null;
+        dealt.hand[index] = { ...dealt.hand[index], rarity: forceRarity, jokerTier };
+      }
+    }
+    originalHand = dealt.hand;
+    drawPile = dealt.drawPile;
+    selected.clear();
+    discardRound = 1;
+
+    resultPanel.hidden = true;
+    resultPanel.innerHTML = '';
+    wagerPrompt.hidden = true;
+    lockInBtn.hidden = false;
+    updateLockInButtonLabel();
+    lockInBtn.disabled = true; // re-enabled once the deal animation finishes
+    dealInitialHand(myToken);
+  }
+
+  // Flips cardEls[startIndex..endIndex) face-up in place, left to right, with
+  // the same rarity-aware anticipation/duration/hold as every other reveal in
+  // the game. Shared by the normal opening deal (the whole hand, in one
+  // pass) and Double or Nothing's two-stage reveal (§4e — 2 cards, then the
+  // remaining 3 once the wager is decided), so both read as the exact same
+  // visual language. Returns `false` (caller should bail immediately,
+  // touching nothing further) the moment a newer deal supersedes this one.
+  async function flipCardsInRange(cards, startIndex, endIndex, token) {
+    for (let index = startIndex; index < endIndex; index++) {
+      if (token !== dealToken) return false;
+      const card = cards[index];
+      const anticipation = ANTICIPATION_BY_RARITY[card.rarity] ?? 0;
+      if (anticipation) await delay(anticipation);
+      if (token !== dealToken) return false;
+      const duration = FLIP_DURATION_BY_RARITY[card.rarity] ?? 180;
+      const holdMs = HOLD_BY_RARITY[card.rarity] ?? 250;
+      const dramaticClass = card.rarity ? 'card--reveal-rare' : null;
+      // no onClick yet — renderHand() (or the wager prompt) wires up
+      // whatever's next once the relevant cards are done flipping
+      cardEls[index] = await flipReplaceCard(cardEls[index], card, { duration, holdMs, dramaticClass, disabled: true });
+      if (token !== dealToken) return false;
+      await delay(90);
+    }
+    return true;
+  }
+
+  // Starts on a face-down "draw" state, then flips each card face-up left
+  // to right — reusing the exact same flip animation (including
+  // rarity-aware duration/glow) as a discard's replacement reveal, so the
+  // opening hand is a reveal too, not data that just appears (owner
+  // request). Cards aren't clickable until the whole deal finishes: a click
+  // mid-deal would call renderHand(), which rebuilds the row instantly and
+  // would spoil the cards still mid-animation. Double or Nothing (§4e) only
+  // flips the first 2 here and stops for the wager prompt instead of
+  // finishing the deal — see resolveWager() for the other 3.
+  async function dealInitialHand(token) {
+    handRow.innerHTML = '';
+    cardEls = originalHand.map((card) => {
+      const el = createCardElement(card, { faceUp: false });
+      handRow.appendChild(el);
+      return el;
+    });
+
+    await delay(400); // let the face-down draw screen register for a beat
+    if (token !== dealToken) return; // superseded by a newer deal — stop here
+
+    if (isPeekWagerModifier()) {
+      const finished = await flipCardsInRange(originalHand, 0, 2, token);
+      if (!finished) return;
+      lockInBtn.hidden = true;
+      wagerPrompt.hidden = false;
+      return;
+    }
+
+    const finished = await flipCardsInRange(originalHand, 0, originalHand.length, token);
+    if (!finished) return;
+
+    renderHand(originalHand, selected); // instant rebuild — same cards, now interactive
+    lockInBtn.disabled = false;
+    updateHint();
+  }
+
+  function renderHand(cards, selectedSet) {
+    handRow.innerHTML = '';
+    cardEls = cards.map((card, index) => {
+      const el = createCardElement(card, {
+        faceUp: true,
+        selected: selectedSet.has(index),
+        locked: index === lockedIndex,
+        onClick: () => toggleDiscard(index),
+      });
+      handRow.appendChild(el);
+      return el;
+    });
+  }
+
+  function toggleDiscard(index) {
+    if (index === lockedIndex) return; // Locked Card modifier — this slot can't be toggled at all
+    if (selected.has(index)) {
+      selected.delete(index);
+    } else if (selected.size < maxDiscards) {
+      selected.add(index);
+    }
+    renderHand(originalHand, selected);
+    updateHint();
+  }
+
+  function updateHint() {
+    const roundNote = isTwoRoundModifier() ? (discardRound === 1 ? ' (Round 1 of 2)' : ' (Round 2 of 2 — final)') : '';
+    discardHint.textContent = `${selected.size}/${maxDiscards} marked for discard${roundNote} — click a card to mark it, click again to unmark.`;
+  }
+
+  // Second Look (§4d, owner request: "2 rounds of discards but the second
+  // should be less than the first") button label — "Draw" while round 1 is
+  // still open (it only replaces cards and moves to round 2, nothing is
+  // scored yet), "Lock In" everywhere else (round 2, or any other/no
+  // modifier, unchanged from before this feature).
+  function updateLockInButtonLabel() {
+    lockInBtn.textContent = isTwoRoundModifier() && discardRound === 1 ? 'Draw (Round 1 of 2)' : 'Lock In';
+  }
+
+  // Second Look's round 1: replaces whatever's marked for discard (same
+  // reveal animation as a normal lock-in's draw), then hands off to the
+  // existing single-round flow for round 2 — `originalHand` becomes the
+  // post-round-1 hand, `drawPile` drops the cards just drawn, and
+  // `maxDiscards` switches to the modifier's (lower) round-2 cap. Nothing is
+  // scored, solved, or persisted here — round 1 is an ungraded mulligan;
+  // only round 2's discard is ever judged by the EV solver/meters/
+  // achievements/personality pipeline, same as a normal day (§4d).
+  async function startRoundTwo() {
+    const token = dealToken;
+    handRow.querySelectorAll('.card').forEach((el) => (el.disabled = true));
+    lockInBtn.disabled = true;
+    lockInBtn.textContent = 'Dealing…';
+    discardHint.textContent = '';
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (token !== dealToken) return; // a redeal fired before this even started
+
+    const discardIndices = [...selected].sort((a, b) => a - b);
+    const replacements = drawPile.slice(0, discardIndices.length);
+    const roundTwoHand = originalHand.map((card, index) => {
+      const discardPosition = discardIndices.indexOf(index);
+      return discardPosition === -1 ? card : replacements[discardPosition];
+    });
+
+    await revealDrawnCards(discardIndices, roundTwoHand, token);
+    if (token !== dealToken) return; // a redeal fired mid-reveal
+
+    originalHand = roundTwoHand;
+    drawPile = drawPile.slice(discardIndices.length);
+    selected.clear();
+    discardRound = 2;
+    maxDiscards = dailyModifier.round2MaxDiscards;
+
+    renderHand(originalHand, selected);
+    lockInBtn.disabled = false;
+    updateLockInButtonLabel();
+    updateHint();
+  }
+
+  // Double or Nothing's wager resolution (§4e, owner request: "it reveals 2
+  // cards, and then you can do a double or nothing based on those cards
+  // seen, and then it reveals the last 3 cards"). `wagered` is stamped
+  // directly onto `dailyModifier` — the same "extra field on the resolved
+  // modifier object" pattern Locked Card already uses for `.lockedIndex` —
+  // so `modifierScoringMultiplier()` (modifiers.js) can read it without any
+  // new plumbing through scoreRun()'s params.
+  //
+  // Deliberately asymmetric, by design choice (owner: "im not sure if they
+  // should be allowed to discard cards on this one or not, you decide what
+  // would be more fun"): going for it locks in exactly the 5 dealt cards —
+  // real tension on a bet made from partial information — while playing it
+  // safe is just a completely ordinary round (normal discard cap, no
+  // multiplier) once the last 3 are revealed. A genuine risk/reward fork
+  // instead of a watered-down version of the same round either way.
+  async function resolveWager(wagered) {
+    const token = dealToken;
+    wagerPrompt.hidden = true;
+    dailyModifier.wagered = wagered;
+
+    const finished = await flipCardsInRange(originalHand, 2, originalHand.length, token);
+    if (!finished) return;
+
+    if (wagered) {
+      maxDiscards = 0;
+      await lockIn(originalHand, drawPile, new Set());
+    } else {
+      maxDiscards = DEFAULT_MAX_DISCARDS;
+      renderHand(originalHand, selected);
+      lockInBtn.hidden = false;
+      lockInBtn.disabled = false;
+      updateLockInButtonLabel();
+      updateHint();
+    }
+  }
+
+  async function lockIn(originalHand, drawPile, selectedSet) {
+    // Captured up front — if a redeal (admin panel) fires while this run is
+    // still solving/animating, dealToken moves on and every check below
+    // bails rather than racing the new deal for the same card slots.
+    const token = dealToken;
+    handRow.querySelectorAll('.card').forEach((el) => (el.disabled = true));
+    lockInBtn.disabled = true;
+    lockInBtn.textContent = 'Dealing…';
+    discardHint.textContent = '';
+
+    // Yield one frame so the disabled/"Dealing…" state actually paints
+    // before the EV solve below, which is synchronous. Normally that solve
+    // is ~100ms (imperceptible), but a hand containing a joker triggers a
+    // much more expensive wild-substitution search (~1-2s) — this keeps
+    // that rare case from reading as a frozen page.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (token !== dealToken) return; // a redeal fired before the solve even started
+
+    const discardIndices = [...selectedSet].sort((a, b) => a - b);
+    const { evByDiscard, best, worst } = solveOptimalDiscard(originalHand, drawPile, {
+      minDiscards: 0,
+      maxDiscards,
+      excludedIndices: lockedIndex !== null ? [lockedIndex] : [],
+    });
+    const chosenEV = findEV(evByDiscard, discardIndices);
+    lockInBtn.hidden = true; // solve is done; nothing left for this button to do today
+
+    const replacements = drawPile.slice(0, discardIndices.length);
+    const finalHand = originalHand.map((card, index) => {
+      const discardPosition = discardIndices.indexOf(index);
+      return discardPosition === -1 ? card : replacements[discardPosition];
+    });
+
+    const score = scoreRun({
+      originalHand,
+      finalHand,
+      discardedCount: discardIndices.length,
+      discardIndices,
+      maxDiscards,
+      evContext: { chosenEV, bestEV: best.ev, worstEV: worst.ev },
+      modifierMultiplier: modifierScoringMultiplier(dailyModifier),
+    });
+    const rating = decisionRating(score.baseScore, best.ev);
+
+    const originalHandResult = evaluateHand(originalHand);
+    const meters = computeMeters({
+      originalHandResult,
+      actualScore: score.baseScore,
+      chosenEV,
+      bestEV: best.ev,
+      decisionRating: rating,
+      discardedCount: discardIndices.length,
+      maxDiscards,
+    });
+    const personality = classifyPersonality({
+      meters,
+      discardedCount: discardIndices.length,
+      maxDiscards,
+      originalHandResult,
+      finalHandResult: score.handResult,
+      skillBonuses: score.skillBonuses,
+      extraBonuses: score.extraBonuses,
+    });
+
+    // Cumulative stats + achievements only apply to real, persisted runs —
+    // test mode never touches them (same rule as saveTodayResult below).
+    let newlyUnlocked = [];
+    if (config.persist) {
+      const stats = recordRun({ handId: score.handResult.id, personalityId: personality.id, score: score.total });
+      const eligibleIds = evaluateAchievements({
+        score,
+        decisionRating: rating,
+        discardedCount: discardIndices.length,
+        maxDiscards,
+        stats,
+      }).map((a) => a.id);
+      ({ newlyUnlocked } = markAchievementsUnlocked(stats, eligibleIds));
+    }
+
+    await revealDrawnCards(discardIndices, finalHand, token);
+    if (token !== dealToken) return; // a redeal fired mid-reveal — don't show a stale score for a hand that's no longer on screen
+
+    const result = {
+      dayNumber: dayNumber(today),
+      originalHand,
+      discardIndices,
+      finalHand,
+      score,
+      decisionRating: rating,
+      meters,
+      personalityId: personality.id,
+      newlyUnlocked,
+    };
+    if (config.persist) saveTodayResult(result, today);
+
+    await revealScore(resultPanel, result);
+  }
+
+  // Flips each discarded card over to reveal its replacement, cascading
+  // left-to-right rather than all at once — the exact same turn-to-back,
+  // hold, turn-to-front animation as the initial deal (flipReplaceCard in
+  // animations.js). A rare replacement (bronze and up) gets an extra beat
+  // of anticipation before it starts, a slower flip, a longer hold on the
+  // back, and a glow pulse once it lands — common cards keep the original
+  // snappy 180ms flip untouched.
+  async function revealDrawnCards(discardIndices, finalHand, token) {
+    const flips = discardIndices.map((index, order) => {
+      const card = finalHand[index];
+      const anticipation = ANTICIPATION_BY_RARITY[card.rarity] ?? 0;
+      return delay(order * 90 + anticipation).then(async () => {
+        if (token !== dealToken) return; // a redeal fired mid-cascade — stop touching these slots
+        const duration = FLIP_DURATION_BY_RARITY[card.rarity] ?? 180;
+        const holdMs = HOLD_BY_RARITY[card.rarity] ?? 250;
+        const dramaticClass = card.rarity ? 'card--reveal-rare' : null;
+        cardEls[index] = await flipReplaceCard(cardEls[index], card, { duration, holdMs, dramaticClass, disabled: true });
+      });
+    });
+    await Promise.all(flips);
+    await delay(150);
+  }
+
+  function renderAlreadyPlayed(result) {
+    dayLabel.textContent = `Cardle #${result.dayNumber} — already played today`;
+    handRow.innerHTML = '';
+    result.finalHand.forEach((card) => handRow.appendChild(createCardElement(card, { faceUp: true })));
+    discardHint.textContent = 'Come back tomorrow for a new hand.';
+    lockInBtn.hidden = true;
+    resultPanel.hidden = false;
+    resultPanel.innerHTML = staticResultHtml(result);
+    // No count-up animation on this path (it's a reload of an already-
+    // finished run) — collapse immediately rather than waiting for anything.
+    setupBreakdownCollapse(resultPanel.querySelector('.score-breakdown'));
+    renderStoryBlock(resultPanel.querySelector('#story-block'), result);
+  }
+}
+
+// Today's active Daily Modifier (DESIGN.md §4), shown right below the day
+// label — always visible, since every day has exactly one active modifier
+// (no "vanilla" day). `forced` (admin panel only, §4a) marks it as an ad-hoc
+// preview rather than the real day's modifier, so it's never mistaken for one.
+function renderModifierBanner(el, dailyModifier, forced = false) {
+  el.hidden = false;
+  el.textContent = `${dailyModifier.emoji} ${dailyModifier.label} — ${dailyModifier.description}${forced ? ' (admin preview)' : ''}`;
+}
+
+function renderTestBanner(root, config) {
+  const banner = document.createElement('div');
+  banner.className = 'test-banner';
+  const nextSeed = Date.now();
+  banner.innerHTML = `
+    <span>🧪 TEST MODE — this run is not saved and does not affect your daily result.</span>
+    <a href="?test=${nextSeed}">New random hand</a>
+  `;
+  root.prepend(banner);
+}
+
+function freshSeed() {
+  return (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
+}
+
+// Builds an exact 5-card hand from the admin panel's custom slot builder
+// (owner request: hand-pick a rank/suit/rarity per slot). The draw pile —
+// where discard replacements come from — is just the rest of the deck
+// (every card not used in a slot), shuffled with a fresh random seed and
+// given real rarity rolls of its own, so replacements after a discard still
+// show rare cards exactly like a normal deal would. `slotConfigs` is 5
+// `{rank, suit, rarity, jokerTier}` objects straight from the panel's
+// selects; `rarity`/`jokerTier` are used as-is (no rolling) since the whole
+// point of this tool is picking them directly.
+function buildCustomHand(slotConfigs) {
+  const usedKeys = new Set(slotConfigs.map((slot) => `${slot.rank}${slot.suit}`));
+  const rng = createRng(freshSeed());
+  const remainingDeck = createDeck().filter((card) => !usedKeys.has(`${card.rank}${card.suit}`));
+  const drawPile = shuffle(remainingDeck, rng).map((card) => {
+    const roll = rng();
+    const rarity = rarityForRoll(roll);
+    const jokerTierRoll = rng();
+    const jokerTier = rarity === 'joker' ? jokerTierForRoll(jokerTierRoll) : null;
+    return { ...card, rarity, jokerTier };
+  });
+  const hand = slotConfigs.map((slot) => ({
+    rank: slot.rank,
+    suit: slot.suit,
+    rarity: slot.rarity || null,
+    jokerTier: slot.rarity === 'joker' ? slot.jokerTier || 'bronze' : null,
+  }));
+  return { hand, drawPile };
+}
+
+// Defaults for the custom hand builder's 5 slots — a recognizable A-K-Q-J-10
+// spread across alternating suits, just so the panel doesn't open on 5
+// identical 2♠'s. Purely a starting point; every field is editable.
+const CUSTOM_SLOT_DEFAULT_RANKS = [14, 13, 12, 11, 10];
+const CUSTOM_SLOT_DEFAULT_SUITS = ['S', 'H', 'D', 'C', 'S'];
+
+function rarityOptionsHtml() {
+  const none = '<option value="">— none —</option>';
+  const tiers = RARITIES.filter((tier) => tier.id !== 'joker')
+    .map((tier) => `<option value="${tier.id}">${tier.emoji} ${tier.label}</option>`)
+    .join('');
+  return `${none}${tiers}<option value="joker">🃏 Joker</option>`;
+}
+
+function jokerTierOptionsHtml() {
+  return RARITIES.filter((tier) => tier.id !== 'joker')
+    .map((tier) => `<option value="${tier.id}">${tier.emoji} ${tier.label}</option>`)
+    .join('');
+}
+
+// Test-mode-only "cheater admin" panel (owner request: a way to see what
+// rare cards look like without hunting through ?test= seeds). Four tools:
+//   - a Luck slider that shrinks the rarity roll (deck.js dealHand's
+//     luckMultiplier) so rares show up far more often across redeals —
+//     exploratory, "let me see a wild hand."
+//   - one-click Force buttons that guarantee a rare card of that exact tier
+//     on a random slot in a freshly dealt hand, luck slider aside —
+//     deterministic, "show me the Joker right now."
+//   - a Modifier Preview picker (owner request: "a thing in the admin page
+//     to change the modifiers") — a dropdown of all 5 Daily Modifiers (§4a)
+//     plus a reset-to-today's-real-one option, applied on the next redeal
+//     regardless of which button triggers it (sticky, like the luck slider).
+//   - a Custom Hand Builder (owner request: "the admin page to be more
+//     advanced so i can add a certain card/rarity in each of the slots") —
+//     5 slot rows, each with its own rank/suit/rarity pickers, that deal the
+//     exact hand specified rather than anything randomized.
+// All four redeal a brand-new hand and replay the full flip/glow animation
+// (same `startHand` the real opening deal uses), so what you see here is
+// exactly what a real reveal looks like, not a static mockup.
+function renderAdminPanel(root, onRedeal) {
+  const panel = document.createElement('div');
+  panel.className = 'admin-panel';
+  panel.innerHTML = `
+    <div class="admin-panel-title">🛠️ Rarity Preview Admin</div>
+    <div class="admin-panel-luck">
+      <label for="admin-luck-slider">🍀 Luck <span id="admin-luck-value">1×</span></label>
+      <input type="range" id="admin-luck-slider" min="1" max="500" value="1" step="1" />
+      <span class="admin-luck-hint" id="admin-luck-hint"></span>
+    </div>
+    <div class="admin-panel-actions">
+      <button type="button" data-action="redeal">🔁 Redeal with this luck</button>
+      ${RARITIES.filter((tier) => tier.id !== 'joker')
+        .map((tier) => `<button type="button" class="admin-force-btn" data-force="${tier.id}">${tier.emoji} Show ${tier.label}</button>`)
+        .join('')}
+    </div>
+    <div class="admin-panel-actions">
+      ${RARITIES.filter((tier) => tier.id !== 'joker')
+        .map(
+          (tier) =>
+            `<button type="button" class="admin-force-btn" data-force="joker" data-joker-tier="${tier.id}">🃏 ${tier.label} Joker</button>`,
+        )
+        .join('')}
+    </div>
+    <div class="admin-panel-subtitle">🧩 Modifier Preview</div>
+    <div class="admin-panel-actions">
+      <select id="admin-modifier-select">
+        <option value="__today__">— Today's real modifier —</option>
+        ${MODIFIERS.map((m) => `<option value="${m.id}">${m.emoji} ${m.label}</option>`).join('')}
+      </select>
+      <button type="button" data-action="preview-modifier">🔁 Redeal with this modifier</button>
+    </div>
+    <div class="admin-panel-subtitle">🎛️ Custom Hand Builder</div>
+    <div class="admin-slots">
+      ${CUSTOM_SLOT_DEFAULT_RANKS.map(
+        (defaultRank, i) => `
+        <div class="admin-slot">
+          <span class="admin-slot-label">${i + 1}</span>
+          <select class="admin-slot-rank">
+            ${RANKS.map((r) => `<option value="${r}"${r === defaultRank ? ' selected' : ''}>${rankLabel(r)}</option>`).join('')}
+          </select>
+          <select class="admin-slot-suit">
+            ${SUITS.map(
+              (s) => `<option value="${s}"${s === CUSTOM_SLOT_DEFAULT_SUITS[i] ? ' selected' : ''}>${suitGlyph(s)}</option>`,
+            ).join('')}
+          </select>
+          <select class="admin-slot-rarity">${rarityOptionsHtml()}</select>
+          <select class="admin-slot-joker-tier" hidden>${jokerTierOptionsHtml()}</select>
+        </div>
+      `,
+      ).join('')}
+    </div>
+    <div class="admin-panel-actions">
+      <button type="button" data-action="deal-custom">🎴 Deal This Hand</button>
+    </div>
+  `;
+  root.prepend(panel);
+
+  const luckSlider = panel.querySelector('#admin-luck-slider');
+  const luckValueEl = panel.querySelector('#admin-luck-value');
+  const luckHintEl = panel.querySelector('#admin-luck-hint');
+
+  const updateLuckLabel = () => {
+    const multiplier = Number(luckSlider.value);
+    luckValueEl.textContent = `${multiplier}×`;
+    const perCardChance = Math.min(TOTAL_SPECIAL_CHANCE * multiplier, 1);
+    luckHintEl.textContent = `~${Math.round(perCardChance * 100)}% chance per card`;
+  };
+  luckSlider.addEventListener('input', updateLuckLabel);
+  updateLuckLabel();
+
+  panel.querySelector('[data-action="redeal"]').addEventListener('click', () => {
+    onRedeal({ luckMultiplier: Number(luckSlider.value) });
+  });
+
+  panel.querySelectorAll('[data-force]').forEach((btn) => {
+    // Force buttons ignore the luck slider on purpose — one guaranteed rare
+    // card of the exact requested tier (and, for Joker, exact sub-tier),
+    // nothing else muddying the preview.
+    btn.addEventListener('click', () => {
+      onRedeal({ forceRarity: btn.dataset.force, forceJokerTier: btn.dataset.jokerTier || null });
+    });
+  });
+
+  const modifierSelect = panel.querySelector('#admin-modifier-select');
+  panel.querySelector('[data-action="preview-modifier"]').addEventListener('click', () => {
+    onRedeal({ forceModifier: modifierSelect.value });
+  });
+
+  // Each slot's rarity select reveals its own Joker-flavor select only when
+  // "Joker" is picked for that slot — the other 4 slots' pickers are
+  // untouched, since each is independent.
+  panel.querySelectorAll('.admin-slot-rarity').forEach((select) => {
+    select.addEventListener('change', () => {
+      const jokerTierSelect = select.closest('.admin-slot').querySelector('.admin-slot-joker-tier');
+      jokerTierSelect.hidden = select.value !== 'joker';
+    });
+  });
+
+  panel.querySelector('[data-action="deal-custom"]').addEventListener('click', () => {
+    const slots = [...panel.querySelectorAll('.admin-slot')].map((slotEl) => ({
+      rank: Number(slotEl.querySelector('.admin-slot-rank').value),
+      suit: slotEl.querySelector('.admin-slot-suit').value,
+      rarity: slotEl.querySelector('.admin-slot-rarity').value || null,
+      jokerTier: slotEl.querySelector('.admin-slot-joker-tier').value,
+    }));
+    const seenCards = new Set();
+    const hasDuplicate = slots.some((slot) => {
+      const key = `${slot.rank}${slot.suit}`;
+      if (seenCards.has(key)) return true;
+      seenCards.add(key);
+      return false;
+    });
+    if (hasDuplicate) {
+      window.alert('Two slots have the same rank + suit — each card can only appear once.');
+      return;
+    }
+    onRedeal({ customSlots: slots });
+  });
+}
+
+// Reveals the result panel progressively: hand name, then each score line
+// counting up into a running total, then Decision Rating, then the Luck /
+// Skill / Risk meters, then the personality badge, then the poker story,
+// then (if any) newly unlocked achievements last — a final surprise rather
+// than the headline.
+// Inserts `li` at the TOP of `container` (owner request: the biggest number
+// should end up at the top of the list, not the bottom) and animates every
+// already-present line sliding down to make room, rather than an instant
+// jump — the classic FLIP technique: record each existing line's position
+// before the insert, then after inserting, snap it back to its old position
+// with a transform and immediately transition that away to zero.
+function insertLineAtTop(container, li) {
+  const existing = [...container.children];
+  const oldTops = existing.map((el) => el.getBoundingClientRect().top);
+
+  container.prepend(li);
+
+  existing.forEach((el, i) => {
+    const newTop = el.getBoundingClientRect().top;
+    const delta = oldTops[i] - newTop;
+    if (delta === 0) return;
+    el.style.transition = 'none';
+    el.style.transform = `translateY(${delta}px)`;
+    void el.offsetHeight; // force a reflow so the browser registers the starting position before we transition away
+    el.style.transition = 'transform 320ms ease';
+    el.style.transform = '';
+  });
+}
+
+// Owner request: once the breakdown is fully populated, collapse it down to
+// just the top (highest-value) badge and roughly half of the second, fading
+// to transparent, with a Show More/Show Less button to toggle the rest.
+// Used both by revealScore() (called only after the count-up loop finishes)
+// and the static "already played" path (called right after that HTML is
+// inserted, since there's no animation to wait for there). Measures actual
+// rendered badge heights rather than guessing in CSS, since badge height
+// varies with description length and whether a card-proof strip is present.
+function setupBreakdownCollapse(container) {
+  const items = [...container.children];
+  if (items.length < 3) return; // top badge + half of the second already shows everything there is
+
+  container.classList.add('score-breakdown--collapsible');
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'breakdown-toggle';
+  container.insertAdjacentElement('afterend', toggle);
+
+  const collapsedHeight = () => {
+    const rect0 = items[0].getBoundingClientRect();
+    const rect1 = items[1].getBoundingClientRect();
+    return rect1.top - rect0.top + rect1.height / 2;
+  };
+
+  let expanded = false;
+  const render = () => {
+    if (expanded) {
+      container.style.maxHeight = `${container.scrollHeight}px`;
+      container.classList.remove('score-breakdown--collapsed');
+      toggle.textContent = 'Show Less ▴';
+    } else {
+      container.style.maxHeight = `${collapsedHeight()}px`;
+      container.classList.add('score-breakdown--collapsed');
+      toggle.textContent = `Show ${items.length - 1} More ▾`;
+    }
+  };
+  render();
+
+  toggle.addEventListener('click', () => {
+    expanded = !expanded;
+    render();
+  });
+}
+
+async function revealScore(resultPanel, result) {
+  const { score, decisionRating: rating, meters, personalityId, newlyUnlocked } = result;
+  resultPanel.hidden = false;
+  resultPanel.innerHTML = `
+    <h2 id="hand-label">${score.handResult.label}</h2>
+    <div class="score-total" id="score-total">0</div>
+    <ul class="score-breakdown" id="score-breakdown"></ul>
+    <p class="decision-rating" id="decision-rating" hidden>Decision Rating: <strong id="decision-rating-value">0%</strong></p>
+    <div class="meters" id="meters" hidden></div>
+    <div class="personality-badge" id="personality-badge" hidden></div>
+    <div class="story-block" id="story-block" hidden></div>
+    <div class="achievements-toast" id="achievements-toast" hidden></div>
+    <p class="come-back">Come back tomorrow for a new hand.</p>
+  `;
+
+  const totalEl = resultPanel.querySelector('#score-total');
+  const breakdownEl = resultPanel.querySelector('#score-breakdown');
+  // Snapshotted once — by the time scoring reveals, the hand-row's 5 cards
+  // are done being replaced (revealDrawnCards already finished), so this
+  // stays valid for the whole loop below. Positions each badge's flying-
+  // spark departure point (owner request: "points come off the cards that
+  // gave the points and add into the total") — index order matches
+  // finalHand/highlightIndices exactly, since renderHand() always rebuilds
+  // hand-row in card order.
+  const handCardEls = [...(document.getElementById('hand-row')?.children ?? [])];
+
+  const badges = buildScoreBadges(score, result.finalHand, result.discardIndices);
+
+  let running = 0;
+  for (const badge of badges) {
+    const li = document.createElement('li');
+    li.className = 'score-badge';
+    li.innerHTML = badgeCardHtml(badge, score.logicalFinalHand, result.finalHand, 0);
+    // Owner request: the biggest number should still be revealed last (for
+    // suspense — buildScoreBadges still hands us smallest-to-largest), but
+    // it should land at the TOP of the list, pushing every earlier badge
+    // down — not just append to the bottom. insertLineAtTop() handles the
+    // slide.
+    insertLineAtTop(breakdownEl, li);
+    const valueEl = li.querySelector('.score-badge-value');
+
+    // Cards this badge is attributed to (empty for badges with no specific
+    // card proof, e.g. Pity Points — those just keep the plain count-up).
+    // Remove-then-reapply so the glow re-triggers even if the same card was
+    // already pulsed by an earlier badge in this same reveal.
+    const sourceEls = (badge.highlightIndices ?? []).map((i) => handCardEls[i]).filter(Boolean);
+    sourceEls.forEach((el) => {
+      el.classList.remove('card--score-pulse');
+      void el.offsetWidth; // force reflow so re-adding the class restarts the animation
+      el.classList.add('card--score-pulse');
+    });
+
+    // Sign-aware, not a hardcoded "+" — Double or Nothing's Busted badge
+    // (§4e) can be negative, and toLocaleString() would otherwise render a
+    // negative count-up as the confusing "+-655" instead of "-655".
+    const badgeSign = badge.value < 0 ? '-' : '+';
+    await Promise.all([
+      animateCountUp(valueEl, 0, Math.abs(badge.value), 350, { prefix: badgeSign }),
+      flySparks(sourceEls, totalEl),
+    ]);
+
+    const from = running;
+    running += badge.value;
+    await animateCountUp(totalEl, from, running, 350);
+    await delay(150);
+  }
+
+  // Owner request: collapse the breakdown down to the top badge + half of
+  // the second once — and only once — the count-up reveal above is fully
+  // finished, never mid-animation.
+  setupBreakdownCollapse(breakdownEl);
+
+  const ratingWrap = resultPanel.querySelector('#decision-rating');
+  const ratingValueEl = resultPanel.querySelector('#decision-rating-value');
+  ratingWrap.hidden = false;
+  const ratingPct = Number.isFinite(rating) ? Math.round(rating * 100) : null;
+  await animateCountUp(ratingValueEl, 0, ratingPct ?? 0, 500, { suffix: '%' });
+
+  await delay(250);
+  const metersEl = resultPanel.querySelector('#meters');
+  metersEl.innerHTML = Object.keys(METER_META).map((id) => meterRowHtml(id)).join('');
+  metersEl.hidden = false;
+  await Promise.all(Object.keys(METER_META).map((id) => animateMeterFill(metersEl, id, meters[id])));
+
+  await delay(200);
+  const personalityEl = resultPanel.querySelector('#personality-badge');
+  personalityEl.innerHTML = personalityHtml(personalityId);
+  personalityEl.hidden = false;
+
+  await delay(300);
+  const storyBlock = resultPanel.querySelector('#story-block');
+  renderStoryBlock(storyBlock, result);
+  storyBlock.hidden = false;
+
+  if (newlyUnlocked.length > 0) {
+    await delay(400);
+    const achievementsEl = resultPanel.querySelector('#achievements-toast');
+    achievementsEl.innerHTML = achievementsHtml(newlyUnlocked);
+    achievementsEl.hidden = false;
+  }
+}
+
+function meterRowHtml(id) {
+  const meta = METER_META[id];
+  return `
+    <div class="meter">
+      <span class="meter-label">${meta.emoji} ${meta.label}</span>
+      <div class="meter-track"><div class="meter-fill meter-fill--${id}" id="meter-fill-${id}"></div></div>
+      <span class="meter-value" id="meter-value-${id}">0%</span>
+    </div>
+  `;
+}
+
+// Sets the fill width directly (CSS transitions the visual bar) while
+// animating the percentage text alongside it.
+async function animateMeterFill(container, id, value) {
+  const fillEl = container.querySelector(`#meter-fill-${id}`);
+  const valueEl = container.querySelector(`#meter-value-${id}`);
+  fillEl.style.width = `${value}%`;
+  await animateCountUp(valueEl, 0, value, 500, { suffix: '%' });
+}
+
+function staticMetersHtml(meters) {
+  return Object.entries(METER_META)
+    .map(
+      ([id, meta]) => `
+        <div class="meter">
+          <span class="meter-label">${meta.emoji} ${meta.label}</span>
+          <div class="meter-track"><div class="meter-fill meter-fill--${id}" style="width:${meters[id]}%"></div></div>
+          <span class="meter-value">${meters[id]}%</span>
+        </div>
+      `,
+    )
+    .join('');
+}
+
+function personalityHtml(personalityId) {
+  const personality = PERSONALITIES.find((p) => p.id === personalityId);
+  if (!personality) return '';
+  return `
+    <span class="personality-emoji">${personality.emoji}</span>
+    <span class="personality-label">${personality.label}</span>
+    <span class="personality-desc">${personality.description}</span>
+  `;
+}
+
+function achievementsHtml(achievementIds) {
+  if (!achievementIds || achievementIds.length === 0) return '';
+  const items = achievementIds
+    .map((id) => ACHIEVEMENTS.find((a) => a.id === id))
+    .filter(Boolean)
+    .map(
+      (a) =>
+        `<li><span class="achievement-emoji">${a.emoji}</span><span class="achievement-text"><strong>${a.label}</strong><br />${a.description}</span></li>`,
+    )
+    .join('');
+  const heading = achievementIds.length > 1 ? 'New Achievements Unlocked!' : 'New Achievement Unlocked!';
+  return `<h3>🎉 ${heading}</h3><ul class="achievements-list">${items}</ul>`;
+}
+
+async function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  // Fallback for non-secure contexts (e.g. plain http:// on a LAN dev server).
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  try {
+    document.execCommand('copy');
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+// The starting option for each of the 6 story slots — deterministic per
+// hand (same seed every time that exact hand comes up), never saved across
+// days. The player can still freely change any dropdown during the current
+// view; those edits just aren't persisted, so a fresh day starts from a
+// fresh (effectively random-looking, hand-seeded) selection again rather
+// than reusing yesterday's pick.
+function resolveStorySelections(originalHand, finalHand, discardIndices) {
+  const selections = getDefaultSelections(originalHand, finalHand, discardIndices);
+  const options = getStoryOptions(originalHand, finalHand, discardIndices);
+  return { selections, options };
+}
+
+// Renders the story as 6 independent pickers — one per fragment slot — so
+// the player builds their own combination rather than picking a whole
+// pre-written sentence or an overall "voice."
+function renderStoryBlock(container, result) {
+  const { originalHand, finalHand, discardIndices } = result;
+  const { selections, options } = resolveStorySelections(originalHand, finalHand, discardIndices);
+  let story = generateStory(result, selections);
+
+  container.innerHTML = `
+    <p class="story-text" id="story-text">${story.text}</p>
+    <div class="story-builder">
+      ${STORY_SLOT_ORDER.map(
+        (slot) => `
+          <label class="story-slot">
+            <span class="story-slot-label">${SLOT_META[slot].label}</span>
+            <select data-slot="${slot}">
+              ${options[slot]
+                .map((option, index) => `<option value="${index}"${index === selections[slot] ? ' selected' : ''}>${option}</option>`)
+                .join('')}
+            </select>
+          </label>
+        `,
+      ).join('')}
+    </div>
+    <button type="button" class="copy-btn" id="copy-btn">📋 Copy Result</button>
+  `;
+
+  const storyTextEl = container.querySelector('#story-text');
+  container.querySelectorAll('select[data-slot]').forEach((select) => {
+    select.addEventListener('change', () => {
+      const slot = select.dataset.slot;
+      const index = Number(select.value);
+      selections[slot] = index;
+      story = generateStory(result, selections);
+      storyTextEl.textContent = story.text;
+    });
+  });
+
+  const copyBtn = container.querySelector('#copy-btn');
+  copyBtn.addEventListener('click', async () => {
+    await copyToClipboard(story.shareText); // reads the current `story` at click time, not bind time
+    const original = copyBtn.textContent;
+    copyBtn.textContent = '✅ Copied!';
+    setTimeout(() => {
+      copyBtn.textContent = original;
+    }, 1500);
+  });
+}
+
+// Shared between the animated reveal and the static "already played" view.
+// Each badge carries everything the RNGDLE-style breakdown card needs
+// (owner request, "like the attached picture"): a category `tag`, a plain-
+// English `description` of why it fired, and `highlightIndices` — which of
+// the 5 final-hand card positions are the actual proof — on top of the
+// existing label/value.
+function buildScoreBadges(score, finalHand, discardIndices = []) {
+  const badges = [];
+
+  badges.push({
+    key: 'hand',
+    tag: 'HAND',
+    emoji: null,
+    label: score.handResult.label,
+    value: score.baseScore,
+    description: HAND_DESCRIPTIONS[score.handResult.id] ?? '',
+    highlightIndices: score.handContributingIndices,
+  });
+
+  if (score.flavor.total > 0) {
+    badges.push({
+      key: 'flavor',
+      tag: 'FLAVOR',
+      emoji: '✨',
+      label: 'Flavor Bonus',
+      value: score.flavor.total,
+      description: 'Points for Aces and Face cards in your hand.',
+      highlightIndices: [...score.flavor.aceIndices, ...score.flavor.faceIndices],
+    });
+  }
+
+  if (score.suitSynergy.total > 0) {
+    const glyph = suitGlyph(score.suitSynergy.suit);
+    badges.push({
+      key: 'suitSynergy',
+      tag: 'SUIT',
+      emoji: glyph,
+      label: 'Suit Synergy',
+      value: score.suitSynergy.total,
+      description: `${score.suitSynergy.count} cards share the ${glyph} suit.`,
+      highlightIndices: score.suitSynergy.indices,
+    });
+  }
+
+  badges.push({
+    key: 'cardValue',
+    tag: 'CARD VALUE',
+    emoji: '🎴',
+    label: 'Card Value',
+    value: score.cardValue.total,
+    description: 'Every card in your hand contributes its rank — always.',
+    highlightIndices: [0, 1, 2, 3, 4],
+  });
+
+  for (const [key, value] of Object.entries(score.skillBonuses)) {
+    if (value <= 0) continue;
+    const meta = SKILL_META[key];
+    const highlightIndices =
+      key === 'perfectKeep' || key === 'cleanFinish'
+        ? [0, 1, 2, 3, 4]
+        : key === 'optimalDiscard'
+          ? [0, 1, 2, 3, 4].filter((i) => !discardIndices.includes(i))
+          : [];
+    badges.push({ key, tag: 'SKILL', emoji: meta.emoji, label: meta.label, value, description: meta.description, highlightIndices });
+  }
+
+  for (const bonus of score.extraBonuses) {
+    badges.push({
+      key: `extra-${bonus.id}`,
+      tag: 'BONUS',
+      emoji: bonus.emoji,
+      label: bonus.label,
+      value: bonus.points,
+      description: bonus.description,
+      highlightIndices: bonus.highlightIndices,
+    });
+  }
+
+  for (const item of score.rarity.items) {
+    const label =
+      item.rarity === 'joker'
+        ? item.label // already "<Flavor> Joker", e.g. "Gold Joker" — see rarityBonus()
+        : `${item.label} ${rankLabel(item.card.rank)}${suitGlyph(item.card.suit)}`;
+    const tierForTag = item.rarity === 'joker' ? (item.jokerTier ?? 'bronze') : item.rarity;
+    badges.push({
+      key: `rarity-${item.index}`,
+      tag: tierForTag.toUpperCase(),
+      emoji: item.emoji,
+      label,
+      value: item.points,
+      description:
+        item.rarity === 'joker'
+          ? 'A wild card — completes the best possible hand, whatever that takes.'
+          : 'A rare card, worth extra points just for showing up.',
+      highlightIndices: [item.index],
+    });
+  }
+
+  for (const item of score.discardedRarity.items) {
+    const label =
+      item.rarity === 'joker'
+        ? item.label // already "<Flavor> Joker", e.g. "Gold Joker" — see discardedRarityBonus()
+        : `${item.label} ${rankLabel(item.card.rank)}${suitGlyph(item.card.suit)}`;
+    const tierForTag = item.rarity === 'joker' ? (item.jokerTier ?? 'bronze') : item.rarity;
+    badges.push({
+      key: `discard-rarity-${item.index}`,
+      tag: tierForTag.toUpperCase(),
+      emoji: '🗑️',
+      label: `Discarded ${label}`,
+      value: item.points,
+      description: 'A bold discard — half credit for letting a rare card go.',
+      highlightIndices: [], // discarded cards never appear in the final hand's proof strip
+    });
+  }
+
+  if (score.handSynergyBonus > 0) {
+    // Which rare cards get highlighted depends on which tier of the
+    // multiplier fired (scoring.js's scoreRun — DESIGN.md §3n/§3o): if any
+    // rare card is genuinely part of the winning combo, highlight just
+    // those; otherwise (2+ rare cards, none in combo, but still stacking)
+    // highlight all of them, since none is more "responsible" than another.
+    const rareIndices = score.rarity.items.map((item) => item.index);
+    const comboIndexSet = new Set([...score.handContributingIndices, ...score.runIndices]);
+    const inCombo = rareIndices.filter((i) => comboIndexSet.has(i));
+    badges.push({
+      key: 'synergy',
+      tag: 'SYNERGY',
+      emoji: '✨',
+      label: `×${score.multiplier} Hand-Rarity Synergy`,
+      value: score.handSynergyBonus,
+      description:
+        inCombo.length > 0
+          ? 'A rare card is part of the winning combination — the multiplier applies to the WHOLE score.'
+          : 'More than one rare card landed in this hand — their bonus stacks, even unused.',
+      highlightIndices: inCombo.length > 0 ? inCombo : rareIndices,
+    });
+  }
+
+  if (score.pity > 0) {
+    badges.push({
+      key: 'pity',
+      tag: 'PITY',
+      emoji: '🎗️',
+      label: 'Pity Points',
+      value: score.pity,
+      description: 'A small consolation bonus for a low-scoring run.',
+      highlightIndices: [],
+    });
+  }
+
+  // `!== 0`, not `> 0` — Double or Nothing (§4e) can drive this NEGATIVE
+  // (×0 wipes the whole additive total). Every other modifier only ever
+  // multiplies UP, so this was `> 0` until that modifier exposed the gap:
+  // a hidden negative badge would silently understate `score.total` in the
+  // UI, since the running count-up total below is an accumulation of
+  // exactly the badges shown, not a re-read of `score.total` itself.
+  if (score.modifierBonusAmount !== 0) {
+    const busted = score.modifierBonusAmount < 0;
+    badges.push({
+      key: 'modifier',
+      tag: 'MODIFIER',
+      emoji: busted ? '💥' : '🧭',
+      label: busted ? 'Busted — Nothing' : `×${score.modifierMultiplier} Modifier Multiplier`,
+      value: score.modifierBonusAmount,
+      description: busted
+        ? "Today's modifier wiped your total — the gamble didn't pay off."
+        : "Today's modifier multiplied your total.",
+      highlightIndices: [],
+    });
+  }
+
+  // Ascending — smallest first. This is the REVEAL order (owner request:
+  // builds suspense toward the biggest number last); the biggest number
+  // still ends up visually at the TOP of the list, because revealScore()
+  // inserts each new badge above the previous ones rather than below (owner
+  // follow-up request) — see insertLineAtTop(). Callers that render without
+  // that insertion sequence (the static "already played" path) need to
+  // reverse this array themselves to match the same final visual order.
+  return badges.sort((a, b) => a.value - b.value);
+}
+
+function tagClassName(tag) {
+  return `score-badge-tag--${tag.toLowerCase().replace(/\s+/g, '-')}`;
+}
+
+// The small "proof" row of all 5 final-hand cards, with the ones that
+// actually justify the badge highlighted — the visual half of "like the
+// attached picture" (owner request). Omitted entirely when a badge has no
+// specific cards to point to (e.g. Pity Points).
+//
+// `logicalHand` (score.logicalFinalHand, scoring.js) is what actually gets
+// rendered — a Joker's slot shows whatever rank/suit it wild-substituted to,
+// not its own meaningless dealt card — with a 🃏 marker (from `rawHand`,
+// which still has the real `rarity` field) so it doesn't read as an
+// ordinary duplicate of that rank/suit.
+function miniCardStripHtml(logicalHand, rawHand, highlightIndices) {
+  if (!highlightIndices || highlightIndices.length === 0) return '';
+  const highlightSet = new Set(highlightIndices);
+  const chips = logicalHand
+    .map((card, i) => {
+      const color = card.suit === 'H' || card.suit === 'D' ? 'mini-card--red' : 'mini-card--black';
+      const highlighted = highlightSet.has(i) ? ' mini-card--highlight' : '';
+      const isWild = rawHand[i]?.rarity === 'joker' ? ' mini-card--wild' : '';
+      return `<span class="mini-card ${color}${highlighted}${isWild}">${rankLabel(card.rank)}${suitGlyph(card.suit)}</span>`;
+    })
+    .join('');
+  return `<div class="mini-card-strip">${chips}</div>`;
+}
+
+function badgeCardHtml(badge, logicalHand, rawHand, displayValue) {
+  // Almost every badge is non-negative, but Double or Nothing's "Busted"
+  // badge (§4e) isn't — it's the one score component that can subtract from
+  // the running total instead of adding to it, so the sign has to follow
+  // `displayValue` rather than always being "+".
+  const sign = displayValue < 0 ? '-' : '+';
+  return `
+    <div class="score-badge-header">
+      ${badge.emoji ? `<span class="score-badge-icon">${badge.emoji}</span>` : ''}
+      <span class="score-badge-label">${badge.label}</span>
+      <span class="score-badge-tag ${tagClassName(badge.tag)}">${badge.tag}</span>
+      <span class="score-badge-value">${sign}${Math.abs(displayValue).toLocaleString()}</span>
+    </div>
+    ${badge.description ? `<p class="score-badge-desc">${badge.description}</p>` : ''}
+    ${miniCardStripHtml(logicalHand, rawHand, badge.highlightIndices)}
+  `;
+}
+
+// Non-animated version for the "already played today" reload path — the
+// suspense only matters the first time. Story block is left empty here;
+// renderStoryBlock() fills it in afterward (same helper the animated path
+// uses), so voice switching works identically on both paths.
+function staticResultHtml(result) {
+  const { score, decisionRating: rating, meters, personalityId, newlyUnlocked } = result;
+  const ratingPct = Number.isFinite(rating) ? `${Math.round(rating * 100)}%` : '—';
+  // buildScoreBadges() returns ascending (reveal order); reversed here since
+  // there's no insertion sequence to produce the biggest-on-top layout the
+  // animated path ends up with — see that function's comment.
+  const badges = [...buildScoreBadges(score, result.finalHand, result.discardIndices)].reverse();
+
+  return `
+    <h2>${score.handResult.label} — ${score.total.toLocaleString()} pts</h2>
+    <ul class="score-breakdown">
+      ${badges.map((badge) => `<li class="score-badge">${badgeCardHtml(badge, score.logicalFinalHand, result.finalHand, badge.value)}</li>`).join('')}
+    </ul>
+    <p class="decision-rating">Decision Rating: <strong>${ratingPct}</strong></p>
+    <div class="meters">${staticMetersHtml(meters)}</div>
+    <div class="personality-badge">${personalityHtml(personalityId)}</div>
+    <div class="story-block" id="story-block"></div>
+    ${newlyUnlocked.length > 0 ? `<div class="achievements-toast">${achievementsHtml(newlyUnlocked)}</div>` : ''}
+    <p class="come-back">Come back tomorrow for a new hand.</p>
+  `;
+}

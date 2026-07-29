@@ -6,7 +6,7 @@
 // into it.
 
 import { openModal } from './modal.js';
-import { onAuthStateChange, signInWithMagicLink, signOut, getProfile, createProfile } from '../state/auth.js';
+import { getSession, onAuthStateChange, signInWithMagicLink, signOut, getProfile, createProfile } from '../state/auth.js';
 import { sendFriendRequest, getPendingRequests, getFriends, acceptFriendRequest, removeFriendship } from '../state/friends.js';
 import { isSupabaseConfigured } from '../state/supabase-client.js';
 
@@ -53,6 +53,7 @@ export function initHeader(root) {
   });
 
   function renderAuthSlot() {
+    friendsBtn.hidden = !currentSession;
     if (!currentSession) {
       authSlot.innerHTML = `<button type="button" class="header-login-btn">Log In</button>`;
       authSlot.querySelector('.header-login-btn').addEventListener('click', () => openLoginModal());
@@ -90,12 +91,24 @@ export function initHeader(root) {
     }
   }
 
-  onAuthStateChange((session) => {
+  renderAuthSlot(); // paint the logged-out state immediately; getSession/onAuthStateChange correct it the moment the real session is known
+
+  // Seeds the header with whatever session Supabase already restored from
+  // localStorage (a magic-link sign-in persists there by default, so this is
+  // what makes a closed-and-reopened tab still show as logged in) — Supabase's
+  // own recommended pattern is to read the current session explicitly on
+  // startup rather than rely solely on onAuthStateChange's initial firing,
+  // since exactly when/whether that first callback carries the restored
+  // session isn't consistent across SDK versions.
+  getSession().then((session) => {
     currentSession = session;
     refreshProfile();
   });
 
-  renderAuthSlot(); // paint the logged-out state immediately; onAuthStateChange corrects it the moment the real session is known
+  onAuthStateChange((session) => {
+    currentSession = session;
+    refreshProfile();
+  });
 
   function openHelpModal() {
     openModal({

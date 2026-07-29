@@ -4,7 +4,14 @@
 // close)` callback to build its own content and wire its own listeners
 // (a plain HTML string wouldn't be enough for the login form or friends
 // panel, which both need live event handlers, not just static markup).
-export function openModal({ title, render }) {
+//
+// `onClose` (optional) fires no matter WHICH of the four ways the modal
+// closed — the × button, a backdrop click, Escape, or `render`'s own `close`
+// callback — so a caller that needs to reset some "this modal is currently
+// open" flag (header.js's username-prompt duplicate guard, §11b) only has
+// to write that cleanup once instead of duplicating it across every close
+// path.
+export function openModal({ title, render, onClose }) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
@@ -18,6 +25,7 @@ export function openModal({ title, render }) {
   function close() {
     overlay.remove();
     document.removeEventListener('keydown', onKeydown);
+    onClose?.();
   }
 
   function onKeydown(event) {

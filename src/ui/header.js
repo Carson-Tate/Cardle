@@ -22,6 +22,22 @@ export function initHeader(root) {
   let currentSession = null;
   let currentProfile = null;
 
+  // Which user id (if any) currently has a username-prompt modal open —
+  // owner bug report: "when someone successfully logs in for the first
+  // time it prompts them to make a username, and when they chose a
+  // username it prompts for it again, and it says it is taken." Root
+  // cause: Supabase's onAuthStateChange fires more than once for a single
+  // sign-in (e.g. once restoring INITIAL_SESSION, again for the actual
+  // SIGNED_IN event) — refreshProfile() ran on every firing and, seeing no
+  // profile yet either time, opened a SECOND prompt on top of the first
+  // before the user had finished the one they were looking at. Submitting
+  // through the stale second modal after the first had already created the
+  // profile hit the username's unique constraint — "taken" by themselves.
+  // This flag (set the instant a prompt opens, cleared via openModal's
+  // onClose no matter how it's dismissed) makes a second firing a no-op
+  // instead of a second modal.
+  let usernamePromptOpenForUserId = null;
+
   logoBtn.addEventListener('click', () => {
     window.location.href = '/';
   });
@@ -69,7 +85,9 @@ export function initHeader(root) {
       currentProfile = null;
     }
     renderAuthSlot();
-    if (!currentProfile) promptForUsername(currentSession.user.id);
+    if (!currentProfile && usernamePromptOpenForUserId !== currentSession.user.id) {
+      promptForUsername(currentSession.user.id);
+    }
   }
 
   onAuthStateChange((session) => {
@@ -134,8 +152,12 @@ export function initHeader(root) {
   }
 
   function promptForUsername(userId) {
+    usernamePromptOpenForUserId = userId;
     openModal({
       title: 'Pick a Username',
+      onClose: () => {
+        usernamePromptOpenForUserId = null;
+      },
       render: (body, close) => {
         body.innerHTML = `
           <p>One more step — pick a public username (3-20 characters: letters, numbers, underscores).</p>

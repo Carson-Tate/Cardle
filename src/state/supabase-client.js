@@ -12,7 +12,23 @@
 const SUPABASE_URL = 'https://flwptlcekwllkwxcegcr.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_UqqZS4YwRQNik4JkQ7TXIg_C1xUOqlW';
 
-export const isSupabaseConfigured = SUPABASE_URL !== 'YOUR_SUPABASE_PROJECT_URL' && SUPABASE_ANON_KEY !== 'YOUR_SUPABASE_ANON_KEY';
+// `import('https://esm.sh/...')` only works in a browser — Node's ESM loader
+// rejects a remote https: specifier outright (`ERR_UNSUPPORTED_ESM_URL_SCHEME`),
+// so this module must never attempt that import while running under
+// `npm test`. Real credentials being filled in is exactly what surfaced
+// this: `isSupabaseConfigured` (and therefore the dynamic import below)
+// used to depend only on the URL/key strings, so the moment they stopped
+// being placeholders, auth.js/friends.js's tests started crashing the whole
+// suite at import time, not just at the specific assertions that needed a
+// real connection. Gating on `isBrowser` too keeps Supabase permanently
+// out of reach under Node regardless of what's filled in above — the same
+// "this only works in a browser, tests skip it structurally" precedent
+// persistence.js/stats.js already set (they need `localStorage`, which
+// plain Node doesn't have either).
+const isBrowser = typeof window !== 'undefined';
+
+export const isSupabaseConfigured =
+  isBrowser && SUPABASE_URL !== 'YOUR_SUPABASE_PROJECT_URL' && SUPABASE_ANON_KEY !== 'YOUR_SUPABASE_ANON_KEY';
 
 // Only import/construct the real client once configured — importing the SDK
 // eagerly is harmless, but constructing a client against the placeholder

@@ -10,6 +10,29 @@ import { getSession, onAuthStateChange, signInWithMagicLink, signOut, getProfile
 import { sendFriendRequest, getPendingRequests, getFriends, acceptFriendRequest, removeFriendship } from '../state/friends.js';
 import { isSupabaseConfigured } from '../state/supabase-client.js';
 
+// Escapes text destined for an innerHTML template. Every value interpolated
+// below that did NOT originate in this file gets run through this — usernames
+// (other people's, fetched from the database) and error messages (which embed
+// user input, e.g. createProfile's `"<name>" is already taken`).
+//
+// This is the output half of a real stored-XSS fix: the database only checked
+// username LENGTH, not characters, so a caller bypassing the UI could store
+// `<svg onload=...>` — 14 characters — and the friends panel rendered other
+// users' names straight into innerHTML, executing it in the viewer's browser.
+// supabase/migrations/001-username-pattern-constraint.sql adds the matching
+// input constraint. Both halves are kept deliberately: the DB constraint stops
+// bad values being stored, and escaping means even a value that somehow gets
+// in (an older row, a future code path, a hand-edited record) renders as inert
+// text instead of markup.
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 export function initHeader(root) {
   const logoBtn = root.querySelector('#header-logo');
   const helpBtn = root.querySelector('#header-help');
@@ -64,7 +87,7 @@ export function initHeader(root) {
     // we have a session but no username yet — an ellipsis instead of a
     // blank button avoids the header looking broken during that beat.
     const label = currentProfile?.username ?? '…';
-    authSlot.innerHTML = `<button type="button" class="header-user-btn">👤 ${label}</button>`;
+    authSlot.innerHTML = `<button type="button" class="header-user-btn">👤 ${escapeHtml(label)}</button>`;
     authSlot.querySelector('.header-user-btn').addEventListener('click', openAccountModal);
   }
 
@@ -234,7 +257,7 @@ export function initHeader(root) {
     try {
       [friends, pending] = await Promise.all([getFriends(userId), getPendingRequests(userId)]);
     } catch (error) {
-      body.innerHTML = `<p class="friends-error">${error.message}</p>`;
+      body.innerHTML = `<p class="friends-error">${escapeHtml(error.message)}</p>`;
       return;
     }
 
@@ -252,7 +275,7 @@ export function initHeader(root) {
                  .map(
                    (r) => `
                  <li class="friends-list-item">
-                   <span>${r.requesterUsername ?? 'Unknown'}</span>
+                   <span>${escapeHtml(r.requesterUsername ?? 'Unknown')}</span>
                    <button type="button" class="friend-accept-btn" data-id="${r.id}">Accept</button>
                    <button type="button" class="friend-decline-btn" data-id="${r.id}">Decline</button>
                  </li>`,
@@ -270,7 +293,7 @@ export function initHeader(root) {
                 .map(
                   (f) => `
                 <li class="friends-list-item">
-                  <span>${f.friendUsername ?? 'Unknown'}</span>
+                  <span>${escapeHtml(f.friendUsername ?? 'Unknown')}</span>
                   <button type="button" class="friend-remove-btn" data-id="${f.id}">Remove</button>
                 </li>`,
                 )

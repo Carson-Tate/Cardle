@@ -5,7 +5,7 @@
 // the `profiles` table (supabase/schema.sql) and created via a one-time
 // prompt the first time a new user signs in (see createProfile below).
 
-import { supabase, requireSupabase } from './supabase-client.js';
+import { getSupabase, requireSupabase } from './supabase-client.js';
 
 export { SupabaseNotConfiguredError } from './supabase-client.js';
 
@@ -18,7 +18,7 @@ export { SupabaseNotConfiguredError } from './supabase-client.js';
 // Redirect URLs allow-list (Supabase rejects redirects to origins it wasn't
 // told about, as a phishing safeguard).
 export async function signInWithMagicLink(email) {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { error } = await client.auth.signInWithOtp({
     email,
     options: { emailRedirectTo: window.location.origin },
@@ -27,7 +27,7 @@ export async function signInWithMagicLink(email) {
 }
 
 export async function signOut() {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { error } = await client.auth.signOut();
   if (error) throw error;
 }
@@ -36,10 +36,15 @@ export async function signOut() {
 // "is anyone logged in" (e.g. the header's initial render) can use this
 // without needing to handle the not-configured case as an error.
 export async function getSession() {
-  if (!supabase) return null;
+  // Also null (rather than a throw) when the Supabase SDK itself can't be
+  // reached — a CDN/network failure should read as "nobody is logged in,"
+  // which the whole anonymous-play path already handles, not as an error
+  // that propagates into board.js's init.
+  const client = await getSupabase().catch(() => null);
+  if (!client) return null;
   const {
     data: { session },
-  } = await supabase.auth.getSession();
+  } = await client.auth.getSession();
   return session;
 }
 
@@ -49,18 +54,34 @@ export async function getSession() {
 // returns a no-op unsubscribe) when Supabase isn't configured, so header.js
 // can wire this up unconditionally without an extra existence check.
 export function onAuthStateChange(callback) {
-  if (!supabase) return () => {};
-  const {
-    data: { subscription },
-  } = supabase.auth.onAuthStateChange((_event, session) => callback(session));
-  return () => subscription.unsubscribe();
+  // Stays synchronous for callers (header.js wires this up during its own
+  // sync init and needs an unsubscribe handle immediately) even though the
+  // client is now loaded on demand — the real subscription attaches once it
+  // resolves, and `cancelled` covers the case where the caller unsubscribed
+  // before that happened. A client that never loads (not configured, or the
+  // CDN is unreachable) just means the callback never fires, exactly as the
+  // not-configured case already behaved.
+  let subscription = null;
+  let cancelled = false;
+  getSupabase()
+    .then((client) => {
+      if (!client || cancelled) return;
+      ({
+        data: { subscription },
+      } = client.auth.onAuthStateChange((_event, session) => callback(session)));
+    })
+    .catch(() => {}); // accounts are simply unavailable this session
+  return () => {
+    cancelled = true;
+    subscription?.unsubscribe();
+  };
 }
 
 // `profiles.id` matches `auth.users.id` 1:1 (supabase/schema.sql) — null
 // means this auth user exists but hasn't picked a username yet (a brand new
 // sign-up), which is the header's cue to prompt for one via createProfile.
 export async function getProfile(userId) {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { data, error } = await client.from('profiles').select('*').eq('id', userId).maybeSingle();
   if (error) throw error;
   return data;
@@ -81,7 +102,7 @@ export async function createProfile(userId, username) {
   if (!isValidUsername(username)) {
     throw new Error('Usernames must be 3-20 characters: letters, numbers, and underscores only.');
   }
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { data, error } = await client.from('profiles').insert({ id: userId, username }).select().single();
   if (error) {
     if (error.code === '23505') throw new Error(`"${username}" is already taken — try another.`);

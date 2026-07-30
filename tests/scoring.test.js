@@ -300,6 +300,16 @@ describe('pityBonus', () => {
     assert.equal(pityBonus(0), 150);
   });
 
+  // Bug: scoreRun passes `multipliedTotal - cardValue.total`, which goes
+  // NEGATIVE when Double or Nothing's bust zeroes the total while Card Value
+  // stays 50-350. Unclamped, the formula ran past its own maximum —
+  // pityBonus(-350) returned 360 — so a "Busted — Nothing" run paid 270.
+  test('never exceeds its maximum for a negative total (Double or Nothing bust)', () => {
+    assert.equal(pityBonus(-1), 150);
+    assert.equal(pityBonus(-350), 150);
+    assert.equal(pityBonus(-100000), 150);
+  });
+
   test('scales down smoothly as the total climbs toward the threshold', () => {
     const low = pityBonus(50);
     const mid = pityBonus(125);
@@ -370,6 +380,36 @@ describe('scoreRun', () => {
     assert.equal(result.modifierMultiplier, 0);
     assert.ok(result.modifierBonusAmount < 0);
     assert.equal(result.modifierBonusAmount, -(base.total - base.pity));
+  });
+
+  test('a wiped total still respects the pity cap rather than inflating past it', () => {
+    const hand = [c(2, 'S'), c(5, 'H'), c(9, 'D'), c(11, 'C'), c(13, 'S')]; // High Card
+    const result = scoreRun({ originalHand: hand, finalHand: hand, discardedCount: 0, modifierMultiplier: 0 });
+    // Everything earned is wiped, so the only thing left is pity — which must
+    // be at most its own maximum. This used to come out at 270.
+    assert.equal(result.total, result.pity);
+    assert.ok(result.pity <= 150, `pity was ${result.pity}, expected <= 150`);
+  });
+
+  // The modifier callback receives the LOGICAL hand (Wild resolved to what it
+  // actually plays as), not the raw dealt cards. Passing the raw hand let a
+  // suit-reading modifier count a Wild by its meaningless dealt suit — the
+  // same class of bug §3t fixed for Suit Synergy.
+  test('the modifier callback is handed the logical hand, not the raw dealt cards', () => {
+    // Wild dealt as 2♥, but it completes a SPADE flush, so it plays as a spade.
+    const hand = [c(2, 'H', 'joker', 'gold'), c(5, 'S'), c(9, 'S'), c(11, 'S'), c(13, 'S')];
+    let seenHand = null;
+    scoreRun({
+      originalHand: hand,
+      finalHand: hand,
+      discardedCount: 0,
+      modifierMultiplier: (_result, finalHandArg) => {
+        seenHand = finalHandArg;
+        return 1;
+      },
+    });
+    assert.equal(seenHand.filter((card) => card.suit === 'S').length, 5, 'all 5 should read as spades');
+    assert.equal(seenHand.filter((card) => card.suit === 'H').length, 0, "the Wild's dealt ♥ must not leak through");
   });
 
   test('includes rarity bonuses from the final hand', () => {

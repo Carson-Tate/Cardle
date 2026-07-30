@@ -1,7 +1,8 @@
 import { dealHand, suitGlyph, rankLabel, RANKS, SUITS, createDeck, createRng, shuffle, rarityForRoll, freshSeed } from '../core/deck.js';
 import { evaluateHand } from '../core/hand-evaluator.js';
 import { scoreRun } from '../core/scoring.js';
-import { solveOptimalDiscard, findEV, decisionRating } from '../core/ev-solver.js';
+import { findEV, decisionRating } from '../core/ev-solver.js';
+import { solveOptimalDiscardAsync } from '../state/solver.js';
 import { computeMeters } from '../core/meters.js';
 import { classifyPersonality, PERSONALITIES } from '../core/personality.js';
 import { evaluateAchievements, ACHIEVEMENTS } from '../core/achievements.js';
@@ -333,6 +334,24 @@ export function initBoard(root) {
       const el = createCardElement(card, { faceUp: false });
       el.classList.add('card--deal-in');
       el.style.animationDelay = `${index * DEAL_IN_STAGGER_MS}ms`;
+      // Drop the class the moment the slide-in finishes. `card-deal-in` is
+      // declared `animation-fill-mode: both`, and a filled animation's
+      // `transform` outranks any class rule's in the CSS cascade — so leaving
+      // it on pinned the card at the animation's final `translateY(0)
+      // scale(1)` and silently overrode `.card--flip-out`'s rotateY(90deg).
+      // The opening reveal became a hard cut with no flip at all (confirmed by
+      // sampling the computed transform mid-flip: the identity matrix, not a
+      // rotation), while the discard-replacement flip still worked — which is
+      // why it wasn't obvious. Removing the class hands `transform` back to
+      // the flip rules.
+      el.addEventListener(
+        'animationend',
+        () => {
+          el.classList.remove('card--deal-in');
+          el.style.animationDelay = '';
+        },
+        { once: true },
+      );
       handRow.appendChild(el);
       return el;
     });
@@ -488,20 +507,24 @@ export function initBoard(root) {
     lockInBtn.textContent = 'Dealing…';
     discardHint.textContent = '';
 
-    // Yield one frame so the disabled/"Dealing…" state actually paints
-    // before the EV solve below, which is synchronous. Normally that solve
-    // is ~100ms (imperceptible), but a hand containing a joker triggers a
-    // much more expensive wild-substitution search (~1-2s) — this keeps
-    // that rare case from reading as a frozen page.
+    // Yield one frame so the disabled state actually paints before the solve.
     await new Promise((resolve) => setTimeout(resolve, 0));
     if (token !== dealToken) return; // a redeal fired before the solve even started
 
     const discardIndices = [...selectedSet].sort((a, b) => a - b);
-    const { evByDiscard, best, worst } = solveOptimalDiscard(originalHand, drawPile, {
+    // Off the main thread (src/state/solver.js) — the solve is exhaustive and
+    // genuinely takes seconds on 4-and-5-discard days, and longer with a Wild
+    // in hand. It used to run synchronously right here, which froze the page
+    // for that entire time; now it awaits a worker, so the label below can
+    // actually animate. Falls back to solving inline if workers are
+    // unavailable, which is exactly the old behavior.
+    lockInBtn.textContent = 'Crunching the odds…';
+    const { evByDiscard, best, worst } = await solveOptimalDiscardAsync(originalHand, drawPile, {
       minDiscards: 0,
       maxDiscards,
       excludedIndices: lockedIndex !== null ? [lockedIndex] : [],
     });
+    if (token !== dealToken) return; // a redeal fired while the solve was in flight
     const chosenEV = findEV(evByDiscard, discardIndices);
     lockInBtn.hidden = true; // solve is done; nothing left for this button to do today
 

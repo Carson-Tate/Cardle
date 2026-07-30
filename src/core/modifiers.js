@@ -39,6 +39,13 @@ const SECOND_LOOK_ROUND_2_MAX_DISCARDS = 1; // fewer, per owner request: "the se
 const DOUBLE_OR_NOTHING_THRESHOLD_ID = 'PAIR';
 const DOUBLE_OR_NOTHING_MULTIPLIER = 2;
 
+// Every hand category that IS a flush. Flush Frenzy used to check
+// `id === 'FLUSH'` exactly, which meant the two best flushes in the game —
+// Straight Flush and Royal Flush — got no multiplier at all on a day whose
+// own description reads "Flushes score 4x today." Landing the rarest hand in
+// poker was silently worth less than landing an ordinary flush.
+const FLUSH_HAND_IDS = new Set(['FLUSH', 'STRAIGHT_FLUSH', 'ROYAL_FLUSH']);
+
 // `type` says which system's hook this modifier plugs into:
 //   'scoring'         → contributes via modifierScoringMultiplier() below (scoring.js's modifierMultiplier param)
 //   'discardLimit'    → board.js reads `.maxDiscards` to override the default of 3
@@ -244,7 +251,7 @@ export function modifierScoringMultiplier(dailyModifier) {
       const matchingCards = finalHand.filter((card) => card.suit === dailyModifier.bonusSuit).length;
       return 1 + matchingCards * SUIT_BONUS_MULTIPLIER_PER_CARD;
     }
-    if (dailyModifier.id === 'flushFrenzy' && finalHandResult.id === 'FLUSH') {
+    if (dailyModifier.id === 'flushFrenzy' && FLUSH_HAND_IDS.has(finalHandResult.id)) {
       return FLUSH_FRENZY_MULTIPLIER;
     }
     if (dailyModifier.id === 'highRoller') {

@@ -11,13 +11,28 @@
 // open" flag (header.js's username-prompt duplicate guard, §11b) only has
 // to write that cleanup once instead of duplicating it across every close
 // path.
+// `title` is escaped because it isn't always a literal from the call site —
+// header.js's account modal passes the signed-in user's own username — and it
+// lands in BOTH an attribute (aria-label) and element content. An unescaped
+// value there could break out of the attribute or inject markup; see
+// header.js's escapeHtml comment for the stored-XSS this belongs to.
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 export function openModal({ title, render, onClose }) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
+  const safeTitle = title ? escapeHtml(title) : '';
   overlay.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true" aria-label="${title ?? ''}">
+    <div class="modal" role="dialog" aria-modal="true" aria-label="${safeTitle}">
       <button type="button" class="modal-close" aria-label="Close">&times;</button>
-      ${title ? `<h2 class="modal-title">${title}</h2>` : ''}
+      ${title ? `<h2 class="modal-title">${safeTitle}</h2>` : ''}
       <div class="modal-body"></div>
     </div>
   `;

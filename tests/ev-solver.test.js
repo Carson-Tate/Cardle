@@ -157,13 +157,33 @@ describe('performance: full daily range (0-3 discards) solves quickly', () => {
     assert.ok(elapsed < 500, `solver took ${elapsed}ms, expected < 500ms`);
   });
 
-  test('a joker in the hand is much slower (52x wild-substitution search) but stays bounded', () => {
-    // Regression guard: catches the wild-joker search regressing further
-    // (e.g. an accidental O(n^2) change) without asserting an unrealistic
-    // bound — a joker in the kept hand is rare (~1% of days) and this cost
-    // is deliberately treated as intentional drama in the UI (board.js
-    // shows a "Dealing…" state and yields a frame before this call), not a
-    // perf bug to eliminate.
+  // Locks in the allocation removals in evForDiscard/combinationIndices. The
+  // 5-discard case (Clean Slate) is the heaviest the game can ask for:
+  // C(47,5) = 1,533,939 draws. Measured ~2.4s before the bound below, down
+  // from ~3.0s; the bound is deliberately loose enough for a slow CI box but
+  // tight enough to catch a real regression (e.g. reintroducing a per-draw
+  // array allocation).
+  test('the heaviest legal solve (5 discards, Clean Slate) stays bounded', () => {
+    const SUITS = ['S', 'H', 'D', 'C'];
+    const RANKS = Array.from({ length: 13 }, (_, i) => i + 2);
+    const full = SUITS.flatMap((s) => RANKS.map((r) => ({ rank: r, suit: s })));
+    const handIds = new Set(originalHand.map((card) => `${card.rank}${card.suit}`));
+    const fullDrawPile = full.filter((card) => !handIds.has(`${card.rank}${card.suit}`));
+
+    const start = Date.now();
+    const { best } = solveOptimalDiscard(originalHand, fullDrawPile, { minDiscards: 0, maxDiscards: 5 });
+    const elapsed = Date.now() - start;
+
+    assert.ok(best.ev > 0);
+    assert.ok(elapsed < 8000, `5-discard solve took ${elapsed}ms, expected < 8000ms`);
+  });
+
+  test('a joker in the hand is slower (wild-substitution search) but stays bounded', () => {
+    // Regression guard for the wild search. The bound tightened from 5000ms
+    // to 2000ms once candidateSuitsFor() pruning landed (hand-evaluator.js):
+    // when the other cards can't make a flush, the wild's suit provably
+    // cannot change the result, so it tries 13 substitutions instead of 52.
+    // Measured ~1.1s here, down from ~4.2s.
     const SUITS = ['S', 'H', 'D', 'C'];
     const RANKS = Array.from({ length: 13 }, (_, i) => i + 2);
     const full = SUITS.flatMap((s) => RANKS.map((r) => ({ rank: r, suit: s, rarity: null })));
@@ -184,6 +204,6 @@ describe('performance: full daily range (0-3 discards) solves quickly', () => {
     const elapsed = Date.now() - start;
 
     assert.ok(best.ev > 0);
-    assert.ok(elapsed < 5000, `solver took ${elapsed}ms with a joker present, expected < 5000ms`);
+    assert.ok(elapsed < 2000, `solver took ${elapsed}ms with a joker present, expected < 2000ms`);
   });
 });

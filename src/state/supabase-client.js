@@ -30,15 +30,35 @@ const isBrowser = typeof window !== 'undefined';
 export const isSupabaseConfigured =
   isBrowser && SUPABASE_URL !== 'YOUR_SUPABASE_PROJECT_URL' && SUPABASE_ANON_KEY !== 'YOUR_SUPABASE_ANON_KEY';
 
-// Only import/construct the real client once configured — importing the SDK
-// eagerly is harmless, but constructing a client against the placeholder
-// strings would throw (createClient validates the URL), which would break
-// the whole page (including the parts that don't need login at all, like the
-// daily hand and the help modal) before the user has had a chance to fill
-// these in.
-export const supabase = isSupabaseConfigured
-  ? await importAndCreateClient()
-  : null;
+// LAZY, and deliberately not a top-level `await`. This used to be
+// `export const supabase = await importAndCreateClient()` — a top-level
+// await on a THIRD-PARTY CDN fetch, which meant any failure to reach
+// esm.sh (outage, corporate/school firewall, ad blocker, offline) left this
+// module permanently un-evaluated. Because module evaluation is all-or-
+// nothing, that took down every importer with it — auth.js → header.js →
+// main.js and daily-play.js → board.js — so the ENTIRE game died on a blank
+// "Loading today's hand…" with no header, no help modal, and no Draw
+// button, even though the daily hand, scoring, and help text need no
+// network at all. Verified by aborting all esm.sh requests in a real
+// browser. Now the import happens on first actual use, so a CDN failure
+// degrades to exactly what a logged-out player already gets (anonymous
+// local play) instead of bricking the page.
+//
+// The promise is cached so concurrent callers share one client, and cleared
+// on failure so a later call can retry (a transient network blip shouldn't
+// disable accounts for the rest of the session).
+let clientPromise = null;
+
+export function getSupabase() {
+  if (!isSupabaseConfigured) return Promise.resolve(null);
+  if (!clientPromise) {
+    clientPromise = importAndCreateClient().catch((error) => {
+      clientPromise = null;
+      throw error;
+    });
+  }
+  return clientPromise;
+}
 
 async function importAndCreateClient() {
   const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
@@ -52,11 +72,13 @@ export class SupabaseNotConfiguredError extends Error {
   }
 }
 
-// Shared guard for auth.js/friends.js — every function that needs a live
-// connection calls this first, so "Supabase isn't configured yet" surfaces
-// as one clear, consistent error message everywhere instead of each call
-// site hitting its own confusing null-reference failure.
-export function requireSupabase() {
-  if (!supabase) throw new SupabaseNotConfiguredError();
-  return supabase;
+// Shared guard for auth.js/friends.js/daily-play.js — every function that
+// needs a live connection awaits this first, so "Supabase isn't configured
+// yet" surfaces as one clear, consistent error message everywhere instead of
+// each call site hitting its own confusing null-reference failure. Async
+// since the underlying client is now loaded on demand (see getSupabase).
+export async function requireSupabase() {
+  const client = await getSupabase();
+  if (!client) throw new SupabaseNotConfiguredError();
+  return client;
 }

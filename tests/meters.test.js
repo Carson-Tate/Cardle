@@ -4,10 +4,12 @@ import { computeMeters } from '../src/core/meters.js';
 import { scoreForHandId } from '../src/core/hand-evaluator.js';
 
 const weakOriginal = { score: 0 }; // High Card opener
-// Needs to be a large enough fraction of MAX_HAND_SCORE (Royal Flush, now in
-// the tens of millions post-rebalance) that chaseBonus's rounded difference
-// from 0 is actually visible — Full House alone rounds away to nothing.
-const strongOriginal = { score: scoreForHandId('STRAIGHT_FLUSH') };
+// Any decent made hand now moves Risk's chase component visibly. This used to
+// need a STRAIGHT_FLUSH: the chase term was normalized against ROYAL_FLUSH
+// (~55 million), so everything below a straight flush contributed under a
+// single point and rounded away entirely. That was the bug, not the fixture —
+// see meters.js's RISK_CHASE_CEILING comment.
+const strongOriginal = { score: scoreForHandId('TWO_PAIR') };
 
 describe('skill', () => {
   test('scales directly with decision rating', () => {
@@ -103,7 +105,7 @@ describe('risk', () => {
 
   test('never exceeds 100 even at max discards from a maxed-out original hand', () => {
     const { risk } = computeMeters({
-      originalHandResult: { score: 1000 },
+      originalHandResult: { score: scoreForHandId('ROYAL_FLUSH') },
       actualScore: 100,
       chosenEV: 100,
       bestEV: 100,
@@ -112,6 +114,26 @@ describe('risk', () => {
       maxDiscards: 3,
     });
     assert.ok(risk <= 100);
+  });
+
+  // Regression guard for a dead half of the formula: the chase component was
+  // normalized against ROYAL_FLUSH, so at realistic scores it contributed
+  // under 1 point of its 40 and Risk could never exceed 60 — which in turn
+  // made "The Gambler" (personality.js, needs risk >= 65) unreachable.
+  test('chasing from a real made hand pushes Risk past the discard-only ceiling of 60', () => {
+    const risk = (score) =>
+      computeMeters({
+        originalHandResult: { score },
+        actualScore: 100,
+        chosenEV: 100,
+        bestEV: 100,
+        decisionRating: 1,
+        discardedCount: 3,
+        maxDiscards: 3,
+      }).risk;
+    assert.equal(risk(0), 60, 'discarding everything from nothing is the 60-point floor');
+    assert.ok(risk(scoreForHandId('TWO_PAIR')) > 65, 'abandoning Two Pair should read as a real gamble');
+    assert.equal(risk(scoreForHandId('THREE_OF_A_KIND')), 100, 'Three of a Kind and up saturates the chase term');
   });
 });
 

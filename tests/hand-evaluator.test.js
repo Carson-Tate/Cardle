@@ -112,6 +112,61 @@ describe('evaluateHand with a wild joker', () => {
     assert.equal(evaluateHand(hand).hasWildJoker, true);
   });
 
+  // Bug: evaluateHand used findIndex, so only the FIRST wild was ever
+  // substituted — any second one kept the meaningless rank/suit it happened
+  // to be dealt as, making the hand strictly weaker than the player's cards
+  // actually allowed. This exact hand evaluated as THREE_STRAIGHT (613).
+  test('substitutes EVERY wild in the hand, not just the first', () => {
+    const hand = [j(2, 'H'), j(3, 'D'), c(9, 'S'), c(11, 'S'), c(13, 'S')];
+    const result = evaluateHand(hand);
+    // 10♠ and Q♠ complete 9-10-J-Q-K, all spades.
+    assert.equal(result.id, 'STRAIGHT_FLUSH');
+    assert.equal(result.score, evaluateHand([c(9, 'S'), c(10, 'S'), c(11, 'S'), c(12, 'S'), c(13, 'S')]).score);
+  });
+
+  test('exposes every wild substitution keyed by hand position', () => {
+    const hand = [j(2, 'H'), j(3, 'D'), c(9, 'S'), c(11, 'S'), c(13, 'S')];
+    const { wildSubstitutions, wildSubstitution } = evaluateHand(hand);
+    assert.deepEqual(Object.keys(wildSubstitutions).sort(), ['0', '1']);
+    // The single-wild `wildSubstitution` field still points at the first one,
+    // so every pre-existing caller keeps working unchanged.
+    assert.deepEqual(wildSubstitution, wildSubstitutions[0]);
+  });
+
+  test('a hand of nothing but wilds resolves without hanging (admin hand builder)', () => {
+    const hand = [j(2, 'H'), j(3, 'D'), j(4, 'S'), j(5, 'C'), j(6, 'H')];
+    const start = Date.now();
+    const result = evaluateHand(hand);
+    assert.ok(Date.now() - start < 1000, 'five wilds should not take a full second');
+    assert.ok(result.score > 0);
+  });
+
+  // candidateSuitsFor() prunes the wild's suit loop to a single suit when the
+  // other cards can't possibly make a flush. That's an optimization, so it
+  // must not change any result — this pins the equivalence rather than
+  // trusting the reasoning.
+  test('suit pruning never changes the outcome for flush-impossible hands', () => {
+    const cases = [
+      [c(9, 'S'), c(9, 'H'), c(2, 'D'), c(4, 'C'), j()],
+      [c(2, 'S'), c(5, 'H'), c(9, 'D'), c(11, 'C'), j()],
+      [c(7, 'S'), c(8, 'H'), c(9, 'D'), c(10, 'C'), j()],
+      [c(3, 'S'), c(3, 'H'), c(3, 'D'), c(8, 'C'), j()],
+    ];
+    for (const hand of cases) {
+      const result = evaluateHand(hand);
+      // Brute-force the same search over all 4 suits x 13 ranks.
+      const others = hand.filter((card) => card.rarity !== 'joker');
+      let bestScore = -1;
+      for (const suit of ['S', 'H', 'D', 'C']) {
+        for (let rank = 2; rank <= 14; rank++) {
+          const score = evaluateHand([...others, c(rank, suit)]).score;
+          if (score > bestScore) bestScore = score;
+        }
+      }
+      assert.equal(result.score, bestScore, `pruned search disagreed for ${JSON.stringify(hand)}`);
+    }
+  });
+
   test('does not set hasWildJoker for an ordinary hand', () => {
     const hand = [c(9, 'S'), c(9, 'H'), c(2, 'D'), c(4, 'C'), c(5, 'S')];
     assert.ok(!evaluateHand(hand).hasWildJoker);

@@ -2,6 +2,11 @@
 -- Run this once, in full, in your Supabase project's SQL Editor
 -- (Project → SQL Editor → New query → paste → Run).
 --
+-- ALREADY RUN AN EARLIER VERSION OF THIS FILE? This file creates tables from
+-- scratch, so re-running it whole will fail on the ones that already exist.
+-- See supabase/migrations/ for the small, idempotent statements that bring an
+-- existing project up to date — run those instead.
+--
 -- Two tables:
 --   profiles    — one row per signed-in user, holding the public username
 --                 Supabase's own auth.users table doesn't have (auth only
@@ -20,9 +25,20 @@
 -- profiles
 -- ---------------------------------------------------------------------------
 
+-- The username CHECK enforces the SAME pattern as src/state/auth.js's
+-- isValidUsername (letters, numbers, underscores, 3-20 chars) — deliberately
+-- duplicated here rather than trusted to the client. The constraint used to
+-- be length-only, which meant the app's character rules existed ONLY in
+-- browser JavaScript: anyone could call the Supabase REST API directly with
+-- the public anon key (it's not a secret — see supabase-client.js) and insert
+-- a username like `<svg onload=...>`, comfortably inside 20 characters. The
+-- friends panel then rendered other people's usernames into the DOM, so a
+-- crafted name executed script in the browser of anyone who viewed their
+-- friends list. src/ui/header.js now escapes on output too — this is the
+-- other half, keeping the bad value out of the database in the first place.
 create table public.profiles (
   id uuid references auth.users (id) on delete cascade primary key,
-  username text unique not null check (char_length(username) between 3 and 20),
+  username text unique not null check (username ~ '^[A-Za-z0-9_]{3,20}$'),
   created_at timestamptz not null default now()
 );
 

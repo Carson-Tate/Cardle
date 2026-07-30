@@ -15,14 +15,31 @@ function defaultStats() {
   };
 }
 
+// Same reasoning as persistence.js's readJson/writeJson: unreadable or
+// unwritable storage (disabled, full, or a malformed value) must not take
+// the game down — an unguarded JSON.parse here would throw from inside
+// lockIn(), after the hand was already played but before the score rendered.
+// Falling back to a fresh stats object loses history, which is strictly
+// better than losing the run. The defaultStats() spread also means a
+// partially-shaped stored object can't produce undefined array fields for
+// recordRun() below to push into.
 export function getStats() {
-  const raw = localStorage.getItem(STATS_KEY);
-  if (!raw) return defaultStats();
-  return { ...defaultStats(), ...JSON.parse(raw) };
+  try {
+    const raw = localStorage.getItem(STATS_KEY);
+    if (!raw) return defaultStats();
+    return { ...defaultStats(), ...JSON.parse(raw) };
+  } catch (error) {
+    console.warn('Ignoring unreadable cardle:stats entry:', error);
+    return defaultStats();
+  }
 }
 
 function saveStats(stats) {
-  localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+  try {
+    localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+  } catch (error) {
+    console.warn('Could not persist cardle:stats:', error);
+  }
 }
 
 /**

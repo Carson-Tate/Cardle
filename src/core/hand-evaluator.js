@@ -138,35 +138,132 @@ export function evaluateHand(cards) {
     throw new Error('evaluateHand requires exactly 5 cards');
   }
 
-  const jokerIndex = cards.findIndex((c) => c.rarity === 'joker');
-  if (jokerIndex !== -1) {
-    return evaluateHandWithWildJoker(cards, jokerIndex);
+  const jokerIndices = [];
+  for (let i = 0; i < cards.length; i++) {
+    if (cards[i].rarity === 'joker') jokerIndices.push(i);
+  }
+  if (jokerIndices.length > 0) {
+    return evaluateHandWithWildJokers(cards, jokerIndices);
   }
 
   return evaluateFixedHand(cards);
 }
 
-// Tries the joker as every possible rank/suit and keeps whichever scores
-// highest. Only 52 substitutions to check, and joker hands are extremely
-// rare, so this stays cheap in aggregate even though ev-solver.js calls
-// evaluateHand() very frequently. The winning substitution is exposed as
-// `wildSubstitution` so callers (scoring.js's contributingIndices lookup)
-// can reason about "what the joker effectively is" without re-running the
-// search themselves.
-function evaluateHandWithWildJoker(cards, jokerIndex) {
-  const others = cards.filter((_, i) => i !== jokerIndex);
+// Which suits are worth trying for a wild card, given the cards it's sitting
+// alongside. evaluateFixedHand() only ever consults suit via isFlush(), so
+// unless EVERY other card already shares one suit, a flush is impossible no
+// matter what the wild becomes and the suit cannot affect the resulting
+// category or score at all — leaving 13 substitutions to check instead of 52.
+//
+// This is behavior-preserving, not an approximation: the search below keeps a
+// candidate only on a STRICTLY greater score, and when suit is irrelevant
+// every suit yields identical scores for a given rank, so the first suit tried
+// (SUITS[0]) already won every tie before this pruning existed. It matters
+// because ev-solver.js calls evaluateHand() tens of thousands of times per
+// solve, and the wild search multiplies every one of them.
+function candidateSuitsFor(others) {
+  const suits = new Set();
+  for (const card of others) suits.add(card.suit);
+  return suits.size === 1 ? SUITS : [SUITS[0]];
+}
+
+// Tries each wild card as every plausible rank/suit and keeps whichever
+// combination scores highest. The winning substitution is exposed as
+// `wildSubstitution` so callers (scoring.js's logicalCardsFor /
+// contributingIndices lookup) can reason about "what the wild effectively is"
+// without re-running the search themselves; with more than one wild,
+// `wildSubstitutions` carries them all keyed by hand position.
+//
+// Previously this used `findIndex` and so only ever substituted the FIRST
+// wild — any second one kept the meaningless rank/suit it happened to be
+// dealt as, making the hand strictly weaker than the player's cards actually
+// allowed. Two wilds plus 9♠ J♠ K♠ evaluated as a Three Straight (613) when
+// the real best hand is a Straight Flush (6,080,000).
+function evaluateHandWithWildJokers(cards, jokerIndices) {
+  const fixed = cards.filter((_, i) => !jokerIndices.includes(i));
+
+  // Exhaustive for one or two wilds — the only counts reachable in real play
+  // (a second wild is already ~1 in 25,000 hands, a third ~1 in 12 million).
+  // Three or more is only reachable through the test-mode admin panel's
+  // custom hand builder, where a full 52^n search would hang the page, so
+  // those resolve one wild at a time instead: each pass picks the best card
+  // for one wild with the rest held at their current best guess. Not provably
+  // optimal, but bounded, and still far better than leaving them literal.
+  if (jokerIndices.length > 2) {
+    return evaluateHandWithWildJokersGreedy(cards, jokerIndices, fixed);
+  }
+
   let best = null;
   let bestSubstitution = null;
-  for (const suit of SUITS) {
-    for (const rank of RANKS) {
-      const candidate = evaluateFixedHand([...others, { rank, suit }]);
-      if (!best || candidate.score > best.score) {
-        best = candidate;
-        bestSubstitution = { rank, suit };
+  const firstSuits = candidateSuitsFor(fixed);
+
+  if (jokerIndices.length === 1) {
+    for (const suit of firstSuits) {
+      for (const rank of RANKS) {
+        const candidate = evaluateFixedHand([...fixed, { rank, suit }]);
+        if (!best || candidate.score > best.score) {
+          best = candidate;
+          bestSubstitution = [{ rank, suit }];
+        }
+      }
+    }
+  } else {
+    for (const suitA of SUITS) {
+      for (const rankA of RANKS) {
+        const a = { rank: rankA, suit: suitA };
+        for (const suitB of SUITS) {
+          for (const rankB of RANKS) {
+            const b = { rank: rankB, suit: suitB };
+            const candidate = evaluateFixedHand([...fixed, a, b]);
+            if (!best || candidate.score > best.score) {
+              best = candidate;
+              bestSubstitution = [a, b];
+            }
+          }
+        }
       }
     }
   }
-  return { ...best, hasWildJoker: true, wildSubstitution: bestSubstitution };
+
+  return withWildMetadata(best, jokerIndices, bestSubstitution);
+}
+
+function evaluateHandWithWildJokersGreedy(cards, jokerIndices, fixed) {
+  // Start every wild at a harmless placeholder, then improve one at a time.
+  const subs = jokerIndices.map(() => ({ rank: RANKS[0], suit: SUITS[0] }));
+  let best = evaluateFixedHand([...fixed, ...subs]);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let w = 0; w < subs.length; w++) {
+      for (const suit of SUITS) {
+        for (const rank of RANKS) {
+          const trial = subs.slice();
+          trial[w] = { rank, suit };
+          const candidate = evaluateFixedHand([...fixed, ...trial]);
+          if (candidate.score > best.score) {
+            best = candidate;
+            subs[w] = { rank, suit };
+          }
+        }
+      }
+    }
+  }
+  return withWildMetadata(best, jokerIndices, subs);
+}
+
+function withWildMetadata(best, jokerIndices, substitutions) {
+  const byIndex = {};
+  jokerIndices.forEach((handIndex, n) => {
+    byIndex[handIndex] = substitutions[n];
+  });
+  return {
+    ...best,
+    hasWildJoker: true,
+    // Kept for the single-wild case every existing caller was written
+    // against; `wildSubstitutions` is the position-keyed form that stays
+    // correct when a hand holds more than one.
+    wildSubstitution: substitutions[0],
+    wildSubstitutions: byIndex,
+  };
 }
 
 // Full-board hands where every one of the 5 cards is load-bearing (no

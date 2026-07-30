@@ -26,7 +26,20 @@ const DEAL_QUALITY_CEILING = 8000;
 const DRAW_FORTUNE_SCALE = 5000;
 const RISK_DISCARD_WEIGHT = 60;
 const RISK_CHASE_WEIGHT = 40;
-const MAX_HAND_SCORE = scoreForHandId('ROYAL_FLUSH'); // used to normalize chaseBonus to 0-1
+// What counts as "already holding something worth protecting" for the chase
+// half of Risk — a Three of a Kind and up saturates it.
+//
+// This used to normalize against ROYAL_FLUSH (54,800,000), which made the
+// entire chase component numerically inert: since real hands score in the
+// hundreds to tens of thousands, every category below Straight Flush
+// contributed LESS THAN ONE POINT of the 40 available (Two Pair: 0.001).
+// Risk was therefore just discardedCount/maxDiscards × 60, capped at 60 —
+// and "The Gambler" personality (personality.js), which needs risk >= 65,
+// was unreachable without being dealt a Royal Flush and throwing it away.
+// The ROYAL_FLUSH anchor was a leftover from before HAND_RANKS was rescaled
+// to be odds-proportional (hand-evaluator.js), when the top of the table was
+// ~5,000 rather than ~55,000,000 and dividing by it was reasonable.
+const RISK_CHASE_CEILING = scoreForHandId('THREE_OF_A_KIND');
 
 /**
  * @param {object} params
@@ -66,7 +79,7 @@ export function computeMeters({
   let risk = 0;
   if (discardedCount > 0 && maxDiscards > 0) {
     const baseRisk = (discardedCount / maxDiscards) * RISK_DISCARD_WEIGHT;
-    const chaseBonus = (originalHandResult.score / MAX_HAND_SCORE) * RISK_CHASE_WEIGHT;
+    const chaseBonus = clamp(originalHandResult.score / RISK_CHASE_CEILING, 0, 1) * RISK_CHASE_WEIGHT;
     risk = clamp(Math.round(baseRisk + chaseBonus), 0, 100);
   }
 

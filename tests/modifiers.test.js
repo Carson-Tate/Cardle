@@ -145,6 +145,19 @@ describe('modifierScoringMultiplier', () => {
     assert.equal(modifierScoringMultiplier(dailyModifier)(finalHandResult, hand), 1);
   });
 
+  // Bug: the check was `id === 'FLUSH'` exactly, so on a day advertised as
+  // "Flushes score 4x today" the two BEST flushes in the game got nothing —
+  // landing a Royal Flush was worth less than an ordinary flush.
+  test('flushFrenzy also covers Straight Flush and Royal Flush', () => {
+    const dailyModifier = { id: 'flushFrenzy' };
+    const straightFlush = [c(5, 'S'), c(6, 'S'), c(7, 'S'), c(8, 'S'), c(9, 'S')];
+    const royalFlush = [c(10, 'S'), c(11, 'S'), c(12, 'S'), c(13, 'S'), c(14, 'S')];
+    assert.equal(evaluateHand(straightFlush).id, 'STRAIGHT_FLUSH');
+    assert.equal(evaluateHand(royalFlush).id, 'ROYAL_FLUSH');
+    assert.equal(modifierScoringMultiplier(dailyModifier)(evaluateHand(straightFlush), straightFlush), 4);
+    assert.equal(modifierScoringMultiplier(dailyModifier)(evaluateHand(royalFlush), royalFlush), 4);
+  });
+
   test('highRoller always multiplies by 1.5, regardless of the hand', () => {
     const dailyModifier = { id: 'highRoller' };
     for (const hand of [

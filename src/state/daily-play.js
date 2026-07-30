@@ -17,7 +17,7 @@ function isoDate(date) {
 // reads the same row back rather than claiming a new one. Returns
 // `{ seed, result }` — `result` is null until they've locked in a hand.
 export async function claimTodaySeed(userId, date = new Date()) {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const playDate = isoDate(date);
 
   const existing = await fetchRow(client, userId, playDate);
@@ -56,7 +56,7 @@ async function fetchRow(client, userId, playDate) {
 // schema's column-level grant only allows this one column to change here,
 // so there's no path (short of the DB itself) to rewrite `seed`.
 export async function saveTodayResultForUser(userId, result, date = new Date()) {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { error } = await client.from('daily_plays').update({ result }).eq('user_id', userId).eq('play_date', isoDate(date));
   if (error) throw error;
 }

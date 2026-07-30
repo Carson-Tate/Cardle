@@ -297,9 +297,18 @@ function hasRareCardInWinningCombo(finalHand, comboIndices) {
 // 🎗️ Pity Points — a small, funny consolation bonus that grows the closer
 // the run landed to a total whiff, and disappears entirely once the score
 // clears a modest bar. Never large enough to matter strategically.
+//
+// The input is clamped at 0 because it CAN legitimately be negative: scoreRun
+// passes `multipliedTotal - cardValue.total` (see its comment on why Card
+// Value is excluded), and Double or Nothing's bust multiplies the total by 0
+// while Card Value stays 50-350. Unclamped, that negative made the formula
+// run straight past its own documented maximum — pityBonus(-350) returned
+// 360, so a "Busted — Nothing" run paid out 270 points instead of the zero
+// the modifier promises. Clamping keeps PITY_MAX_BONUS an actual maximum.
 export function pityBonus(totalBeforePity) {
-  if (totalBeforePity >= PITY_THRESHOLD) return 0;
-  return Math.round(PITY_MAX_BONUS * (1 - totalBeforePity / PITY_THRESHOLD));
+  const floored = Math.max(0, totalBeforePity);
+  if (floored >= PITY_THRESHOLD) return 0;
+  return Math.round(PITY_MAX_BONUS * (1 - floored / PITY_THRESHOLD));
 }
 
 /**
@@ -317,14 +326,17 @@ export function pityBonus(totalBeforePity) {
  * @param {{chosenEV: number, bestEV: number, worstEV: number}} [params.evContext]
  *   - from ev-solver; omit to skip the Optimal Discard bonus (e.g. when the
  *   solver hasn't run yet)
- * @param {number|((finalHandResult: object, finalHand: Card[]) => number)} [params.modifierMultiplier]
+ * @param {number|((finalHandResult: object, logicalFinalHand: Card[]) => number)} [params.modifierMultiplier]
  *   scoring multiplier from the day's modifier (DESIGN.md §4), either a
- *   plain number or a `(finalHandResult, finalHand) => number` callback —
- *   the callback form lets a modifier (e.g. Flush Frenzy, which only pays
- *   out when the final hand IS a Flush) compute its multiplier from the
- *   already-evaluated `finalHandResult` below instead of the caller needing
- *   to run evaluateHand() a second time itself, which would double the cost
- *   of a wild-Joker hand's 52-substitution search (§3h). Defaults to 1
+ *   plain number or a `(finalHandResult, logicalFinalHand) => number`
+ *   callback — the callback form lets a modifier (e.g. Flush Frenzy, which
+ *   only pays out when the final hand IS a flush) compute its multiplier from
+ *   the already-evaluated `finalHandResult` below instead of the caller
+ *   needing to run evaluateHand() a second time itself, which would double
+ *   the cost of a wild hand's substitution search (§3h). The second argument
+ *   is the LOGICAL hand (any Wild resolved to what it actually plays as), not
+ *   the raw dealt cards — a suit/rank-reading modifier must never see a
+ *   Wild's meaningless dealt suit. Defaults to 1
  *   (no-op) — owner request: modifiers should MULTIPLY the total when their
  *   condition is in the winning hand, not add flat points that get lost
  *   against the rank-scaled hand-rank table.
@@ -340,16 +352,22 @@ export function scoreRun({
 }) {
   const originalHandResult = evaluateHand(originalHand);
   const finalHandResult = evaluateHand(finalHand);
-  const modifierMultiplier =
-    typeof modifierMultiplierInput === 'function'
-      ? modifierMultiplierInput(finalHandResult, finalHand)
-      : modifierMultiplierInput;
   // Every pattern-detecting bonus below reads the LOGICAL hand (Joker
   // resolved to its actual wild substitution), not the raw dealt cards — see
   // logicalCardsFor()'s comment. rarityBonus()/discardedRarityBonus() below
   // deliberately stay on the raw hand: those reward the physical card's own
   // rolled rarity, which has nothing to do with what it wild-substituted to.
   const logicalFinalHand = logicalCardsFor(finalHand, finalHandResult);
+  // Computed AFTER logicalFinalHand and handed the logical hand, not the raw
+  // one. Suit Bonus counts cards of the day's bonus suit, so passing the raw
+  // hand made it read a Wild card's meaningless dealt suit — the exact bug
+  // §3t fixed for Suit Synergy, reintroduced here through a different door. A
+  // Wild dealt as 2♥ but playing as a spade to complete a spade flush scored
+  // as a heart on a hearts-bonus day.
+  const modifierMultiplier =
+    typeof modifierMultiplierInput === 'function'
+      ? modifierMultiplierInput(finalHandResult, logicalFinalHand)
+      : modifierMultiplierInput;
   const flavor = flavorBonus(logicalFinalHand);
   const suitSynergy = suitSynergyBonus(logicalFinalHand);
   const cardValue = cardValueBonus(logicalFinalHand);

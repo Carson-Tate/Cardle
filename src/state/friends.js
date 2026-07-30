@@ -31,7 +31,7 @@ async function profilesById(client, ids) {
 // source of truth for all three; this just translates the resulting
 // Postgres errors into messages a request-by-username UI can show directly.
 export async function sendFriendRequest(userId, username) {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { data: target, error: lookupError } = await client.from('profiles').select('id').eq('username', username).maybeSingle();
   if (lookupError) throw lookupError;
   if (!target) throw new Error(`No user found with the username "${username}".`);
@@ -48,7 +48,7 @@ export async function sendFriendRequest(userId, username) {
 // status is still 'pending' — each with the REQUESTER's username attached,
 // since that's whose name the "accept/decline" UI needs to show.
 export async function getPendingRequests(userId) {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { data, error } = await client.from('friendships').select('*').eq('addressee_id', userId).eq('status', 'pending');
   if (error) throw error;
 
@@ -59,7 +59,7 @@ export async function getPendingRequests(userId) {
 // Accepted friendships involving `userId`, from either side, each with the
 // OTHER person's username attached (via otherUserId — the friend, not you).
 export async function getFriends(userId) {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { data, error } = await client
     .from('friendships')
     .select('*')
@@ -79,7 +79,7 @@ export async function getFriends(userId) {
 // side — the requester accepting their own outgoing request would be a
 // no-op bug, not a real action, so it's not exposed as a button anywhere).
 export async function acceptFriendRequest(friendshipId) {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { error } = await client.from('friendships').update({ status: 'accepted' }).eq('id', friendshipId);
   if (error) throw error;
 }
@@ -90,7 +90,7 @@ export async function acceptFriendRequest(friendshipId) {
 // perspective. RLS (schema.sql) already restricts this to rows either side
 // of the friendship is actually part of.
 export async function removeFriendship(friendshipId) {
-  const client = requireSupabase();
+  const client = await requireSupabase();
   const { error } = await client.from('friendships').delete().eq('id', friendshipId);
   if (error) throw error;
 }

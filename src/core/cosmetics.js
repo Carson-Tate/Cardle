@@ -118,22 +118,63 @@ export function resolveCosmetics({ level = 1, achievementsUnlocked = [], adminUn
     requirementText,
   });
 
+  // Availability applies to CUSTOM cosmetics only (§11h); built-ins keep their
+  // achievement/level rules. `hidden` means "don't show this in a player's
+  // picker at all unless they have it" — an exclusive cosmetic shouldn't
+  // advertise itself to everyone. The admin panel ignores `hidden` so it can
+  // still hand these out.
+  const markCustom = (entry, levelEarned) => {
+    const availability = entry.availability ?? 'level';
+    if (availability === 'everyone') {
+      return { ...entry, unlocked: true, grantedByAdmin: false, hidden: false, requirementText: 'Available to everyone' };
+    }
+    if (availability === 'grant') {
+      const has = granted.has(entry.id);
+      return {
+        ...entry,
+        unlocked: has,
+        grantedByAdmin: has,
+        hidden: !has,
+        requirementText: 'Granted by an admin only',
+      };
+    }
+    return { ...mark(entry, levelEarned, `Reach level ${entry.level}`), hidden: false };
+  };
+
+  const resolveEntry = (entry, levelEarned, builtInRequirement) =>
+    entry.custom ? markCustom(entry, levelEarned) : { ...mark(entry, levelEarned, builtInRequirement), hidden: false };
+
   return {
-    // A custom badge has no achievement behind it, so it can only ever arrive
-    // via an admin grant — said plainly rather than showing an unreachable
-    // requirement.
     badges: badges.map((badge) =>
-      mark(
-        badge,
-        Boolean(badge.achievementId) && earned.has(badge.achievementId),
-        badge.grantOnly ? 'Granted by an admin only' : `Achievement: ${badge.label}`,
+      resolveEntry(badge, Boolean(badge.achievementId) && earned.has(badge.achievementId), `Achievement: ${badge.label}`),
+    ),
+    titles: titles.map((title) => resolveEntry(title, safeLevel >= title.level, `Reach level ${title.level}`)),
+    paints: paints.map((paint) =>
+      resolveEntry(
+        paint,
+        safeLevel >= paint.level,
+        paint.level <= 1 ? 'Available from the start' : `Reach level ${paint.level}`,
       ),
     ),
-    titles: titles.map((title) => mark(title, safeLevel >= title.level, `Reach level ${title.level}`)),
-    paints: paints.map((paint) =>
-      mark(paint, safeLevel >= paint.level, paint.level <= 1 ? 'Available from the start' : `Reach level ${paint.level}`),
-    ),
   };
+}
+
+/**
+ * Whether a player currently OWNS a cosmetic, judged only from data present on
+ * their `profiles` row. Deliberately limited: it can answer definitively for a
+ * `grant`-mode custom cosmetic (ownership is exactly `admin_unlocks`, which is
+ * on the row) and says nothing about level- or achievement-gated ones, which
+ * would need their whole play history.
+ *
+ * That narrow question is the one that matters for correctness. Flipping an
+ * over-permissive custom cosmetic to `grant` has to actually REMOVE it from
+ * everyone who already equipped it — otherwise re-locking would be cosmetic
+ * only, and an "Owner" title handed out by accident could never be taken back.
+ */
+function ownsGrantOnly(entry, profileRow) {
+  if (!entry?.custom || (entry.availability ?? 'level') !== 'grant') return true;
+  const granted = profileRow?.admin_unlocks;
+  return Array.isArray(granted) && granted.includes(entry.id);
 }
 
 /** Convenience wrapper for callers that hold lifetime XP rather than a level. */
@@ -154,8 +195,14 @@ export function resolveCosmeticsForXp(totalXp, achievementsUnlocked) {
  */
 export function resolveEquipped(profileRow, custom = null) {
   const { badges, titles, paints } = effectiveRegistries(custom);
-  const find = (list, id) => list.find((entry) => entry.id === id) ?? null;
-  const paint = find(paints, profileRow?.equipped_paint) ?? find(paints, DEFAULT_PAINT_ID);
+  // A grant-only custom cosmetic is dropped unless the row actually carries the
+  // grant — see ownsGrantOnly(). This is what makes re-locking an accidentally
+  // over-permissive cosmetic actually take effect for players who equipped it.
+  const find = (list, id) => {
+    const entry = list.find((e) => e.id === id) ?? null;
+    return entry && ownsGrantOnly(entry, profileRow) ? entry : null;
+  };
+  const paint = find(paints, profileRow?.equipped_paint) ?? paints.find((p) => p.id === DEFAULT_PAINT_ID);
   return {
     badge: find(badges, profileRow?.equipped_badge),
     title: find(titles, profileRow?.equipped_title),

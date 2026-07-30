@@ -213,7 +213,7 @@ describe('validateCustomCosmetics', () => {
       paints: [{ id: 'paint_hotpink', label: 'Hot Pink', level: 2, color: '#FF69B4' }],
     });
     assert.deepEqual(errors, []);
-    assert.equal(value.badges[0].grantOnly, true, 'a custom badge has no achievement, so it is grant-only');
+    assert.equal(value.badges[0].availability, 'grant', 'a custom badge has no achievement, so it defaults to grant-only');
     assert.equal(value.badges[0].custom, true);
     assert.equal(value.titles[0].level, 3);
     assert.equal(value.paints[0].color, '#ff69b4', 'hex normalized to lowercase');
@@ -273,9 +273,9 @@ describe('validateCustomCosmetics', () => {
 
 describe('custom cosmetics in the registries', () => {
   const custom = {
-    badges: [{ id: 'badge_founder', label: 'Founder', emoji: '🏅', custom: true, grantOnly: true }],
-    titles: [{ id: 'title_beta', label: 'Beta Tester', level: 3, custom: true }],
-    paints: [{ id: 'paint_hotpink', label: 'Hot Pink', level: 2, color: '#ff69b4', custom: true }],
+    badges: [{ id: 'badge_founder', label: 'Founder', emoji: '🏅', custom: true, availability: 'grant' }],
+    titles: [{ id: 'title_beta', label: 'Beta Tester', level: 3, custom: true, availability: 'level' }],
+    paints: [{ id: 'paint_hotpink', label: 'Hot Pink', level: 2, color: '#ff69b4', custom: true, availability: 'level' }],
   };
 
   test('custom entries are appended, never replacing the built-ins', () => {
@@ -316,5 +316,110 @@ describe('custom cosmetics in the registries', () => {
 
   test('without the custom config, a custom id resolves to the default', () => {
     assert.equal(resolveEquipped({ equipped_paint: 'paint_hotpink' }).paint.id, 'paint_default');
+  });
+});
+
+describe('availability modes', () => {
+  const title = (availability, level = 1) => ({
+    titles: [{ id: 'title_owner', label: 'Owner', level, custom: true, availability }],
+  });
+
+  // The bug this whole feature exists for: an "Owner" title authored at level 1
+  // unlocked for EVERY player, because everyone is at least level 1.
+  test('the original bug — a level-1 custom title is unlocked for everyone', () => {
+    const resolved = resolveCosmetics({ level: 1, custom: title('level', 1) });
+    assert.equal(resolved.titles.find((t) => t.id === 'title_owner').unlocked, true);
+  });
+
+  test('"everyone" mode ignores level entirely', () => {
+    for (const level of [1, 5, 99]) {
+      const entry = resolveCosmetics({ level, custom: title('everyone', 50) }).titles.find((t) => t.id === 'title_owner');
+      assert.equal(entry.unlocked, true);
+      assert.equal(entry.hidden, false);
+      assert.equal(entry.requirementText, 'Available to everyone');
+    }
+  });
+
+  test('"grant" mode is locked and hidden regardless of level', () => {
+    for (const level of [1, 50, 999]) {
+      const entry = resolveCosmetics({ level, custom: title('grant') }).titles.find((t) => t.id === 'title_owner');
+      assert.equal(entry.unlocked, false, `level ${level} must not unlock a grant-only cosmetic`);
+      assert.equal(entry.hidden, true, 'and it must not be advertised');
+    }
+  });
+
+  test('"grant" mode unlocks and unhides once granted', () => {
+    const entry = resolveCosmetics({ level: 1, adminUnlocks: ['title_owner'], custom: title('grant') }).titles.find(
+      (t) => t.id === 'title_owner',
+    );
+    assert.equal(entry.unlocked, true);
+    assert.equal(entry.hidden, false);
+    assert.equal(entry.grantedByAdmin, true);
+  });
+
+  test('"level" mode still gates normally', () => {
+    assert.equal(resolveCosmetics({ level: 4, custom: title('level', 5) }).titles.find((t) => t.id === 'title_owner').unlocked, false);
+    assert.equal(resolveCosmetics({ level: 5, custom: title('level', 5) }).titles.find((t) => t.id === 'title_owner').unlocked, true);
+  });
+
+  test('an unknown availability value is refused by the validator', () => {
+    const { value, errors } = validateCustomCosmetics({
+      titles: [{ id: 'title_x', label: 'X', level: 1, availability: 'whenever' }],
+    });
+    assert.equal(value.titles.length, 0);
+    assert.match(errors[0], /availability must be one of/);
+  });
+
+  test('a custom badge cannot be level-gated — "level" collapses to "grant"', () => {
+    const { value } = validateCustomCosmetics({ badges: [{ id: 'badge_x', label: 'X', availability: 'level' }] });
+    assert.equal(value.badges[0].availability, 'grant');
+  });
+
+  test('a badge can still be set to everyone', () => {
+    const { value } = validateCustomCosmetics({ badges: [{ id: 'badge_x', label: 'X', availability: 'everyone' }] });
+    assert.equal(value.badges[0].availability, 'everyone');
+  });
+
+  test('omitting availability preserves the previous behaviour per kind', () => {
+    const { value } = validateCustomCosmetics({
+      badges: [{ id: 'badge_x', label: 'B' }],
+      titles: [{ id: 'title_x', label: 'T', level: 3 }],
+      paints: [{ id: 'paint_x', label: 'P', level: 3, color: '#000000' }],
+    });
+    assert.equal(value.badges[0].availability, 'grant', 'badges were already grant-only');
+    assert.equal(value.titles[0].availability, 'level', 'titles were level-gated');
+    assert.equal(value.paints[0].availability, 'level', 'paints were level-gated');
+  });
+
+  // Re-locking has to actually take the cosmetic AWAY from players who already
+  // equipped it while it was over-permissive, or the fix would be cosmetic only
+  // and an accidental "Owner" title could never be recalled.
+  test('re-locking strips the cosmetic from a player who equipped it but was never granted', () => {
+    const row = { username: 'someone', equipped_title: 'title_owner', admin_unlocks: [] };
+    assert.equal(resolveEquipped(row, title('level', 1)).title?.id, 'title_owner', 'level mode: still theirs');
+    assert.equal(resolveEquipped(row, title('grant')).title, null, 'grant mode: no longer rendered');
+  });
+
+  test('but a granted player keeps it after the switch', () => {
+    const row = { username: 'car', equipped_title: 'title_owner', admin_unlocks: ['title_owner'] };
+    assert.equal(resolveEquipped(row, title('grant')).title?.id, 'title_owner');
+  });
+
+  test('an "everyone" cosmetic stays equipped for anyone', () => {
+    const row = { username: 'someone', equipped_title: 'title_owner', admin_unlocks: [] };
+    assert.equal(resolveEquipped(row, title('everyone')).title?.id, 'title_owner');
+  });
+
+  test('a grant-only paint falls back to the default rather than vanishing', () => {
+    const custom = { paints: [{ id: 'paint_owner', label: 'Owner', level: 1, color: '#ff0000', custom: true, availability: 'grant' }] };
+    const row = { username: 'someone', equipped_paint: 'paint_owner', admin_unlocks: [] };
+    assert.equal(resolveEquipped(row, custom).paint.id, 'paint_default');
+  });
+
+  test('built-in cosmetics are never hidden and ignore availability', () => {
+    const resolved = resolveCosmetics({ level: 1, achievementsUnlocked: [] });
+    for (const kind of ['badges', 'titles', 'paints']) {
+      assert.ok(resolved[kind].every((c) => c.hidden === false), `${kind} should never be hidden`);
+    }
   });
 });

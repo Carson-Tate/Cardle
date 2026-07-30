@@ -883,6 +883,27 @@ That keeps the whole rule set expressible and unit-testable without a database, 
 
 **Verified** with 36 new unit tests (override validation and fallback, `getDailyModifier` ignoring unknown ids while keeping a day-stable random context, word-bank merge semantics including the merged pools actually driving a generated caption, custom-cosmetic validation including the colour-injection guard, and custom entries not shadowing built-ins) plus 40 browser assertions: the 14-day editable schedule, saving and clearing overrides, a player's board honouring a pinned modifier and its discard cap, the word-bank editor round-tripping into a real player's poem, validation refusing a phrase with a period, authoring/removing custom cosmetics, a custom paint reaching a player's picker and computing the right colour, an invalid id refused before saving, a non-admin refused server-side even with the client gate removed, and a full playthrough with the backend entirely unavailable.
 
+### 11h. Cosmetic Availability Modes ✅ built (owner bug report: "add an option when adding titles, badges and paints to have it unlocked for everyone or locked/hidden. i just added an owner title and now everyone has it")
+
+**A real design flaw in §11g, not a misuse.** Custom titles and paints were level-gated only, so the level field was the sole way to express availability — and since every player is at least level 1, an "Owner" title authored at level 1 unlocked for the entire playerbase. There was no way to say "this one is mine" or "this one is simply for everybody". The owner hit this immediately on the first real use.
+
+**Three modes**, chosen to match the two the owner asked for plus the existing behaviour:
+- `level` — unlocks at a level threshold. The original behaviour, and still the default for titles and paints so nothing already authored changes meaning.
+- `everyone` — unlocked for every player immediately, level ignored.
+- `grant` — obtainable only via an admin grant (§11f's `admin_unlocks`), **and hidden** from a player's picker unless they actually have it. The owner said "locked/hidden"; for an exclusive cosmetic those are the same thing — advertising a title nobody can earn is worse than not showing it.
+
+A custom **badge** cannot be level-gated at all (it has no achievement behind it), so `level` collapses to `grant` for badges rather than silently creating something unreachable. Absent availability defaults per kind — `grant` for badges, `level` for titles and paints — so cosmetics authored before this existed keep behaving exactly as they did.
+
+**Re-locking has to actually take the cosmetic away, and that was the hard part.** Flipping an over-permissive cosmetic to `grant` is worthless if everyone who already equipped it keeps wearing it — the accidental Owner title could never be recalled. So `resolveEquipped()` now drops a `grant`-mode custom cosmetic unless the profile row carries the grant.
+
+That's deliberately scoped to `grant` mode, and the limit is worth recording: ownership for `grant` mode is exactly `admin_unlocks`, which lives **on the profile row**, so it can be judged anywhere a nameplate renders — including a friend's row, where no play history is available. Level- and achievement-gated ownership would need the player's whole history, which a friends list doesn't have. `ownsGrantOnly()` answers only the narrow question it can answer definitively, and says so.
+
+**The admin panel deliberately ignores `hidden`** — it has to list a hidden cosmetic in order to grant it. Only the player-facing picker filters on it.
+
+**Also fixed a naming smell this exposed.** The custom-cosmetic "Remove" button reused `.admin-select-btn`, whose name means "select a player". A browser test clicked Remove when it meant Manage, which is exactly the confusion the shared name invites; it now has its own `.admin-remove-btn` class sharing the same styling.
+
+**Verified** with 14 new unit tests and a 15-assertion browser suite that reproduces the reported bug before fixing it: author "Owner" at level 1, confirm an ordinary player can see AND equip it, re-author as locked/hidden, then confirm it disappears from their picker *and* stops rendering on the nameplate they'd already equipped it to — while the admin can still see and grant it, a granted player keeps it, and an `everyone` paint reaches a level-1 player.
+
 ---
 
 ## 12. Implementation Status
@@ -934,3 +955,10 @@ None of the three touch `dailySeed`/`hashSeed` or persistence — every redeal d
     - **Word bank overrides are partial on purpose**, so untouched slots keep receiving future built-in content rather than silently freezing at whatever shipped the day the admin first saved.
     - **Custom paints are hex-only as a security decision.** They become inline styles in other players' browsers, so the strict-hex validator is the CSS-injection guard, and it is tested with real attack strings. Gradients/animation would need authored CSS, so they stay code-only — a limitation stated in the UI rather than worked around.
     - **A performance regression I introduced, then measured and fixed.** Gating the Draw button on the config fetch (to guarantee overrides applied before dealing) delayed it from ~117ms to ~960ms. The requirement was only "before cards are dealt", not "before the button appears", so the await moved to the click handler — instant button, guarantee preserved, both re-measured.
+
+60. **Cosmetic availability modes** (§11h), owner bug report: "i just added an owner title and now everyone has it." A genuine design flaw in what I shipped in §11g, not a misuse — custom titles and paints could only be level-gated, and since every player is level 1 or higher, a level-1 title was a title for everybody. The fix adds `everyone` and `grant` (locked/hidden) alongside `level`.
+    - **The non-obvious half was making re-locking actually work.** Adding the mode is easy; the flaw only truly closes if flipping a cosmetic to grant-only REMOVES it from players who already equipped it while it was open to all. `resolveEquipped()` now drops a grant-mode cosmetic unless the profile row carries the grant.
+    - **Scoped honestly:** that check works for `grant` mode because ownership is exactly `admin_unlocks`, which is on the profile row and therefore available anywhere a nameplate renders — including a friend's row with no play history. Level- and achievement-gated ownership can't be judged there, so `ownsGrantOnly()` deliberately only answers the question it can answer, and the limit is documented rather than papered over.
+    - **Defaults preserve existing behaviour** (badges `grant`, titles/paints `level`), so nothing already authored silently changes meaning; and a custom badge's `level` collapses to `grant` rather than creating an unreachable cosmetic.
+    - Verified by reproducing the reported bug in a browser first — author "Owner" at level 1, confirm any player can equip it — then confirming the fix removes it from both the picker and the already-equipped nameplate.
+    - Incidental cleanup the work exposed: the custom-cosmetic Remove button shared the `.admin-select-btn` class ("select a player"), and a test duly clicked the wrong one. Renamed to `.admin-remove-btn`.

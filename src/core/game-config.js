@@ -26,6 +26,21 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const COSMETIC_ID = /^[A-Za-z0-9_]{1,40}$/;
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
+// How a custom cosmetic becomes available (DESIGN.md §11h). This exists because
+// level-gating alone was wrong for a whole category of cosmetic: an "Owner"
+// title authored at level 1 unlocked for EVERY player, since every player is at
+// least level 1. There was no way to express "this one is mine" or "this one is
+// simply for everybody".
+//
+//   'level'    — unlocks at `level`, the original behaviour and still the default
+//                for titles and paints.
+//   'everyone' — unlocked for every player immediately, no level involved.
+//   'grant'    — obtainable ONLY via an admin grant (profiles.admin_unlocks), and
+//                HIDDEN from a player's picker unless they actually have it, so
+//                an exclusive cosmetic doesn't advertise itself to everyone.
+export const AVAILABILITY_MODES = ['level', 'everyone', 'grant'];
+const DEFAULT_AVAILABILITY = { badge: 'grant', title: 'level', paint: 'level' };
+
 const MODIFIER_IDS = new Set(MODIFIERS.map((m) => m.id));
 // The word bank's flat slots. `ending` is nested (good/bad) and handled
 // separately — it's the one slot that reacts to the hand (§6b).
@@ -218,15 +233,35 @@ export function validateCustomCosmetics(raw) {
     }
     return level;
   };
+  // Absent means the kind's default, so cosmetics authored before availability
+  // existed keep behaving exactly as they did rather than silently changing.
+  const takeAvailability = (entry, kind, id) => {
+    const availability = entry?.availability ?? DEFAULT_AVAILABILITY[kind];
+    if (!AVAILABILITY_MODES.includes(availability)) {
+      errors.push(`${kind} "${id}": availability must be one of ${AVAILABILITY_MODES.join(', ')}`);
+      return null;
+    }
+    return availability;
+  };
 
   const badges = [];
   for (const entry of Array.isArray(raw.badges) ? raw.badges : []) {
     const id = takeId(entry, 'badge');
     if (!id) continue;
     const label = takeLabel(entry, 'badge', id);
-    if (!label) continue;
+    const availability = takeAvailability(entry, 'badge', id);
+    if (!label || availability === null) continue;
     const emoji = typeof entry.emoji === 'string' && entry.emoji.trim() ? entry.emoji.trim() : '⭐';
-    badges.push({ id, label, emoji, custom: true, grantOnly: true });
+    // A custom badge has no achievement behind it, so 'level' is meaningless
+    // for one — it collapses to 'grant' rather than being silently unreachable.
+    badges.push({
+      id,
+      label,
+      emoji,
+      custom: true,
+      availability: availability === 'level' ? 'grant' : availability,
+      level: 1,
+    });
   }
 
   const titles = [];
@@ -235,8 +270,9 @@ export function validateCustomCosmetics(raw) {
     if (!id) continue;
     const label = takeLabel(entry, 'title', id);
     const level = takeLevel(entry, 'title', id);
-    if (!label || level === null) continue;
-    titles.push({ id, label, level, custom: true });
+    const availability = takeAvailability(entry, 'title', id);
+    if (!label || level === null || availability === null) continue;
+    titles.push({ id, label, level, custom: true, availability });
   }
 
   const paints = [];
@@ -245,12 +281,13 @@ export function validateCustomCosmetics(raw) {
     if (!id) continue;
     const label = takeLabel(entry, 'paint', id);
     const level = takeLevel(entry, 'paint', id);
-    if (!label || level === null) continue;
+    const availability = takeAvailability(entry, 'paint', id);
+    if (!label || level === null || availability === null) continue;
     if (typeof entry.color !== 'string' || !HEX_COLOR.test(entry.color)) {
       errors.push(`paint "${id}": color must be a 6-digit hex like #c0392b`);
       continue;
     }
-    paints.push({ id, label, level, color: entry.color.toLowerCase(), custom: true });
+    paints.push({ id, label, level, color: entry.color.toLowerCase(), custom: true, availability });
   }
 
   return { value: { badges, titles, paints }, errors };

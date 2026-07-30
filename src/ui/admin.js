@@ -337,6 +337,16 @@ export async function initAdmin(root) {
   // built-ins; a custom BADGE has no achievement behind it, so it can only be
   // handed out with an admin grant — stated in the hint rather than showing an
   // unreachable requirement.
+  // Plain-English description of how a custom cosmetic is obtained, so the list
+  // makes an over-permissive entry obvious rather than hiding it behind a level
+  // number that happens to be 1.
+  function availabilityLabel(entry) {
+    const mode = entry.availability ?? 'level';
+    if (mode === 'everyone') return 'everyone';
+    if (mode === 'grant') return 'admin grant only (hidden)';
+    return `level ${entry.level}`;
+  }
+
   function customCosmeticsHtml() {
     const custom = gameConfig?.customCosmetics ?? { badges: [], titles: [], paints: [] };
     const rows = [
@@ -360,9 +370,9 @@ export async function initAdmin(root) {
                     <span class="admin-tag">${escapeHtml(r.kind.toUpperCase())}</span>
                     <span class="admin-result-name">
                       ${r.kind === 'paint' ? `<span style="color: ${escapeHtml(r.color)}">${escapeHtml(r.label)}</span>` : escapeHtml(`${r.emoji ?? ''} ${r.label}`)}
-                      <small>${escapeHtml(r.id)}${r.kind === 'badge' ? ' · grant only' : ` · level ${r.level}`}</small>
+                      <small>${escapeHtml(r.id)} · ${escapeHtml(availabilityLabel(r))}</small>
                     </span>
-                    <button type="button" class="admin-select-btn" data-remove-cosmetic="${escapeHtml(r.id)}">Remove</button>
+                    <button type="button" class="admin-remove-btn" data-remove-cosmetic="${escapeHtml(r.id)}">Remove</button>
                   </li>`,
                   )
                   .join('')}
@@ -387,7 +397,15 @@ export async function initAdmin(root) {
             <input type="text" id="new-cosmetic-label" placeholder="Beta Tester" autocomplete="off" />
           </label>
           <label class="admin-equip-field">
-            <span class="stat-tile-label">Level (title/paint)</span>
+            <span class="stat-tile-label">Availability</span>
+            <select id="new-cosmetic-availability">
+              <option value="level">Unlock at level</option>
+              <option value="everyone">Unlocked for everyone</option>
+              <option value="grant">Locked / hidden (admin grant only)</option>
+            </select>
+          </label>
+          <label class="admin-equip-field">
+            <span class="stat-tile-label">Level (if "unlock at level")</span>
             <input type="number" id="new-cosmetic-level" min="1" value="1" />
           </label>
           <label class="admin-equip-field">
@@ -627,6 +645,7 @@ export async function initAdmin(root) {
       const id = root.querySelector('#new-cosmetic-id').value.trim();
       const label = root.querySelector('#new-cosmetic-label').value.trim();
       const level = Number(root.querySelector('#new-cosmetic-level').value);
+      const availability = root.querySelector('#new-cosmetic-availability').value;
       const color = root.querySelector('#new-cosmetic-color').value;
       const emoji = root.querySelector('#new-cosmetic-emoji').value.trim();
 
@@ -636,9 +655,9 @@ export async function initAdmin(root) {
         titles: [...current.titles],
         paints: [...current.paints],
       };
-      if (kind === 'badge') next.badges.push({ id, label, emoji });
-      else if (kind === 'title') next.titles.push({ id, label, level });
-      else next.paints.push({ id, label, level, color });
+      if (kind === 'badge') next.badges.push({ id, label, emoji, availability });
+      else if (kind === 'title') next.titles.push({ id, label, level, availability });
+      else next.paints.push({ id, label, level, color, availability });
 
       saveConfig(CONFIG_KEYS.CUSTOM_COSMETICS, next, validateCustomCosmetics, `Added ${kind} "${label}".`);
     });

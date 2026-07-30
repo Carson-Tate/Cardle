@@ -2318,6 +2318,7 @@ header h1 {
 }
 
 .admin-select-btn,
+.admin-remove-btn,
 .admin-action-btn {
   font-family: inherit;
   font-size: 0.78rem;
@@ -2331,6 +2332,7 @@ header h1 {
 }
 
 .admin-select-btn:hover,
+.admin-remove-btn:hover,
 .admin-action-btn:hover {
   border-color: var(--accent);
   color: var(--accent);

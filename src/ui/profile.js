@@ -274,7 +274,11 @@ export async function initProfile(root) {
     `;
   }
 
-  function pickerHtml(heading, kind, items, selectedId, { noneLabel, renderChip }) {
+  function pickerHtml(heading, kind, allItems, selectedId, { noneLabel, renderChip }) {
+    // `hidden` entries are grant-only custom cosmetics this player wasn't
+    // granted (§11h) — an exclusive cosmetic shouldn't advertise itself to
+    // everyone, so it isn't listed at all rather than shown as locked.
+    const items = allItems.filter((i) => !i.hidden);
     const unlockedCount = items.filter((i) => i.unlocked).length;
     const none =
       noneLabel === null

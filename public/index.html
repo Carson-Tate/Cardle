@@ -15,6 +15,9 @@
     <div class="site-header-right">
       <div id="header-auth-slot"></div>
       <button type="button" id="header-friends-btn" class="header-friends-btn" hidden>Friends</button>
+      <!-- Shown only for admins. This is presentation, not access control —
+           the database authorizes every admin action (DESIGN.md §11f). -->
+      <button type="button" id="header-admin-btn" class="header-admin-btn" hidden>🛠️ Admin</button>
     </div>
   </header>
   <div id="app">

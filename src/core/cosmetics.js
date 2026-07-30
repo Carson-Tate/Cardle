@@ -74,28 +74,33 @@ export const DEFAULT_PAINT_ID = 'paint_default';
  * human-readable requirement on the locked ones so the picker can say WHY
  * something isn't available yet.
  *
- * @param {{level?: number, achievementsUnlocked?: string[]}} player
+ * `adminUnlocks` (profiles.admin_unlocks, §11f) force-unlocks specific ids
+ * regardless of achievements or level. It exists because normal unlocks are
+ * DERIVED from history, so there was otherwise nowhere to record "an admin
+ * granted this" — a granted cosmetic would have been silently re-locked the
+ * next time the profile recomputed itself. Additive only: it never takes
+ * away something legitimately earned.
+ *
+ * @param {{level?: number, achievementsUnlocked?: string[], adminUnlocks?: string[]}} player
  */
-export function resolveCosmetics({ level = 1, achievementsUnlocked = [] } = {}) {
-  const earned = new Set(achievementsUnlocked);
+export function resolveCosmetics({ level = 1, achievementsUnlocked = [], adminUnlocks = [] } = {}) {
+  const earned = new Set(achievementsUnlocked ?? []);
+  const granted = new Set(adminUnlocks ?? []);
   const safeLevel = Number.isFinite(level) ? level : 1;
 
+  const mark = (entry, earnedNormally, requirementText) => ({
+    ...entry,
+    unlocked: earnedNormally || granted.has(entry.id),
+    grantedByAdmin: !earnedNormally && granted.has(entry.id),
+    requirementText,
+  });
+
   return {
-    badges: BADGES.map((badge) => ({
-      ...badge,
-      unlocked: earned.has(badge.achievementId),
-      requirementText: `Achievement: ${badge.label}`,
-    })),
-    titles: TITLES.map((title) => ({
-      ...title,
-      unlocked: safeLevel >= title.level,
-      requirementText: `Reach level ${title.level}`,
-    })),
-    paints: NAME_PAINTS.map((paint) => ({
-      ...paint,
-      unlocked: safeLevel >= paint.level,
-      requirementText: paint.level <= 1 ? 'Available from the start' : `Reach level ${paint.level}`,
-    })),
+    badges: BADGES.map((badge) => mark(badge, earned.has(badge.achievementId), `Achievement: ${badge.label}`)),
+    titles: TITLES.map((title) => mark(title, safeLevel >= title.level, `Reach level ${title.level}`)),
+    paints: NAME_PAINTS.map((paint) =>
+      mark(paint, safeLevel >= paint.level, paint.level <= 1 ? 'Available from the start' : `Reach level ${paint.level}`),
+    ),
   };
 }
 

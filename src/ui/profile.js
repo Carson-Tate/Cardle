@@ -95,7 +95,17 @@ export async function initProfile(root) {
     title: stored.title?.id ?? null,
     paint: stored.paint?.id ?? DEFAULT_PAINT_ID,
   };
-  const cosmetics = resolveCosmetics({ level: stats.level, achievementsUnlocked: stats.achievementsUnlocked });
+  // One shared context for BOTH the picker and the pre-save re-check below, so
+  // the two can never disagree about what this player may equip.
+  // `adminUnlocks` matters: cosmetic unlocks are otherwise derived from
+  // achievements and level, so without it an admin-granted cosmetic would show
+  // as locked to the player who was given it -- the grant would do nothing.
+  const playerContext = {
+    level: stats.level,
+    achievementsUnlocked: stats.achievementsUnlocked,
+    adminUnlocks: profile?.admin_unlocks ?? [],
+  };
+  const cosmetics = resolveCosmetics(playerContext);
 
   // The shape nameplateHtml expects, rebuilt from the current selection so the
   // header preview updates the instant a picker changes.
@@ -197,7 +207,7 @@ export async function initProfile(root) {
         // Re-checked even though locked chips are disabled: the page could have
         // been open across a level-up in another tab, and this is the last gate
         // before something unearned gets persisted.
-        if (!canEquip(kind, id, { level: stats.level, achievementsUnlocked: stats.achievementsUnlocked })) return;
+        if (!canEquip(kind, id, playerContext)) return;
 
         const previous = equipped[slot];
         equipped[slot] = slot === 'paint' ? (id ?? DEFAULT_PAINT_ID) : id;

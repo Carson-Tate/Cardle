@@ -10,6 +10,7 @@ import { nameplateHtml, PROFILE_UPDATED_EVENT } from './nameplate.js';
 import { getSession, onAuthStateChange, signInWithMagicLink, getProfile, createProfile } from '../state/auth.js';
 import { sendFriendRequest, getPendingRequests, getFriends, acceptFriendRequest, removeFriendship } from '../state/friends.js';
 import { isSupabaseConfigured } from '../state/supabase-client.js';
+import { isCurrentUserAdmin } from '../state/admin.js';
 
 // Escapes text destined for an innerHTML template. Every value interpolated
 // below that did NOT originate in this file gets run through this — usernames
@@ -39,6 +40,7 @@ export function initHeader(root) {
   const helpBtn = root.querySelector('#header-help');
   const authSlot = root.querySelector('#header-auth-slot');
   const friendsBtn = root.querySelector('#header-friends-btn');
+  const adminBtn = root.querySelector('#header-admin-btn');
 
   // Mirrors whatever onAuthStateChange last reported — read by the friends
   // button and the auth slot's own click handler, so they always act on the
@@ -68,6 +70,10 @@ export function initHeader(root) {
 
   helpBtn.addEventListener('click', openHelpModal);
 
+  adminBtn.addEventListener('click', () => {
+    window.location.href = '/?admin';
+  });
+
   friendsBtn.addEventListener('click', () => {
     if (!currentSession) {
       openLoginModal({ hint: 'Log in to see your friends.' });
@@ -76,8 +82,21 @@ export function initHeader(root) {
     openFriendsPanel(currentSession.user.id);
   });
 
+  // Whether to show the admin link. Deliberately asks the DATABASE (the same
+  // is_admin() function that authorizes every admin action) rather than
+  // comparing a username in public JavaScript — so the link and the actual
+  // permission can never disagree, and no admin identity is baked into the
+  // bundle. Hiding the link is presentation only; see admin.js.
+  let isAdmin = false;
+
+  async function refreshAdminLink() {
+    isAdmin = currentSession ? await isCurrentUserAdmin() : false;
+    adminBtn.hidden = !isAdmin;
+  }
+
   function renderAuthSlot() {
     friendsBtn.hidden = !currentSession;
+    if (!currentSession) adminBtn.hidden = true;
     if (!currentSession) {
       authSlot.innerHTML = `<button type="button" class="header-login-btn">Log In</button>`;
       authSlot.querySelector('.header-login-btn').addEventListener('click', () => openLoginModal());
@@ -120,6 +139,7 @@ export function initHeader(root) {
       currentProfile = null;
     }
     renderAuthSlot();
+    refreshAdminLink();
     if (!currentProfile && usernamePromptOpenForUserId !== currentSession.user.id) {
       promptForUsername(currentSession.user.id);
     }

@@ -183,3 +183,57 @@ describe('canEquip', () => {
     }
   });
 });
+
+describe('admin-granted unlocks', () => {
+  test('an admin grant unlocks something not otherwise earned', () => {
+    const player = { level: 1, achievementsUnlocked: [], adminUnlocks: ['badge_veteran', 'title_immortal', 'paint_jackpot'] };
+    const { badges, titles, paints } = resolveCosmetics(player);
+    assert.equal(badges.find((b) => b.id === 'badge_veteran').unlocked, true);
+    assert.equal(titles.find((t) => t.id === 'title_immortal').unlocked, true);
+    assert.equal(paints.find((p) => p.id === 'paint_jackpot').unlocked, true);
+  });
+
+  test('granted entries are flagged so they can be shown differently', () => {
+    const { badges } = resolveCosmetics({ level: 1, achievementsUnlocked: [], adminUnlocks: ['badge_veteran'] });
+    assert.equal(badges.find((b) => b.id === 'badge_veteran').grantedByAdmin, true);
+  });
+
+  test('a legitimately earned cosmetic is not flagged as granted', () => {
+    const { badges } = resolveCosmetics({
+      level: 1,
+      achievementsUnlocked: ['firstSteps'],
+      adminUnlocks: ['firstSteps', 'badge_firstSteps'],
+    });
+    const badge = badges.find((b) => b.id === 'badge_firstSteps');
+    assert.equal(badge.unlocked, true);
+    assert.equal(badge.grantedByAdmin, false, 'earned normally, so not marked as a grant');
+  });
+
+  test('grants are additive — they never re-lock what was earned', () => {
+    const earned = resolveCosmetics({ level: 20, achievementsUnlocked: ['veteran'], adminUnlocks: [] });
+    const withGrant = resolveCosmetics({ level: 20, achievementsUnlocked: ['veteran'], adminUnlocks: ['paint_jackpot'] });
+    for (const kind of ['badges', 'titles', 'paints']) {
+      for (const before of earned[kind]) {
+        if (!before.unlocked) continue;
+        assert.equal(withGrant[kind].find((c) => c.id === before.id).unlocked, true, `${before.id} was re-locked`);
+      }
+    }
+  });
+
+  test('canEquip honours an admin grant', () => {
+    const player = { level: 1, achievementsUnlocked: [], adminUnlocks: ['paint_jackpot'] };
+    assert.equal(canEquip('paints', 'paint_jackpot', player), true);
+    assert.equal(canEquip('paints', 'paint_royal', player), false, 'ungranted and unearned stays refused');
+  });
+
+  test('an unknown id in admin_unlocks unlocks nothing and does not throw', () => {
+    const resolved = resolveCosmetics({ level: 1, achievementsUnlocked: [], adminUnlocks: ['not_a_cosmetic', '<script>'] });
+    assert.equal(resolved.badges.filter((b) => b.unlocked).length, 0);
+    assert.equal(resolved.titles.filter((t) => t.unlocked).length, 0);
+    assert.equal(resolved.paints.filter((p) => p.unlocked).length, 6);
+  });
+
+  test('tolerates null adminUnlocks', () => {
+    assert.doesNotThrow(() => resolveCosmetics({ level: 1, achievementsUnlocked: null, adminUnlocks: null }));
+  });
+});

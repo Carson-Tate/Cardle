@@ -47,6 +47,11 @@ create table public.profiles (
   equipped_badge text check (equipped_badge is null or equipped_badge ~ '^[A-Za-z0-9_]{1,40}$'),
   equipped_title text check (equipped_title is null or equipped_title ~ '^[A-Za-z0-9_]{1,40}$'),
   equipped_paint text check (equipped_paint is null or equipped_paint ~ '^[A-Za-z0-9_]{1,40}$'),
+  -- Admin flag and admin-granted cosmetic unlocks (DESIGN.md §11f). Neither is
+  -- writable by ordinary players — see the column grant further down, without
+  -- which any user could set their own is_admin and self-promote.
+  is_admin boolean not null default false,
+  admin_unlocks text[] not null default '{}',
   created_at timestamptz not null default now()
 );
 
@@ -68,6 +73,15 @@ create policy "Users can insert their own profile"
 create policy "Users can update their own profile"
   on public.profiles for update
   using (auth.uid() = id);
+
+-- The policy above is row-level only: without a COLUMN grant, a user could
+-- update ANY column on their own row through a direct REST call — including
+-- is_admin, which would make the admin flag its own exploit. Restricting UPDATE
+-- to the columns players are meant to change closes that. Same fix as
+-- daily_plays.seed further down (DESIGN.md §11f).
+revoke update on public.profiles from authenticated;
+grant update (username, equipped_badge, equipped_title, equipped_paint)
+  on public.profiles to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- friendships
@@ -188,3 +202,34 @@ end $$;
 revoke all on function public.delete_own_account() from public;
 revoke all on function public.delete_own_account() from anon;
 grant execute on function public.delete_own_account() to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Admin (DESIGN.md §11f)
+-- ---------------------------------------------------------------------------
+-- The full rationale — in particular WHY none of this can be enforced in the
+-- browser, since this is a static site holding only the public anon key — is in
+-- supabase/migrations/004-admin-foundation.sql. Summary: every privileged
+-- action is a `security definer` function whose first statement re-checks
+-- public.is_admin(), which reads the caller's own row via auth.uid() and takes
+-- no arguments. The client-side check only decides whether to render a link.
+--
+-- Run migration 004 rather than re-running this file if your project already
+-- exists; it carries the same statements in idempotent form, plus the one
+-- manual line that grants yourself admin.
+
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select coalesce((select p.is_admin from public.profiles p where p.id = auth.uid()), false);
+$$;
+
+revoke all on function public.is_admin() from public;
+grant execute on function public.is_admin() to authenticated;
+
+create policy "Admins can view all daily plays"
+  on public.daily_plays for select
+  using (public.is_admin());

@@ -65,6 +65,27 @@ export async function getPendingRequests(userId) {
   }));
 }
 
+// Requests YOU have sent that are still pending, each with the ADDRESSEE's
+// username attached. Without this, sending a request produced no visible
+// result anywhere — the request existed in the database but the sender's own
+// panel had no section for it, so it looked like nothing had happened (owner
+// request: "add a 'sent invite' to add friends").
+export async function getSentRequests(userId) {
+  const client = await requireSupabase();
+  const { data, error } = await client.from('friendships').select('*').eq('requester_id', userId).eq('status', 'pending');
+  if (error) throw error;
+
+  const profiles = await profilesById(
+    client,
+    data.map((f) => f.addressee_id),
+  );
+  return data.map((f) => ({
+    ...f,
+    addresseeUsername: profiles.get(f.addressee_id)?.username ?? null,
+    addresseeProfile: profiles.get(f.addressee_id) ?? null,
+  }));
+}
+
 // Accepted friendships involving `userId`, from either side, each with the
 // OTHER person's username attached (via otherUserId — the friend, not you).
 export async function getFriends(userId) {

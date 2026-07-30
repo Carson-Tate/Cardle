@@ -18,6 +18,7 @@ import { nameplateHtml, announceProfileUpdate } from './nameplate.js';
 import { rankLabel, suitGlyph } from '../core/deck.js';
 import { PERSONALITIES } from '../core/personality.js';
 import { HAND_RANKS } from '../core/hand-evaluator.js';
+import { gradeForScore } from '../core/score-grade.js';
 import { openModal } from './modal.js';
 
 // How many hands the recent-hands list shows at a time (owner request: "your
@@ -416,6 +417,10 @@ function handRowHtml({ playDate, result }) {
       <div class="hand-history-meta">
         <span class="hand-history-date">${escapeHtml(formatDate(playDate))}</span>
         <span class="hand-history-label">${escapeHtml(score.handResult?.label ?? 'Unknown hand')}</span>
+        ${(() => {
+          const grade = gradeForScore(score.total);
+          return `<span class="history-grade score-grade--${grade.id}">${escapeHtml(grade.emoji)} ${escapeHtml(grade.label)}</span>`;
+        })()}
       </div>
       <div class="hand-history-cards">
         ${cards.map((card) => miniCardHtml(card)).join('')}

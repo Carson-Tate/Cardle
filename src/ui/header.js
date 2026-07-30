@@ -8,7 +8,7 @@
 import { openModal } from './modal.js';
 import { nameplateHtml, PROFILE_UPDATED_EVENT } from './nameplate.js';
 import { getSession, onAuthStateChange, signInWithMagicLink, getProfile, createProfile } from '../state/auth.js';
-import { sendFriendRequest, getPendingRequests, getFriends, acceptFriendRequest, removeFriendship } from '../state/friends.js';
+import { sendFriendRequest, getPendingRequests, getSentRequests, getFriends, acceptFriendRequest, removeFriendship } from '../state/friends.js';
 import { isSupabaseConfigured } from '../state/supabase-client.js';
 import { isCurrentUserAdmin } from '../state/admin.js';
 
@@ -47,6 +47,15 @@ export function initHeader(root) {
   // current session without each needing their own subscription.
   let currentSession = null;
   let currentProfile = null;
+  // Whether the initial session lookup has finished. Until it has, the auth slot
+  // shows a neutral placeholder rather than the logged-OUT state — owner bug
+  // report: "fix login flashing when reloading". renderAuthSlot() runs
+  // synchronously at init so the header isn't blank, but at that moment
+  // `currentSession` is still null, so a signed-in player briefly saw "Log In"
+  // on every reload before getSession() resolved and swapped it for their name.
+  // A placeholder of the same size also stops the header jumping when the real
+  // nameplate lands.
+  let sessionResolved = false;
 
   // Which user id (if any) currently has a username-prompt modal open —
   // owner bug report: "when someone successfully logs in for the first
@@ -95,6 +104,13 @@ export function initHeader(root) {
   }
 
   function renderAuthSlot() {
+    if (!sessionResolved) {
+      // Nothing is known yet — reserve the space, claim nothing.
+      authSlot.innerHTML = '<span class="header-auth-pending" aria-hidden="true"></span>';
+      friendsBtn.hidden = true;
+      adminBtn.hidden = true;
+      return;
+    }
     friendsBtn.hidden = !currentSession;
     if (!currentSession) adminBtn.hidden = true;
     if (!currentSession) {
@@ -156,11 +172,13 @@ export function initHeader(root) {
   // session isn't consistent across SDK versions.
   getSession().then((session) => {
     currentSession = session;
+    sessionResolved = true;
     refreshProfile();
   });
 
   onAuthStateChange((session) => {
     currentSession = session;
+    sessionResolved = true;
     refreshProfile();
   });
 
@@ -280,8 +298,9 @@ export function initHeader(root) {
     body.innerHTML = `<p class="friends-loading">Loading…</p>`;
     let friends;
     let pending;
+    let sent;
     try {
-      [friends, pending] = await Promise.all([getFriends(userId), getPendingRequests(userId)]);
+      [friends, pending, sent] = await Promise.all([getFriends(userId), getPendingRequests(userId), getSentRequests(userId)]);
     } catch (error) {
       body.innerHTML = `<p class="friends-error">${escapeHtml(error.message)}</p>`;
       return;
@@ -304,6 +323,23 @@ export function initHeader(root) {
                    <span>${r.requesterProfile ? nameplateHtml(r.requesterProfile) : escapeHtml(r.requesterUsername ?? 'Unknown')}</span>
                    <button type="button" class="friend-accept-btn" data-id="${r.id}">Accept</button>
                    <button type="button" class="friend-decline-btn" data-id="${r.id}">Decline</button>
+                 </li>`,
+                 )
+                 .join('')}
+             </ul>`
+          : ''
+      }
+      ${
+        sent.length > 0
+          ? `<h3 class="friends-subheading">Sent <span class="profile-count">${sent.length}</span></h3>
+             <ul class="friends-list">
+               ${sent
+                 .map(
+                   (r) => `
+                 <li class="friends-list-item">
+                   <span>${r.addresseeProfile ? nameplateHtml(r.addresseeProfile) : escapeHtml(r.addresseeUsername ?? 'Unknown')}</span>
+                   <span class="friends-pending-tag">Pending</span>
+                   <button type="button" class="friend-cancel-btn" data-id="${escapeHtml(r.id)}">Cancel</button>
                  </li>`,
                  )
                  .join('')}
@@ -335,6 +371,13 @@ export function initHeader(root) {
       try {
         await sendFriendRequest(userId, username);
         await renderFriendsPanel(body, userId);
+        // Re-query the freshly rendered node: renderFriendsPanel replaced the
+        // whole body, so the `status` captured above is now detached.
+        const freshStatus = body.querySelector('.add-friend-status');
+        if (freshStatus) {
+          freshStatus.hidden = false;
+          freshStatus.textContent = `Invite sent to ${username}.`;
+        }
       } catch (error) {
         status.hidden = false;
         status.textContent = error.message;
@@ -348,7 +391,7 @@ export function initHeader(root) {
       });
     });
 
-    body.querySelectorAll('.friend-decline-btn, .friend-remove-btn').forEach((btn) => {
+    body.querySelectorAll('.friend-decline-btn, .friend-remove-btn, .friend-cancel-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
         await removeFriendship(btn.dataset.id);
         await renderFriendsPanel(body, userId);

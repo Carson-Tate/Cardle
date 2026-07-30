@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Cardle">
+  <!-- Tab icon (DESIGN.md §11i). A single playing card at a slight angle, which
+       reads as "cards" at 16px far better than a suit symbol alone does — the
+       card silhouette survives the downscale, fine detail inside it would not.
+       Deliberately an SVG rather than a .ico: one file, sharp at every size,
+       and no build step, matching the rest of the project. -->
+  <rect width="64" height="64" rx="14" fill="#2f6f4f"/>
+  <g transform="rotate(-12 32 32)">
+    <rect x="19" y="12" width="26" height="40" rx="5" fill="#f7f7f5"/>
+    <!-- Spade, drawn large and centred so it stays legible when the whole icon
+         is 16 pixels wide. -->
+    <path d="M32 20c-5 5.5-9.5 8.6-9.5 13.2 0 3 2.3 5.1 5 5.1 1.7 0 3.1-.8 4-2-.4 2.6-1.4 4.3-2.9 5.4h6.8c-1.5-1.1-2.5-2.8-2.9-5.4.9 1.2 2.3 2 4 2 2.7 0 5-2.1 5-5.1C41.5 28.6 37 25.5 32 20z" fill="#1a1a1a"/>
+  </g>
+</svg>

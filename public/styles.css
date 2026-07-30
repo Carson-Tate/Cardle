@@ -2465,3 +2465,120 @@ header h1 {
   font-size: 0.65rem;
   color: var(--text-muted);
 }
+
+/* --- Run rarity grade (DESIGN.md §11i) ---------------------------------- */
+
+.score-grade {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 auto 1rem;
+  padding: 0.25rem 0.8rem;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  animation: line-in 300ms ease both;
+}
+
+.score-grade[hidden] {
+  display: none;
+}
+
+.score-grade-emoji {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+/* Each tier's colour. `currentColor` on the border above means one declaration
+   per tier covers text and outline together. */
+.score-grade--common {
+  color: var(--text-muted);
+}
+.score-grade--uncommon {
+  color: #2f8f52;
+}
+.score-grade--rare {
+  color: #2477b3;
+}
+.score-grade--epic {
+  color: #8046c8;
+}
+.score-grade--legendary {
+  color: #b8860b;
+}
+.score-grade--mythic {
+  color: #c2417a;
+}
+
+@media (prefers-color-scheme: dark) {
+  .score-grade--uncommon {
+    color: #62c78d;
+  }
+  .score-grade--rare {
+    color: #63b1e8;
+  }
+  .score-grade--epic {
+    color: #b78ce8;
+  }
+  .score-grade--legendary {
+    color: #e6b54a;
+  }
+  .score-grade--mythic {
+    color: #f083ad;
+  }
+}
+
+/* The compact variant inside a profile history row. */
+.history-grade {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* --- Header auth placeholder (fixes the logged-out flash on reload) ------ */
+
+/* Occupies the same footprint as the eventual Log In button / nameplate so the
+   header doesn't shift when the real content lands. Intentionally blank rather
+   than a spinner: the wait is normally a few hundred milliseconds, and a
+   spinner that brief reads as a glitch. */
+.header-auth-pending {
+  display: inline-block;
+  width: 4.5rem;
+  height: 1.9rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 45%, transparent);
+}
+
+/* --- Sent friend invites ------------------------------------------------- */
+
+.friends-pending-tag {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+.friend-cancel-btn {
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.friend-cancel-btn:hover {
+  border-color: var(--red);
+  color: var(--red);
+}

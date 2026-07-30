@@ -17,6 +17,7 @@ import { generateStory, getStoryOptions, getDefaultSelections } from '../story/g
 import { SLOT_META } from '../story/templates.js';
 import { RARITIES, TOTAL_SPECIAL_CHANCE, jokerTierForRoll } from '../core/rarity.js';
 import { getDailyModifier, buildModifierById, modifierScoringMultiplier, MODIFIERS } from '../core/modifiers.js';
+import { gradeForScore } from '../core/score-grade.js';
 import { createCardElement } from './card-view.js';
 import { delay, animateCountUp, flipReplaceCard, flySparks } from './animations.js';
 
@@ -222,10 +223,16 @@ export function initBoard(root) {
         // for that player's day. Waiting on the click keeps the page feeling
         // instant while preserving that guarantee — and by the time anyone
         // reads the page and clicks, the fetch has almost always resolved.
+        // Immediate visible feedback: awaiting config can take a few hundred
+        // milliseconds on a cold connection, and a button that only greys out
+        // reads as a dead click. The label makes the wait legible.
+        const originalLabel = drawBtn.textContent;
         drawBtn.disabled = true;
+        drawBtn.textContent = 'Shuffling…';
         await awaitGameConfig();
         drawBtn.hidden = true;
         drawBtn.disabled = false;
+        drawBtn.textContent = originalLabel;
         startHand(dealOptions);
       },
       { once: true },
@@ -994,6 +1001,7 @@ async function revealScore(resultPanel, result, fragments) {
   resultPanel.innerHTML = `
     <h2 id="hand-label">${score.handResult.label}</h2>
     <div class="score-total" id="score-total">0</div>
+    <div class="score-grade" id="score-grade" hidden></div>
     <ul class="score-breakdown" id="score-breakdown"></ul>
     <p class="decision-rating" id="decision-rating" hidden>Decision Rating: <strong id="decision-rating-value">0%</strong></p>
     <div class="meters" id="meters" hidden></div>
@@ -1053,6 +1061,16 @@ async function revealScore(resultPanel, result, fragments) {
     running += badge.value;
     await animateCountUp(totalEl, from, running, 350);
     await delay(150);
+  }
+
+  // The run's rarity grade (§11i), revealed only after the count-up finishes so
+  // it reads as the verdict on the final number rather than spoiling it early.
+  const gradeEl = resultPanel.querySelector('#score-grade');
+  if (gradeEl) {
+    const grade = gradeForScore(score.total);
+    gradeEl.className = `score-grade score-grade--${grade.id}`;
+    gradeEl.innerHTML = `<span class="score-grade-emoji">${grade.emoji}</span><span class="score-grade-label">${grade.label}</span>`;
+    gradeEl.hidden = false;
   }
 
   // Owner request: collapse the breakdown down to the top badge + half of
@@ -1514,6 +1532,10 @@ function staticResultHtml(result) {
 
   return `
     <h2>${score.handResult.label} — ${score.total.toLocaleString()} pts</h2>
+    ${(() => {
+      const grade = gradeForScore(score.total);
+      return `<div class="score-grade score-grade--${grade.id}"><span class="score-grade-emoji">${grade.emoji}</span><span class="score-grade-label">${grade.label}</span></div>`;
+    })()}
     <ul class="score-breakdown">
       ${badges.map((badge) => `<li class="score-badge">${badgeCardHtml(badge, score.logicalFinalHand, result.finalHand, badge.value)}</li>`).join('')}
     </ul>

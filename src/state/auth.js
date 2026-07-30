@@ -104,9 +104,24 @@ export async function createProfile(userId, username) {
   }
   const client = await requireSupabase();
   const { data, error } = await client.from('profiles').insert({ id: userId, username }).select().single();
-  if (error) {
-    if (error.code === '23505') throw new Error(`"${username}" is already taken — try another.`);
-    throw error;
+  if (!error) return data;
+
+  // `profiles` has TWO unique constraints — `id` (primary key) and `username` —
+  // and Postgres reports BOTH as error code 23505. This used to assume 23505
+  // always meant the username collided, so a player whose profile row already
+  // existed (a first attempt that partly succeeded, or a duplicate prompt) hit
+  // the PRIMARY KEY and was told their perfectly-free name was "already taken"
+  // — owner bug report: "fix name already taken when making a new username".
+  //
+  // Distinguished by asking the database which is actually true, rather than by
+  // pattern-matching the error text (whose wording is a PostgREST/Postgres
+  // implementation detail that could change): if a row for this user already
+  // exists, the id collided and the right move is to return that row — the
+  // player IS that profile, so this self-heals instead of dead-ending them.
+  if (error.code === '23505') {
+    const existing = await getProfile(userId).catch(() => null);
+    if (existing) return existing;
+    throw new Error(`"${username}" is already taken — try another.`);
   }
-  return data;
+  throw error;
 }

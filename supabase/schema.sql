@@ -36,9 +36,17 @@
 -- crafted name executed script in the browser of anyone who viewed their
 -- friends list. src/ui/header.js now escapes on output too — this is the
 -- other half, keeping the bad value out of the database in the first place.
+-- equipped_badge / equipped_title / equipped_paint hold the player's chosen
+-- cosmetics (DESIGN.md §11e). The CHECKs validate the id's SHAPE, not whether
+-- it was unlocked — see supabase/migrations/003-equipped-cosmetics.sql for why
+-- that split is deliberate, and why a pattern is used rather than a hardcoded
+-- list of ids.
 create table public.profiles (
   id uuid references auth.users (id) on delete cascade primary key,
   username text unique not null check (username ~ '^[A-Za-z0-9_]{3,20}$'),
+  equipped_badge text check (equipped_badge is null or equipped_badge ~ '^[A-Za-z0-9_]{1,40}$'),
+  equipped_title text check (equipped_title is null or equipped_title ~ '^[A-Za-z0-9_]{1,40}$'),
+  equipped_paint text check (equipped_paint is null or equipped_paint ~ '^[A-Za-z0-9_]{1,40}$'),
   created_at timestamptz not null default now()
 );
 

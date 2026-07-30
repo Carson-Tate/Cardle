@@ -1922,3 +1922,231 @@ header h1 {
   opacity: 0.45;
   cursor: default;
 }
+
+/* ===========================================================================
+   Cosmetics: nameplates, name paints, pickers (DESIGN.md §11e)
+   =========================================================================== */
+
+.nameplate {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05em;
+  vertical-align: middle;
+}
+
+.nameplate-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+
+.nameplate-badge {
+  font-size: 0.95em;
+  line-height: 1;
+}
+
+/* The title is a subtitle under the name, never inline beside it — titles are
+   real phrases ("Legend of the Felt") and inline they shove the name around
+   and wrap unpredictably in a narrow friends row. */
+.nameplate-title {
+  font-size: 0.6em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
+/* The compact variant (site header) hides the title even if one is equipped —
+   belt and braces alongside nameplate.js not emitting it, so a future caller
+   passing `full` into a tight space still can't break the top bar. */
+.nameplate--compact .nameplate-title {
+  display: none;
+}
+
+/* --- Name paints -------------------------------------------------------
+   Each `.paint-<id>` matches an id in core/cosmetics.js's NAME_PAINTS. The
+   colours live here rather than in the registry so dark mode can adjust them
+   and so the registry can never inject CSS.
+   The gradient paints use background-clip: text, with `color: transparent`
+   only applied where that is supported — otherwise the name would vanish
+   entirely on a browser that ignores the clip. */
+
+.paint-paint_default {
+  color: inherit;
+}
+
+.paint-paint_crimson {
+  color: #c0392b;
+}
+
+.paint-paint_ocean {
+  color: #2477b3;
+}
+
+.paint-paint_forest {
+  color: #2f7d4f;
+}
+
+.paint-paint_amber {
+  color: #b5811f;
+}
+
+.paint-paint_violet {
+  color: #7d4bb5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .paint-paint_crimson {
+    color: #ef7367;
+  }
+  .paint-paint_ocean {
+    color: #63b1e8;
+  }
+  .paint-paint_forest {
+    color: #62c78d;
+  }
+  .paint-paint_amber {
+    color: #e6b54a;
+  }
+  .paint-paint_violet {
+    color: #b78ce8;
+  }
+}
+
+.paint-paint_sunset,
+.paint-paint_tide,
+.paint-paint_emerald,
+.paint-paint_royal,
+.paint-paint_diamond,
+.paint-paint_jackpot {
+  background-clip: text;
+  -webkit-background-clip: text;
+  font-weight: 800;
+}
+
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .paint-paint_sunset,
+  .paint-paint_tide,
+  .paint-paint_emerald,
+  .paint-paint_royal,
+  .paint-paint_diamond,
+  .paint-paint_jackpot {
+    color: transparent;
+  }
+}
+
+.paint-paint_sunset {
+  background-image: linear-gradient(95deg, #f0913c, #e0525f 60%, #c2417a);
+}
+
+.paint-paint_tide {
+  background-image: linear-gradient(95deg, #2477b3, #35b6c9 60%, #6fe0d2);
+}
+
+.paint-paint_emerald {
+  background-image: linear-gradient(95deg, #1f7a4d, #46c47c 60%, #9ce8b4);
+}
+
+.paint-paint_royal {
+  background-image: linear-gradient(95deg, #6b3fa0, #a45fd0 45%, #d4a437);
+}
+
+/* The top two tiers animate, which is the point of them being level 20/25
+   rewards — they should be recognizable across a room. Held to a slow, wide
+   sweep so it reads as a shimmer rather than a distraction. */
+.paint-paint_diamond {
+  background-image: linear-gradient(100deg, #4fd8ff, #ffffff 45%, #63c7d6 55%, #4fd8ff);
+  background-size: 250% 100%;
+  animation: paint-shimmer 4.5s linear infinite;
+}
+
+.paint-paint_jackpot {
+  background-image: linear-gradient(100deg, #b8860b, #ffe89a 45%, #d4a437 55%, #b8860b);
+  background-size: 250% 100%;
+  animation: paint-shimmer 3.8s linear infinite;
+}
+
+@keyframes paint-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+/* Respect a system preference for reduced motion — an animated name is
+   decoration, and it still reads fine as a static gradient. */
+@media (prefers-reduced-motion: reduce) {
+  .paint-paint_diamond,
+  .paint-paint_jackpot {
+    animation: none;
+  }
+}
+
+/* --- Customize pickers ------------------------------------------------- */
+
+.customize-preview-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.customize-preview {
+  padding: 0.75rem 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.customize-status {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+  color: var(--accent);
+}
+
+.customize-status--error {
+  color: var(--red);
+}
+
+.cosmetic-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.cosmetic-chip {
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.cosmetic-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.cosmetic-chip--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+/* Locked chips stay readable and keep their requirement in a tooltip — seeing
+   what you haven't unlocked is half the reason to show them at all. */
+.cosmetic-chip--locked {
+  opacity: 0.4;
+  cursor: default;
+}

@@ -6,6 +6,7 @@
 // into it.
 
 import { openModal } from './modal.js';
+import { nameplateHtml, PROFILE_UPDATED_EVENT } from './nameplate.js';
 import { getSession, onAuthStateChange, signInWithMagicLink, getProfile, createProfile } from '../state/auth.js';
 import { sendFriendRequest, getPendingRequests, getFriends, acceptFriendRequest, removeFriendship } from '../state/friends.js';
 import { isSupabaseConfigured } from '../state/supabase-client.js';
@@ -86,8 +87,13 @@ export function initHeader(root) {
     // user still being prompted for a username), there's a real gap where
     // we have a session but no username yet — an ellipsis instead of a
     // blank button avoids the header looking broken during that beat.
+    // Compact variant: badge + painted name, no title. The header is a tight
+    // top bar rather than a nameplate, and a full phrase like "Legend of the
+    // Felt" would crowd it -- see ui/nameplate.js.
     const label = currentProfile?.username ?? '…';
-    authSlot.innerHTML = `<button type="button" class="header-user-btn">👤 ${escapeHtml(label)}</button>`;
+    authSlot.innerHTML = `<button type="button" class="header-user-btn">${
+      currentProfile ? nameplateHtml(currentProfile, { variant: 'compact', fallbackName: label }) : `👤 ${escapeHtml(label)}`
+    }</button>`;
     // Owner request: clicking your own username goes to the profile page,
     // which is now where signing out and deleting the account live — so this
     // replaces the small sign-out-only modal that used to open here.
@@ -136,6 +142,14 @@ export function initHeader(root) {
   onAuthStateChange((session) => {
     currentSession = session;
     refreshProfile();
+  });
+
+  // Keeps the header's nameplate in step when the profile page changes a
+  // cosmetic — see nameplate.js's PROFILE_UPDATED_EVENT comment.
+  window.addEventListener(PROFILE_UPDATED_EVENT, (event) => {
+    if (!event.detail) return;
+    currentProfile = event.detail;
+    renderAuthSlot();
   });
 
   function openHelpModal() {
@@ -267,7 +281,7 @@ export function initHeader(root) {
                  .map(
                    (r) => `
                  <li class="friends-list-item">
-                   <span>${escapeHtml(r.requesterUsername ?? 'Unknown')}</span>
+                   <span>${r.requesterProfile ? nameplateHtml(r.requesterProfile) : escapeHtml(r.requesterUsername ?? 'Unknown')}</span>
                    <button type="button" class="friend-accept-btn" data-id="${r.id}">Accept</button>
                    <button type="button" class="friend-decline-btn" data-id="${r.id}">Decline</button>
                  </li>`,
@@ -285,7 +299,7 @@ export function initHeader(root) {
                 .map(
                   (f) => `
                 <li class="friends-list-item">
-                  <span>${escapeHtml(f.friendUsername ?? 'Unknown')}</span>
+                  <span>${f.friendProfile ? nameplateHtml(f.friendProfile) : escapeHtml(f.friendUsername ?? 'Unknown')}</span>
                   <button type="button" class="friend-remove-btn" data-id="${f.id}">Remove</button>
                 </li>`,
                 )

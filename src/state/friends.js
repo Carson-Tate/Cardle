@@ -18,7 +18,12 @@ function otherUserId(friendship, userId) {
 
 async function profilesById(client, ids) {
   if (ids.length === 0) return new Map();
-  const { data, error } = await client.from('profiles').select('id, username').in('id', ids);
+  // Cosmetic columns come along so a friend's nameplate renders with their
+  // badge/title/paint (ui/nameplate.js) rather than a bare username.
+  const { data, error } = await client
+    .from('profiles')
+    .select('id, username, equipped_badge, equipped_title, equipped_paint')
+    .in('id', ids);
   if (error) throw error;
   return new Map(data.map((p) => [p.id, p]));
 }
@@ -53,7 +58,11 @@ export async function getPendingRequests(userId) {
   if (error) throw error;
 
   const profiles = await profilesById(client, data.map((f) => f.requester_id));
-  return data.map((f) => ({ ...f, requesterUsername: profiles.get(f.requester_id)?.username ?? null }));
+  return data.map((f) => ({
+    ...f,
+    requesterUsername: profiles.get(f.requester_id)?.username ?? null,
+    requesterProfile: profiles.get(f.requester_id) ?? null,
+  }));
 }
 
 // Accepted friendships involving `userId`, from either side, each with the
@@ -71,7 +80,11 @@ export async function getFriends(userId) {
     client,
     data.map((f) => otherUserId(f, userId)),
   );
-  return data.map((f) => ({ ...f, friendUsername: profiles.get(otherUserId(f, userId))?.username ?? null }));
+  return data.map((f) => ({
+    ...f,
+    friendUsername: profiles.get(otherUserId(f, userId))?.username ?? null,
+    friendProfile: profiles.get(otherUserId(f, userId)) ?? null,
+  }));
 }
 
 // Only the addressee can accept (schema.sql's RLS policy allows either side

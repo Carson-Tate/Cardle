@@ -38,6 +38,25 @@ export async function fetchPlayHistory(userId, { limit = HISTORY_LIMIT } = {}) {
 }
 
 /**
+ * Saves the player's equipped cosmetics (DESIGN.md §11e). Null clears a slot.
+ *
+ * Only ever called for the signed-in user's own row, and RLS enforces that
+ * independently — `profiles`'s update policy is `auth.uid() = id`, so this
+ * can't be repointed at someone else's profile.
+ *
+ * @param {string} userId
+ * @param {{badge?: string|null, title?: string|null, paint?: string|null}} equipped
+ */
+export async function saveEquippedCosmetics(userId, { badge = null, title = null, paint = null } = {}) {
+  const client = await requireSupabase();
+  const { error } = await client
+    .from('profiles')
+    .update({ equipped_badge: badge, equipped_title: title, equipped_paint: paint })
+    .eq('id', userId);
+  if (error) throw error;
+}
+
+/**
  * Permanently deletes the signed-in player's account and everything attached
  * to it. Calls the `delete_own_account` Postgres function
  * (supabase/migrations/002-delete-own-account.sql) rather than deleting rows

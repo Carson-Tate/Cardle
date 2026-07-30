@@ -8,6 +8,7 @@ import { BOARDS, BOARD_SIZE, fetchLeaderboard } from '../state/leaderboard.js';
 import { loadGameConfig } from '../state/game-config.js';
 import { nameplateHtml } from './nameplate.js';
 import { gradeForScore } from '../core/score-grade.js';
+import { evaluateHand } from '../core/hand-evaluator.js';
 import { miniHandHtml } from './mini-card.js';
 
 function escapeHtml(value) {
@@ -24,6 +25,25 @@ function formatDate(isoDate) {
   const parsed = new Date(`${isoDate}T00:00:00Z`);
   if (Number.isNaN(parsed.getTime())) return isoDate;
   return parsed.toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', day: 'numeric' });
+}
+
+// What the hand actually IS, in words, above the cards (owner request). Derived
+// here rather than stored alongside the score — the same "derived, not
+// accumulated" rule the career stats follow: the cards are the record, and a
+// stored label could only ever drift out of step with them if the evaluator's
+// categories ever change. Cheap at 25 rows.
+//
+// Guarded because a row's `final_hand` is whatever the database holds, not
+// something this page controls: evaluateHand THROWS on anything that isn't
+// exactly 5 cards, and one malformed historical row must not blank the whole
+// board. Falls back to no label, so the cards still render.
+function handLabel(cards) {
+  if (!Array.isArray(cards) || cards.length !== 5) return null;
+  try {
+    return evaluateHand(cards).label ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function initLeaderboard(root) {
@@ -154,6 +174,7 @@ export async function initLeaderboard(root) {
             // you're not at the top of.
             const isMe = row.userId === userId;
             const grade = board.career ? null : gradeForScore(row.value);
+            const handName = handLabel(row.finalHand);
             // The score itself carries the rarity highlight (owner request:
             // "make the score on the leaderboards be highlighted in the rarity
             // of the score instead of just showing the rarity next to it"), so
@@ -174,7 +195,15 @@ export async function initLeaderboard(root) {
                 // isn't a single hand. The wrapper is always present so the grid
                 // column exists on every row and the hands line up (owner
                 // request: "align hands on the leaderboard").
-                row.finalHand ? miniHandHtml(row.finalHand) : ''
+                //
+                // The category name sits ABOVE the cards (owner request), inside
+                // this same wrapper rather than in a column of its own: it has to
+                // stay glued to the hand it describes, and a separate track would
+                // reserve width on the career board, which has no hand at all.
+                row.finalHand
+                  ? `${handName ? `<span class="lb-hand-name">${escapeHtml(handName)}</span>` : ''}
+                     <span class="lb-hand-cards">${miniHandHtml(row.finalHand)}</span>`
+                  : ''
               }</span>
               <span class="lb-value-cell">
                 <span class="lb-value${gradeClass ? ` grade-pill${gradeClass}` : ''}"${gradeTip}${

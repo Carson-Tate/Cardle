@@ -26,6 +26,71 @@ export async function signInWithMagicLink(email) {
   if (error) throw error;
 }
 
+/**
+ * Redeems a sign-in LINK that landed on our own domain carrying a `token_hash`
+ * (DESIGN.md §11o) — the other half of `supabase/email-templates/magic-link.html`.
+ *
+ * WHY THE LINK POINTS HERE AND NOT AT SUPABASE. The stock template's
+ * `{{ .ConfirmationURL }}` is Supabase's own `/auth/v1/verify` GET endpoint,
+ * which redeems the token on request and then redirects. Anything that FOLLOWS
+ * a link in an email therefore burns the sign-in: Outlook Safe Links, corporate
+ * mail filters, antivirus scanners and link prefetchers all do this, and the
+ * player's own tap then fails as "invalid or expired" through no fault of
+ * theirs. A `token_hash` link is inert to all of them, because redeeming it
+ * requires running JavaScript — which scanners do not do.
+ *
+ * It also keeps the visible URL on cardle.lol instead of a supabase.co
+ * redirector, and lets a failure surface as a real message rather than the
+ * player silently landing on a logged-out home page.
+ *
+ * @param {string} tokenHash - the `token_hash` query param from the link
+ * @param {string} [type] - the link's own `type` param, passed straight
+ *   through. A returning player's link is `magiclink` and a brand-new sign-up's
+ *   is `signup`; taking it from the URL means this never has to guess which
+ *   email the player was actually sent.
+ * @returns {Promise<object>} the new session
+ */
+export async function verifySignInLink(tokenHash, type = 'magiclink') {
+  const client = await requireSupabase();
+  const { data, error } = await client.auth.verifyOtp({
+    token_hash: String(tokenHash ?? '').trim(),
+    type: String(type || 'magiclink'),
+  });
+  if (error) throw error;
+  return data.session;
+}
+
+/**
+ * Completes a sign-in with a 6-digit code instead of the link.
+ *
+ * DELIBERATELY RETAINED THOUGH NOTHING CALLS IT (owner's decision, §11o). It is
+ * the only escape hatch for the one case no link can solve: a mail app whose
+ * in-app browser has its own storage (Gmail on iOS, Outlook mobile). The link
+ * opens there, Supabase writes the session to THAT webview's `localStorage`,
+ * and it dies with the webview — the player's real browser never saw it, and no
+ * site can write into another browser's storage. A code is typed into the tab
+ * that ASKED for it, so the session lands where the player already is.
+ *
+ * The UI for it was removed because offering a code and a button at once was
+ * confusing. Re-enabling means adding `{{ .Token }}` to the email template and
+ * a code input to header.js's login modal; the state half is this function.
+ *
+ * @param {string} email - the address the code was sent to; Supabase matches
+ *   the code against it, so it must be the one signInWithMagicLink used.
+ * @param {string} code - the 6-digit token from the email
+ * @returns {Promise<object>} the new session
+ */
+export async function verifyEmailOtp(email, code) {
+  const client = await requireSupabase();
+  const { data, error } = await client.auth.verifyOtp({
+    email: String(email ?? '').trim(),
+    token: String(code ?? '').trim(),
+    type: 'email',
+  });
+  if (error) throw error;
+  return data.session;
+}
+
 export async function signOut() {
   const client = await requireSupabase();
   const { error } = await client.auth.signOut();

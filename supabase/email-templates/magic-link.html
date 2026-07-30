@@ -1,0 +1,124 @@
+<!--
+  Cardle sign-in email — paste into Supabase Dashboard →
+  Authentication → Emails → "Magic link or OTP" → Body (Source tab).
+
+  Kept in the repo because the dashboard is not version control: this is the
+  other half of `verifySignInLink` in src/state/auth.js, and if the two drift
+  apart sign-in breaks with nothing in the codebase to show why.
+
+  ── NOTE: VARIABLE NAMES BELOW ARE WRITTEN WITHOUT THEIR BRACES ──────────────
+  Supabase renders this file through Go's text/template, which does NOT skip
+  HTML comments. Writing a real variable here would substitute it — and naming
+  the confirmation one would embed a live, single-use sign-in URL inside a
+  comment in every email, where a scanner that extracts URLs from raw HTML could
+  burn it. That is the exact failure this template exists to avoid, so prose
+  below says `.TokenHash`, never the braced form.
+
+  ── THE LINK IS THE WHOLE POINT ──────────────────────────────────────────────
+  It deliberately does NOT use `.ConfirmationURL`. That variable is Supabase's
+  own /auth/v1/verify GET endpoint, which redeems the one-time token the moment
+  it is REQUESTED and then redirects. So anything that follows links in an email
+  burns the sign-in before the player ever taps it — Outlook Safe Links,
+  corporate mail filters, antivirus scanners and prefetchers all do this, and
+  the player then gets "invalid or expired" through no fault of their own.
+
+  `.TokenHash` pointed at our own domain is inert to every one of those, because
+  redeeming it requires running JavaScript, which scanners do not do. It also
+  keeps the visible URL on cardle.lol rather than a supabase.co redirector, and
+  lets a failure surface as a real message instead of silently dropping the
+  player on a logged-out home page.
+
+  ── SETUP THIS DEPENDS ON ────────────────────────────────────────────────────
+  1. Authentication → URL Configuration → Site URL must be exactly
+       https://cardle.lol
+     with NO trailing slash (the link below appends its own "/").
+  2. Authentication → URL Configuration → Redirect URLs must list
+       https://cardle.lol/**
+     and, for local testing, http://localhost:8080/**
+     Without this Supabase ignores the app's emailRedirectTo and silently falls
+     back to Site URL — the failure that makes a link work on a laptop and go
+     nowhere on a phone.
+  3. BRAND-NEW ACCOUNTS MAY USE A DIFFERENT TEMPLATE. signInWithOtp creates the
+     user when the address is unknown, and depending on project settings that
+     first email can come from "Confirm signup" rather than this one. If signing
+     in works for existing players but not first-timers, paste this same markup
+     into that template too, changing only `type=magiclink` to `type=signup` in
+     both places. Nothing in the app needs to change for that — main.js passes
+     the link's own `type` straight through to verifyOtp precisely so a second
+     template does not need a second code path.
+  4. Subject line (the field above Body): "Sign in to Cardle".
+  5. To test against a local build, swap the two `.SiteURL` uses below for
+     `.RedirectTo` (braced), which follows whatever origin actually asked for
+     the link. Left as `.SiteURL` by default because it is always populated,
+     whereas `.RedirectTo` is empty if the origin was not allow-listed above —
+     which would produce a link to nowhere.
+
+  ── EMAIL HTML RULES ─────────────────────────────────────────────────────────
+  Tables and inline styles only. No flexbox, no grid, no <style> block, no
+  external CSS or fonts — Outlook renders with Word's engine and Gmail strips
+  most of what a browser would accept.
+-->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+       style="background-color:#f4f4f2;margin:0;padding:32px 12px;">
+  <tr>
+    <td align="center">
+
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+             style="max-width:480px;background-color:#ffffff;border:1px solid #d9d9d6;border-radius:12px;">
+        <tr>
+          <td style="padding:36px 36px 32px 36px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+
+            <!-- Wordmark. Plain text rather than an image: a remote logo is
+                 blocked by default in most clients, so an image-based header
+                 shows as an empty box to most readers on first open. -->
+            <p style="margin:0 0 24px 0;font-size:15px;font-weight:800;letter-spacing:0.14em;color:#2f6f4f;text-transform:uppercase;">
+              Cardle
+            </p>
+
+            <h1 style="margin:0 0 12px 0;font-size:23px;line-height:1.3;font-weight:800;color:#1a1a1a;">
+              Sign in to Cardle
+            </h1>
+
+            <p style="margin:0 0 28px 0;font-size:15px;line-height:1.6;color:#4a4a4a;">
+              Tap the button below to sign in. This link expires in one hour and can only be used once.
+            </p>
+
+            <!-- Button as a table cell, not a padded <a>: Outlook ignores
+                 padding on inline elements, which collapses the button to bare
+                 underlined text. -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" bgcolor="#2f6f4f" style="border-radius:8px;">
+                  <a href="{{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=magiclink"
+                     style="display:inline-block;padding:14px 34px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px;">
+                    Sign In
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Plain-text fallback for clients that strip the button, and for
+                 anyone who would rather see where a link goes before tapping
+                 it. word-break stops a long token blowing out the layout. -->
+            <p style="margin:28px 0 0 0;font-size:12px;line-height:1.6;color:#8a8a8a;">
+              Or paste this into your browser:<br />
+              <span style="color:#6b6b6b;word-break:break-all;">{{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=magiclink</span>
+            </p>
+
+            <hr style="border:none;border-top:1px solid #eaeae7;margin:28px 0 0 0;" />
+
+            <p style="margin:20px 0 0 0;font-size:12px;line-height:1.6;color:#9a9a9a;">
+              If you didn't request this, you can safely ignore this email — nobody can sign in without the link above.
+            </p>
+
+          </td>
+        </tr>
+      </table>
+
+      <p style="margin:20px 0 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:11px;color:#a3a3a0;">
+        Cardle · one hand a day
+      </p>
+
+    </td>
+  </tr>
+</table>

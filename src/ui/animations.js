@@ -110,6 +110,40 @@ function flipSwap(el, buildNewEl, duration) {
 }
 
 /**
+ * Just the FIRST half of flipReplaceCard: turns a face-up card over to its
+ * face-down back and stops there. Split out so board.js can run the whole
+ * discard batch's turn-over as one pass and only then start revealing (owner
+ * request: "turns over all the discarded cards first from left to right, then
+ * reveals from left to right"). flipReplaceCard picks up exactly where this
+ * leaves off — it skips its own turn-to-back when the element it's handed is
+ * already showing one — so the two still compose into the identical animation,
+ * rather than this being a second, divergent copy of the motion.
+ *
+ * `card` is the incoming REPLACEMENT, not the card being discarded: the back
+ * is a back, it shows nothing about the card, and passing it here means the
+ * element already carries the right data when the reveal flips it face-up.
+ *
+ * A no-op returning `oldEl` unchanged if it is already face-down.
+ *
+ * @param {HTMLElement} oldEl
+ * @param {Card} card - the replacement that will later be revealed here
+ * @param {number} [duration] - flip duration in ms (default 180)
+ * @returns {Promise<HTMLElement>} the face-down element
+ */
+export async function flipCardToBack(oldEl, card, { duration = 180 } = {}) {
+  if (oldEl.classList.contains('card--face-down')) return oldEl;
+  return flipSwap(
+    oldEl,
+    () => {
+      const el = createCardElement(card, { faceUp: false });
+      el.disabled = true;
+      return el;
+    },
+    duration,
+  );
+}
+
+/**
  * Reveals `card` in place of `oldEl`, using the same two-stage rhythm
  * everywhere in the app — turn to the actual face-down back (skipped if
  * `oldEl` is already showing its back), hold there for a beat, then turn to

@@ -20,7 +20,7 @@ import { getDailyModifier, buildModifierById, modifierScoringMultiplier, MODIFIE
 import { gradeForScore } from '../core/score-grade.js';
 import { formatCountdown, msUntilNextReset } from '../core/game-day.js';
 import { createCardElement } from './card-view.js';
-import { delay, animateCountUp, flipReplaceCard, flySparks } from './animations.js';
+import { delay, animateCountUp, flipCardToBack, flipReplaceCard, flySparks } from './animations.js';
 
 const DEFAULT_MAX_DISCARDS = 3; // overridden per day by a discardLimit-type modifier (DESIGN.md §4)
 
@@ -85,6 +85,11 @@ const HOLD_BY_RARITY = { bronze: 300, silver: 400, gold: 550, joker: 800, diamon
 // each card starting.
 const DEAL_IN_DURATION_MS = 260;
 const DEAL_IN_STAGGER_MS = 90;
+// A discard's turn-over pass (revealDrawnCards pass 1): the gap between each
+// discarded card starting to flip face-down, and the pause once they are all
+// backs before the reveal pass begins.
+const TURN_OVER_STAGGER_MS = 90;
+const TURN_OVER_SETTLE_MS = 220;
 
 export function initBoard(root) {
   const handRow = root.querySelector('#hand-row');
@@ -155,14 +160,28 @@ export function initBoard(root) {
   // error-prone than trying to hot-swap every one of those in place.
   function startResetCountdown() {
     if (!nextResetEl) return;
+
+    // The clock itself is bold, the "Next hand in" label around it is not
+    // (owner request: "time in timer should be bold") — so the countdown needs
+    // its own element rather than being part of one flat string.
+    //
+    // Built ONCE, outside the tick: this redraws every second, and re-parsing
+    // markup at 1Hz to change six digits would throw away and rebuild the same
+    // two nodes 3,600 times an hour. After this only `timeEl`'s text changes.
+    nextResetEl.textContent = 'Next hand in ';
+    const timeEl = document.createElement('strong');
+    timeEl.className = 'next-reset-time';
+    nextResetEl.appendChild(timeEl);
+
     const tick = () => {
       if (msUntilNextReset() <= 0) {
+        // Replaces timeEl outright, which is fine — the page is reloading.
         nextResetEl.textContent = 'New hand ready — reloading…';
         window.location.reload();
         return;
       }
       nextResetEl.hidden = false;
-      nextResetEl.textContent = `Next hand in ${formatCountdown()}`;
+      timeEl.textContent = formatCountdown();
     };
     tick();
     const timer = setInterval(tick, 1000);
@@ -706,32 +725,58 @@ export function initBoard(root) {
     await revealScore(resultPanel, result, storyFragments());
   }
 
-  // Flips each discarded card over to reveal its replacement, cascading
-  // left-to-right rather than all at once — the exact same turn-to-back,
-  // hold, turn-to-front animation as the initial deal (flipReplaceCard in
-  // animations.js). A rare replacement (bronze and up) gets an extra beat
-  // of anticipation before it starts, a slower flip, a longer hold on the
-  // back, and a glow pulse once it lands — common cards keep the original
-  // snappy 180ms flip untouched.
+  // Replaces the discarded cards, in TWO distinct passes (owner request:
+  // "discarding cards first turns over all the discarded cards first from left
+  // to right, then reveals from left to right"):
+  //
+  //   1. every discarded card turns face-down, left to right;
+  //   2. only once they are all backs does the reveal begin, left to right.
+  //
+  // Previously each slot did its own turn-over-hold-reveal end to end before
+  // the next one started, so slot 3 was still showing its old card while slot 1
+  // had already revealed — the discard read as three separate small events
+  // rather than one "these are gone / here is what you got" beat.
+  //
+  // Both passes use the same turn-to-back, hold, turn-to-front animation as the
+  // initial deal (flipCardToBack + flipReplaceCard in animations.js). A rare
+  // replacement (bronze and up) gets an extra beat of anticipation, a slower
+  // flip, a longer hold on the back, and a glow pulse once it lands — common
+  // cards keep the original snappy 180ms flip untouched.
   async function revealDrawnCards(discardIndices, finalHand, token) {
+    // PASS 1 — turn them all over. Staggered starts rather than a strict
+    // await-each chain, because every turn-to-back runs at the SAME
+    // BASE_FLIP_MS regardless of what is coming: with identical durations,
+    // start order is land order, so an overlapping cascade is still exactly
+    // left-to-right and reads as one sweep instead of a queue. (The reveal pass
+    // below cannot do this — its durations vary by rarity, which is the whole
+    // reason it stays serialized.)
+    await Promise.all(
+      discardIndices.map(async (index, position) => {
+        await delay(position * TURN_OVER_STAGGER_MS);
+        if (token !== dealToken) return; // a redeal fired mid-cascade — stop touching these slots
+        cardEls[index] = await flipCardToBack(cardEls[index], finalHand[index], { duration: BASE_FLIP_MS });
+      }),
+    );
+    if (token !== dealToken) return;
+    // A beat with the whole discard sitting face-down, so the turn-over lands
+    // as its own moment before anything is revealed.
+    await delay(TURN_OVER_SETTLE_MS);
+
+    // PASS 2 — reveal, left to right. Every element is already face-down, so
+    // flipReplaceCard skips its own turn-to-back and goes straight to the
+    // anticipation/hold/reveal it is being asked for here.
     for (const index of discardIndices) {
-      if (token !== dealToken) return; // a redeal fired mid-cascade — stop touching these slots
+      if (token !== dealToken) return;
       const card = finalHand[index];
       const duration = FLIP_DURATION_BY_RARITY[card.rarity] ?? BASE_FLIP_MS;
       const holdMs = HOLD_BY_RARITY[card.rarity] ?? 250;
       const dramaticClass = card.rarity ? 'card--reveal-rare' : null;
       cardEls[index] = await flipReplaceCard(cardEls[index], card, {
         duration,
-        // The turn-to-back is ALWAYS the common speed, however rare the
-        // replacement is. It happens while the discarded card is still on
-        // screen, so a rarity-paced one put the slow, dramatic motion on the
-        // card being thrown away rather than on the reveal — owner bug report:
-        // "the slower animation starts when it flips the card back over to the
-        // back".
-        backDuration: BASE_FLIP_MS,
-        // Anticipation now waits on the face-down back instead of delaying the
-        // start, so a rare slot no longer sits showing its old card longer than
-        // its neighbours.
+        // Anticipation waits on the face-down back, never on the outgoing card
+        // — owner bug report: "the slower animation starts when it flips the
+        // card back over to the back". With the turn-over hoisted into pass 1
+        // that is now structurally true, not just a parameter choice.
         anticipationMs: ANTICIPATION_BY_RARITY[card.rarity] ?? 0,
         holdMs,
         dramaticClass,

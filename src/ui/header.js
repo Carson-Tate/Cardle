@@ -36,7 +36,14 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-export function initHeader(root) {
+/**
+ * @param {Document|HTMLElement} root
+ * @param {{signInError?: string|null}} [options] - a failed sign-in link,
+ *   forwarded by main.js. Surfaced as a pre-opened login modal rather than
+ *   swallowed: a dead link otherwise drops the player on an ordinary logged-out
+ *   home page, where the only available reading is "it just didn't work".
+ */
+export function initHeader(root, { signInError = null } = {}) {
   const logoBtn = root.querySelector('#header-logo');
   const helpBtn = root.querySelector('#header-help');
   const authSlot = root.querySelector('#header-auth-slot');
@@ -187,6 +194,15 @@ export function initHeader(root) {
 
   renderAuthSlot(); // paint the logged-out state immediately; getSession/onAuthStateChange correct it the moment the real session is known
 
+  // A sign-in link that failed. Reopens the login form with the reason already
+  // shown, so the next step ("send me another one") is one tap away. Expiry and
+  // an already-redeemed token are by far the likeliest causes and both are
+  // fixed the same way, so the wording covers them rather than parroting
+  // Supabase's single "invalid or has expired" string.
+  if (signInError) {
+    openLoginModal({ hint: `That sign-in link didn't work — links expire, and each one can only be used once. Enter your email for a fresh one.` });
+  }
+
   // Seeds the header with whatever session Supabase already restored from
   // localStorage (a magic-link sign-in persists there by default, so this is
   // what makes a closed-and-reopened tab still show as logged in) — Supabase's
@@ -235,6 +251,15 @@ export function initHeader(root) {
     });
   }
 
+  // ONE WAY IN: tap the emailed button. The link lands back on our own domain
+  // carrying a `token_hash`, which main.js redeems before anything renders —
+  // see verifySignInLink in state/auth.js and supabase/email-templates/.
+  //
+  // A 6-digit code alternative was built and then removed on the owner's call:
+  // a button and a code competing in the same email and the same modal read as
+  // two different things to do. `verifyEmailOtp` is kept in state/auth.js as the
+  // escape hatch for mail apps whose in-app browser has isolated storage, which
+  // no link can solve.
   function openLoginModal({ hint } = {}) {
     openModal({
       title: 'Log In',
@@ -262,7 +287,7 @@ export function initHeader(root) {
             await signInWithMagicLink(email);
             form.hidden = true;
             status.hidden = false;
-            status.textContent = `Check ${email} for a sign-in link.`;
+            status.textContent = `Check ${email} for your sign-in link — it expires in an hour.`;
           } catch (error) {
             status.hidden = false;
             status.textContent = error.message;

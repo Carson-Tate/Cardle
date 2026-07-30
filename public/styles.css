@@ -1526,6 +1526,7 @@ header h1 {
   color: var(--text-muted);
 }
 
+
 .sign-out-btn {
   font-family: inherit;
   font-size: 0.9rem;
@@ -2153,9 +2154,29 @@ header h1 {
   gap: 0.35em;
 }
 
+/* ALIGNED ON THE INK, NOT THE LINE BOX (owner request: "align badge emojis
+   better"). Measured in Chromium rather than eyeballed: at the old 0.95em an
+   emoji's drawn ink was ~17px tall against the name's 11px caps and hung a full
+   3px BELOW the text baseline, so however the boxes were centred the badge read
+   as oversized and sagging. Uppercase names make it worse — caps have no
+   descenders, so there is nothing beside the emoji to justify ink below the
+   baseline.
+
+   Two changes, both about the glyph rather than the box: 0.82em brings the
+   emoji's ink close to cap height, and the lift re-centres what's left of the
+   overhang on the cap band. The lift is a `transform`, so it moves ink without
+   touching layout — the row's height and the name's position are unchanged, and
+   nothing reflows. It works on a span only because `.nameplate-line` is
+   inline-flex, which blockifies its children; transforms are ignored on true
+   inline boxes.
+
+   `flex: 0 0 auto` so a name long enough to need its ellipsis (leaderboard rows)
+   compresses the NAME and never the badge. */
 .nameplate-badge {
-  font-size: 0.95em;
+  font-size: 0.82em;
   line-height: 1;
+  flex: 0 0 auto;
+  transform: translateY(-0.1em);
 }
 
 /* The title is a subtitle under the name, never inline beside it — titles are
@@ -3082,25 +3103,55 @@ header h1 {
   max-width: 100%;
 }
 
+/* Heavier than the surrounding row (owner request: "make the players name text
+   more bold"). Set HERE rather than on `.nameplate-name` itself: the nameplate
+   is shared with the site header, the profile header and the friends list, all
+   of which already sit in their own weighted contexts — this is the leaderboard
+   deciding how loud a name is on the leaderboard. */
 .lb-name .nameplate-name {
   display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 700;
 }
 
 .lb-name:hover .nameplate-name {
   text-decoration: underline;
 }
 
-/* The winning hand. Fixed to a nowrap row so five cards always occupy the same
-   width and the column can't reflow between rows. */
+/* The winning hand: its category name stacked above the cards themselves. The
+   wrapper is a COLUMN, and the cards keep their own nowrap row inside it, so
+   five cards still always occupy the same width and the column can't reflow
+   between rows.
+   `justify-content: end` pins the pair to the BOTTOM of the row box, so the
+   cards — not the name — stay on the same baseline as the rank and the score.
+   Anchoring the top instead would have let a row with no name (a malformed
+   hand) ride its cards up out of line with its neighbours. */
 .lb-hand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 0.15rem;
+}
+
+.lb-hand-cards {
   display: flex;
   gap: 0.2rem;
   flex-wrap: nowrap;
   justify-content: flex-start;
+}
+
+.lb-hand-name {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 .lb-value-cell {
@@ -3185,6 +3236,12 @@ header h1 {
   .lb-hand {
     grid-column: 2 / -1;
     grid-row: 2;
+  }
+
+  /* Wrapping moved onto the cards themselves — the wrapper is a column now, and
+     letting IT wrap would put the hand name beside the cards rather than above
+     them. */
+  .lb-hand-cards {
     flex-wrap: wrap;
   }
 
@@ -3200,4 +3257,14 @@ header h1 {
   font-weight: 600;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* The clock reads louder than the label wrapped around it (owner request:
+   "time in timer should be bold"). Full-strength ink as well as weight — at
+   0.8rem, weight alone barely separates from the muted label beside it. The
+   tabular figures come from .next-reset above, which is what stops the whole
+   line twitching as the digits change. */
+.next-reset-time {
+  font-weight: 800;
+  color: var(--text);
 }

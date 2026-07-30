@@ -150,3 +150,33 @@ create policy "Users can update their own daily plays"
 -- write-once, at INSERT time only.
 revoke update on public.daily_plays from authenticated;
 grant update (result) on public.daily_plays to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- delete_own_account()
+-- ---------------------------------------------------------------------------
+-- Backs the profile page's "Delete Account" button (DESIGN.md §11d). See
+-- supabase/migrations/002-delete-own-account.sql for the full rationale — in
+-- short: the browser's anon key cannot touch auth.users, so this runs
+-- `security definer`, and it is hard-scoped to auth.uid() with no parameters
+-- so it can only ever delete the caller's own account. Everything else
+-- cascades from the auth.users row.
+
+create or replace function public.delete_own_account()
+returns void
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  caller uuid := auth.uid();
+begin
+  if caller is null then
+    raise exception 'delete_own_account() requires an authenticated session';
+  end if;
+
+  delete from auth.users where id = caller;
+end $$;
+
+revoke all on function public.delete_own_account() from public;
+revoke all on function public.delete_own_account() from anon;
+grant execute on function public.delete_own_account() to authenticated;

@@ -593,6 +593,13 @@ export function initBoard(root) {
       meters,
       personalityId: personality.id,
       newlyUnlocked,
+      // Recorded so the profile page can faithfully replay achievement rules
+      // over stored history (core/player-stats.js) — a couple of them compare
+      // discardedCount against the day's cap, which wasn't recoverable from
+      // the rest of the result. Rows written before this existed simply leave
+      // it undefined, which those rules treat as "not satisfied" rather than
+      // unlocking something unearned.
+      maxDiscards,
     };
     if (config.persist) {
       if (currentUserId) {

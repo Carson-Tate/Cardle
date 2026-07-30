@@ -6,7 +6,7 @@
 // into it.
 
 import { openModal } from './modal.js';
-import { getSession, onAuthStateChange, signInWithMagicLink, signOut, getProfile, createProfile } from '../state/auth.js';
+import { getSession, onAuthStateChange, signInWithMagicLink, getProfile, createProfile } from '../state/auth.js';
 import { sendFriendRequest, getPendingRequests, getFriends, acceptFriendRequest, removeFriendship } from '../state/friends.js';
 import { isSupabaseConfigured } from '../state/supabase-client.js';
 
@@ -88,7 +88,12 @@ export function initHeader(root) {
     // blank button avoids the header looking broken during that beat.
     const label = currentProfile?.username ?? '…';
     authSlot.innerHTML = `<button type="button" class="header-user-btn">👤 ${escapeHtml(label)}</button>`;
-    authSlot.querySelector('.header-user-btn').addEventListener('click', openAccountModal);
+    // Owner request: clicking your own username goes to the profile page,
+    // which is now where signing out and deleting the account live — so this
+    // replaces the small sign-out-only modal that used to open here.
+    authSlot.querySelector('.header-user-btn').addEventListener('click', () => {
+      window.location.href = '/?profile';
+    });
   }
 
   // Runs on every auth state change (sign-in, sign-out, and once immediately
@@ -221,19 +226,6 @@ export function initHeader(root) {
             status.textContent = error.message;
             submitBtn.disabled = false;
           }
-        });
-      },
-    });
-  }
-
-  function openAccountModal() {
-    openModal({
-      title: currentProfile?.username ?? 'Account',
-      render: (body, close) => {
-        body.innerHTML = `<button type="button" class="sign-out-btn">Sign Out</button>`;
-        body.querySelector('.sign-out-btn').addEventListener('click', async () => {
-          await signOut();
-          close();
         });
       },
     });

@@ -1511,3 +1511,414 @@ header h1 {
   color: var(--text-muted);
   font-size: 0.9rem;
 }
+
+/* ===========================================================================
+   Profile page (DESIGN.md §12) — rendered into #app instead of the board when
+   the URL carries ?profile. Reuses the existing surface/border/accent tokens
+   so it reads as the same product, not a bolted-on second page.
+   =========================================================================== */
+
+.profile-loading,
+.profile-empty-note {
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.profile-empty {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2rem 1.5rem;
+  text-align: center;
+}
+
+.profile-error {
+  color: var(--red);
+}
+
+.profile-back-link {
+  display: inline-block;
+  margin-bottom: 1rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.profile-back-link:hover {
+  color: var(--accent);
+}
+
+.profile-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.profile-username {
+  margin: 0;
+  font-size: 1.6rem;
+  overflow-wrap: anywhere;
+}
+
+.profile-since {
+  margin: 0.2rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+/* Grows to fill the header row on wide screens, drops to full width when the
+   header wraps on narrow ones. */
+.profile-level {
+  flex: 1 1 220px;
+  min-width: 200px;
+}
+
+.profile-level-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.profile-level-badge {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.profile-level-xp,
+.profile-level-total {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.profile-level-total {
+  margin: 0.3rem 0 0;
+  text-align: right;
+}
+
+.profile-xp-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.profile-xp-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 400ms ease;
+}
+
+.profile-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.profile-section-title {
+  margin: 0 0 0.9rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.profile-subheading {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.profile-count {
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* auto-fit rather than a fixed column count so the tiles reflow from 4-wide on
+   desktop down to 2-wide on a phone without a media query per breakpoint. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.6rem;
+}
+
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+
+.stat-tile-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.stat-tile-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.hand-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.hand-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.hand-history-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+}
+
+.hand-history-date {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.hand-history-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.hand-history-cards {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.hand-history-numbers {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-left: auto;
+}
+
+.hand-history-score {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.hand-history-rating {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.history-card {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.1rem;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--black);
+}
+
+.history-card--red {
+  color: var(--red);
+}
+
+/* Same rarity ring colors as the real cards, so a rare pull is recognizable
+   in the history at a glance. */
+.history-card--bronze {
+  border-color: #b0763a;
+  box-shadow: 0 0 0 1px #b0763a;
+}
+
+.history-card--silver {
+  border-color: #9aa3ab;
+  box-shadow: 0 0 0 1px #9aa3ab;
+}
+
+.history-card--gold {
+  border-color: #d4a437;
+  box-shadow: 0 0 0 1px #d4a437;
+}
+
+.history-card--diamond {
+  border-color: #63c7d6;
+  box-shadow: 0 0 0 1px #63c7d6;
+}
+
+.history-card--joker,
+.history-card--wild {
+  border-color: var(--selected);
+  box-shadow: 0 0 0 1px var(--selected);
+}
+
+.profile-load-more {
+  display: block;
+  margin: 0.9rem auto 0;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.45rem 1.1rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.profile-load-more:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.achievement-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.6rem;
+}
+
+.achievement-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+
+/* Locked achievements stay legible rather than being blanked out — knowing
+   what has not been earned yet is the point of showing them. */
+.achievement-card--locked {
+  background: transparent;
+  opacity: 0.5;
+}
+
+.achievement-card--locked .achievement-emoji {
+  filter: grayscale(1);
+}
+
+.achievement-emoji {
+  font-size: 1.2rem;
+}
+
+.achievement-label {
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
+.achievement-desc {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.collection-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.collection-chip {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.collection-chip--locked {
+  border-color: var(--border);
+  color: var(--text-muted);
+  background: transparent;
+  opacity: 0.6;
+}
+
+.profile-danger {
+  border-color: color-mix(in srgb, var(--red) 30%, var(--border));
+}
+
+.profile-account-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.profile-signout-btn,
+.profile-delete-btn {
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.5rem 1.1rem;
+  border-radius: 999px;
+  cursor: pointer;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
+.profile-signout-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Destructive action, styled as such — and deliberately not the same shape as
+   the neutral button sitting next to it. */
+.profile-delete-btn {
+  border-color: color-mix(in srgb, var(--red) 55%, transparent);
+  color: var(--red);
+}
+
+.profile-delete-btn:hover:not(:disabled) {
+  background: var(--red);
+  color: white;
+}
+
+.profile-delete-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

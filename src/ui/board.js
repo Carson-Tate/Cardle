@@ -1,13 +1,15 @@
-import { dealHand, suitGlyph, rankLabel, RANKS, SUITS, createDeck, createRng, shuffle, rarityForRoll } from '../core/deck.js';
+import { dealHand, suitGlyph, rankLabel, RANKS, SUITS, createDeck, createRng, shuffle, rarityForRoll, freshSeed } from '../core/deck.js';
 import { evaluateHand } from '../core/hand-evaluator.js';
 import { scoreRun } from '../core/scoring.js';
 import { solveOptimalDiscard, findEV, decisionRating } from '../core/ev-solver.js';
 import { computeMeters } from '../core/meters.js';
 import { classifyPersonality, PERSONALITIES } from '../core/personality.js';
 import { evaluateAchievements, ACHIEVEMENTS } from '../core/achievements.js';
-import { getTodayResult, saveTodayResult, dayNumber } from '../state/persistence.js';
+import { getTodayResult, saveTodayResult, getOrCreateTodaySeed, dayNumber } from '../state/persistence.js';
 import { resolveRunConfig } from '../state/test-mode.js';
 import { recordRun, markAchievementsUnlocked } from '../state/stats.js';
+import { getSession } from '../state/auth.js';
+import { claimTodaySeed, saveTodayResultForUser } from '../state/daily-play.js';
 import { generateStory, getStoryOptions, getDefaultSelections } from '../story/generator.js';
 import { SLOT_META } from '../story/templates.js';
 import { RARITIES, TOTAL_SPECIAL_CHANCE, jokerTierForRoll } from '../core/rarity.js';
@@ -70,6 +72,7 @@ export function initBoard(root) {
   const lockInBtn = root.querySelector('#lock-in-btn');
   const dayLabel = root.querySelector('#day-label');
   const modifierBanner = root.querySelector('#modifier-banner');
+  const anonHint = root.querySelector('#anon-hint');
   const resultPanel = root.querySelector('#result');
   const wagerPrompt = root.querySelector('#wager-prompt');
   const wagerYesBtn = root.querySelector('#wager-yes-btn');
@@ -85,6 +88,19 @@ export function initBoard(root) {
   let dailyModifier;
   let maxDiscards;
   let lockedIndex;
+
+  // Set once, in beginRealPlay() below, before any hand is dealt — null for
+  // the whole run means "playing signed out," which gates both which
+  // storage a result is saved to (persistence.js locally vs. daily-play.js's
+  // account-backed table) and whether the sign-up hint is shown at all.
+  // Never reassigned reactively if the player logs in mid-run (DESIGN.md
+  // §11c: "this one won't be saved" — that's about THIS draw specifically).
+  let currentUserId = null;
+
+  function renderAnonHint(text) {
+    anonHint.hidden = false;
+    anonHint.textContent = text;
+  }
 
   function applyModifier(modifier, { forced = false } = {}) {
     dailyModifier = modifier;
@@ -120,12 +136,6 @@ export function initBoard(root) {
     ? `🧪 Test hand (seed: ${config.seedLabel})`
     : `Cardle #${dayNumber(today)} — ${today.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}`;
 
-  const existingResult = config.persist ? getTodayResult(today) : null;
-  if (existingResult) {
-    renderAlreadyPlayed(existingResult);
-    return;
-  }
-
   let originalHand;
   let drawPile;
   const selected = new Set();
@@ -144,7 +154,48 @@ export function initBoard(root) {
   // the same 5 card slots at once.
   let dealToken = 0;
 
-  startHand({ seed: config.seed });
+  // Real daily play needs to know whether the player is signed in before it
+  // can even pick a seed (an account-backed one via daily-play.js, or a
+  // local one via persistence.js — see test-mode.js's resolveRunConfig
+  // comment) — an async step test mode skips entirely, dealing immediately
+  // from its own already-resolved seed.
+  if (config.persist) {
+    beginRealPlay();
+  } else {
+    startHand({ seed: config.seed });
+  }
+
+  // Resolves which identity (if any) is playing, claims/loads today's seed
+  // or already-finished result for that identity, and either shows the
+  // finished result or deals a fresh hand. Falls back to local anonymous
+  // play — with the sign-up hint shown — both when there's genuinely no
+  // session AND if the account-backed claim fails for any reason (a
+  // Supabase hiccup shouldn't be able to block the game entirely).
+  async function beginRealPlay() {
+    const session = await getSession().catch(() => null);
+    if (session) {
+      try {
+        const { seed, result } = await claimTodaySeed(session.user.id, today);
+        currentUserId = session.user.id;
+        if (result) {
+          renderAlreadyPlayed(result);
+        } else {
+          startHand({ seed });
+        }
+        return;
+      } catch (error) {
+        console.error('Falling back to local anonymous play — daily_plays claim failed:', error);
+      }
+    }
+    const existingResult = getTodayResult(today);
+    if (existingResult) {
+      renderAnonHint("This one wasn't saved — sign up to save future scores.");
+      renderAlreadyPlayed(existingResult);
+    } else {
+      renderAnonHint("Sign up before drawing to save your score — otherwise this one won't be saved.");
+      startHand({ seed: getOrCreateTodaySeed(today) });
+    }
+  }
 
   lockInBtn.addEventListener('click', () => {
     if (isTwoRoundModifier() && discardRound === 1) {
@@ -483,7 +534,16 @@ export function initBoard(root) {
       personalityId: personality.id,
       newlyUnlocked,
     };
-    if (config.persist) saveTodayResult(result, today);
+    if (config.persist) {
+      if (currentUserId) {
+        saveTodayResultForUser(currentUserId, result, today).catch((error) =>
+          console.error("Today's result wasn't saved to the account:", error),
+        );
+      } else {
+        saveTodayResult(result, today);
+        renderAnonHint("This one wasn't saved — sign up to save future scores.");
+      }
+    }
 
     await revealScore(resultPanel, result);
   }
@@ -544,10 +604,6 @@ function renderTestBanner(root, config) {
     <a href="?test=${nextSeed}">New random hand</a>
   `;
   root.prepend(banner);
-}
-
-function freshSeed() {
-  return (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
 }
 
 // Builds an exact 5-card hand from the admin panel's custom slot builder

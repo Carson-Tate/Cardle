@@ -81,6 +81,13 @@ header h1 {
   font-size: 0.85rem;
 }
 
+.anon-hint {
+  margin: 0.5rem auto 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .hand-row {
   display: flex;
   justify-content: center;

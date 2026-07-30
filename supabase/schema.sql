@@ -86,3 +86,51 @@ create policy "Users can update friendships they're part of"
 create policy "Users can delete friendships they're part of"
   on public.friendships for delete
   using (auth.uid() = requester_id or auth.uid() = addressee_id);
+
+-- ---------------------------------------------------------------------------
+-- daily_plays
+-- ---------------------------------------------------------------------------
+-- One row per signed-in user per calendar day (DESIGN.md §11c) — this is what
+-- makes "exactly one play per day" and "your result is actually saved to
+-- your account" real, server-enforced facts instead of something a browser's
+-- local storage merely remembers (which anyone can reset by clearing it).
+--
+-- `seed` is claimed via INSERT the moment a logged-in player's hand is first
+-- dealt, before a single card's been touched — that's what locks in which
+-- hand is theirs for the day even if they never finish it, and reloading
+-- mid-game re-deals the identical hand from the same seed rather than a new
+-- one. `result` is filled in via UPDATE once they lock in; a row with a null
+-- result means "already has a hand claimed today, hasn't finished it yet."
+create table public.daily_plays (
+  user_id uuid references auth.users (id) on delete cascade not null,
+  play_date date not null,
+  seed bigint not null,
+  result jsonb,
+  created_at timestamptz not null default now(),
+  primary key (user_id, play_date)
+);
+
+alter table public.daily_plays enable row level security;
+
+create policy "Users can view their own daily plays"
+  on public.daily_plays for select
+  using (auth.uid() = user_id);
+
+create policy "Users can insert their own daily plays"
+  on public.daily_plays for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own daily plays"
+  on public.daily_plays for update
+  using (auth.uid() = user_id);
+
+-- RLS alone only restricts which ROWS a user can touch, not which COLUMNS —
+-- without this, a user could open devtools and call
+-- `.update({ seed: ... })` on their own row to reroll their claimed seed
+-- (the exact "get a better draw" loophole this table exists to close), since
+-- the row-level policy above would happily allow it. Column-level privilege
+-- closes that: authenticated users may only ever UPDATE the `result` column
+-- on a row RLS already confirms is theirs — `seed`/`play_date`/`user_id` are
+-- write-once, at INSERT time only.
+revoke update on public.daily_plays from authenticated;
+grant update (result) on public.daily_plays to authenticated;

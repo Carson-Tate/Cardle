@@ -43,8 +43,8 @@ export function createRng(seed) {
   };
 }
 
-// Deterministic 32-bit hash of a string (FNV-1a), used to turn a date
-// string into a numeric seed so every player gets the same deal that day.
+// Deterministic 32-bit hash of a string (FNV-1a) — turns any string (a date,
+// a test-mode label, ...) into a reproducible numeric seed.
 export function hashSeed(str) {
   let hash = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
@@ -54,9 +54,25 @@ export function hashSeed(str) {
   return hash >>> 0;
 }
 
+// A deterministic seed for a calendar day — every OTHER date-keyed daily
+// rotation (the modifier, the story-caption pools) derives its own seed the
+// same way. The player's own hand deal does NOT use this: each player gets
+// their own randomly-generated hand (owner request — previously everyone
+// got dealt the exact same cards), so that seed comes from
+// persistence.js's getOrCreateTodaySeed() instead. Kept here as a stable,
+// reproducible seed source for anything that genuinely should be identical
+// for every player on a given day.
 export function dailySeed(date = new Date()) {
   const isoDate = date.toISOString().slice(0, 10); // YYYY-MM-DD, UTC day
   return hashSeed(`cardle-${isoDate}`);
+}
+
+// A one-off, non-reproducible seed sourced from wall-clock time and
+// Math.random() together — used anywhere a *fresh* random deal is wanted
+// rather than a reproducible one (a player's daily hand, the test-mode admin
+// panel's "redeal" button).
+export function freshSeed() {
+  return (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
 }
 
 export function shuffle(deck, rng) {
@@ -104,8 +120,8 @@ export function rarityForRoll(roll, luckMultiplier = 1) {
 // Draws the first `count` cards as the opening hand and returns both the
 // hand and the remaining deck (the draw pile replacements come from). Every
 // card's rarity is rolled here too, deterministically from the same seed —
-// consumed right after the shuffle, so the same daily seed always deals the
-// same rarities to everyone. Two rng() calls per card, always both consumed
+// consumed right after the shuffle, so a given seed always deals the exact
+// same hand and rarities again. Two rng() calls per card, always both consumed
 // regardless of outcome (rarity roll, then a joker-sub-tier roll) so the
 // sequencing a given seed produces never depends on which cards happened to
 // land rare — only *which* rarity/tier a card gets does.

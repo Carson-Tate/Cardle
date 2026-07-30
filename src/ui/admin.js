@@ -286,7 +286,7 @@ export async function initAdmin(root) {
     `;
   }
 
-  // The poem word bank (§6c). Edited as one phrase per line, which matches how
+  // The fortune word bank (§6c). Edited as one phrase per line, which matches how
   // the fragments read and avoids inventing a JSON editor for what is really
   // just six lists of short strings. Saving is PARTIAL: a slot left identical to
   // its built-in default is not stored, so future built-in additions still reach
@@ -304,7 +304,7 @@ export async function initAdmin(root) {
     return `
       <section class="profile-section">
         <h3 class="profile-section-title">
-          Poem Word Bank ${overriddenCount > 0 ? `<span class="profile-count">${overriddenCount} customised</span>` : ''}
+          Fortune Word Bank ${overriddenCount > 0 ? `<span class="profile-count">${overriddenCount} customised</span>` : ''}
         </h3>
         <div class="admin-wordbank">
           ${slots

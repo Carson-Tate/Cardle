@@ -199,7 +199,7 @@ export function initBoard(root) {
   applyModifier(getDailyModifier(today));
 
   // Server-side config (§11g): an admin can pin a specific modifier to a
-  // specific day, and can edit the poem word bank. Started here but awaited
+  // specific day, and can edit the fortune word bank. Started here but awaited
   // before the first deal (see awaitGameConfig) rather than blocking init —
   // the day label and the computed modifier paint immediately, so a slow or
   // failed config read never leaves the page blank. loadGameConfig() resolves
@@ -1299,18 +1299,25 @@ function resolveStorySelections(originalHand, finalHand, discardIndices, fragmen
   return { selections, options };
 }
 
-// The story starts as a finished, randomly-seeded line (see
+// The FORTUNE starts as a finished, randomly-seeded line (see
 // resolveStorySelections) with its 6 slot pickers collapsed behind an "Edit
-// Poem" button — owner request: "give a random starting poem like it always
+// Fortune" button — owner request: "give a random starting poem like it always
 // has done but instead of having all the options immediately, have an 'edit
 // poem' button that then drops down the selections and a submit button
-// after." So the default state is just the poem plus two buttons, and the
+// after." So the default state is just the fortune plus two buttons, and the
 // pickers are opt-in rather than six dropdowns greeting every player.
+//
+// NAMING: the player-facing word is "Fortune" (owner request: "rename to
+// fortune instead of poem"). The internal identifiers are still `story*` — that
+// is the module boundary this feature has always been built on (src/story/,
+// generateStory, STORY_SLOT_ORDER), and renaming a dozen internal symbols to
+// chase a label would be a large diff with nothing to show for it. Only what a
+// player reads changed.
 //
 // Copy Result is ALWAYS visible (owner: "i want to always have a copy result
 // button on the bottom"), which replaces the earlier arrangement where Submit
 // occupied that slot until you'd submitted. Copying and editing are
-// independent now: the poem is complete from the moment it renders, so
+// independent now: the fortune is complete from the moment it renders, so
 // there's never a state where the result can't be copied. Editing collapses
 // back to the same default state on Submit, so the button pair stays stable.
 function renderStoryBlock(container, result, fragments) {
@@ -1342,14 +1349,14 @@ function renderStoryBlock(container, result, fragments) {
       <button type="button" class="copy-btn" id="submit-story-btn">Submit</button>
     </div>
     <div class="story-actions">
-      <button type="button" class="story-edit-btn" id="edit-poem-btn">✏️ Edit Poem</button>
+      <button type="button" class="story-edit-btn" id="edit-fortune-btn">✏️ Edit Fortune</button>
       <button type="button" class="copy-btn" id="copy-btn">📋 Copy Result</button>
     </div>
   `;
 
   const storyTextEl = container.querySelector('#story-text');
   const storyEditorEl = container.querySelector('#story-editor');
-  const editBtn = container.querySelector('#edit-poem-btn');
+  const editBtn = container.querySelector('#edit-fortune-btn');
   const submitBtn = container.querySelector('#submit-story-btn');
   const copyBtn = container.querySelector('#copy-btn');
 
@@ -1374,7 +1381,7 @@ function renderStoryBlock(container, result, fragments) {
     editBtn.hidden = true;
   });
 
-  // Submit only closes the editor — the poem itself is already applied live
+  // Submit only closes the editor — the fortune itself is already applied live
   // on every dropdown change, so there's nothing to commit here. It exists to
   // get the six pickers back out of the way.
   submitBtn.addEventListener('click', () => {

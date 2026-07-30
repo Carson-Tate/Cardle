@@ -53,11 +53,97 @@ export async function sendFriendRequest(userId, username) {
   if (!target) throw new Error(`No user found with the username "${username}".`);
   if (target.id === userId) throw new Error("You can't send a friend request to yourself.");
 
+  // Checked in BOTH directions before inserting. The table's own
+  // `unique (requester_id, addressee_id)` is directional, so it stops A asking B
+  // twice but not A→B and B→A coexisting — which is how one friendship ended up
+  // rendering as two people (owner bug report: "multiple of the same name").
+  // Migration 010 adds a non-directional unique index so this cannot happen at
+  // all; this check is what turns that constraint into a sentence a player can
+  // act on rather than a raw 23505.
+  const existing = await getFriendshipWith(userId, target.id);
+  if (existing) {
+    if (existing.status === 'accepted') throw new Error(`You're already friends with "${username}".`);
+    throw new Error(
+      existing.requester_id === userId
+        ? `You've already sent "${username}" a request.`
+        : `"${username}" already sent YOU a request — accept it from your friends list.`,
+    );
+  }
+
   const { error } = await client.from('friendships').insert({ requester_id: userId, addressee_id: target.id });
   if (error) {
+    // Still handled, because the check above is a read followed by a write and
+    // two people adding each other at the same moment can interleave between
+    // them. The database is the arbiter; this just says so politely.
     if (error.code === '23505') throw new Error(`You're already friends with "${username}", or a request is already pending.`);
     throw error;
   }
+}
+
+/**
+ * The friendship row between two players, from either direction, or null.
+ *
+ * Powers the profile page's Add Friend button and the search results' per-row
+ * action — both need to know not just IF a friendship exists but which way it
+ * points, since "you asked them" and "they asked you" offer different actions.
+ *
+ * @returns {Promise<{id: string, status: string, requester_id: string, addressee_id: string}|null>}
+ */
+export async function getFriendshipWith(userId, otherUserId) {
+  if (!userId || !otherUserId || userId === otherUserId) return null;
+  const client = await requireSupabase();
+  const { data, error } = await client
+    .from('friendships')
+    .select('*')
+    .or(
+      `and(requester_id.eq.${userId},addressee_id.eq.${otherUserId}),` +
+        `and(requester_id.eq.${otherUserId},addressee_id.eq.${userId})`,
+    )
+    .limit(1);
+  if (error) throw error;
+  return data?.[0] ?? null;
+}
+
+/**
+ * Players whose username STARTS WITH `query`, for the add-friend picker
+ * (owner request: "it should first search then pop up names that are valid and
+ * then you click to add them").
+ *
+ * Prefix rather than substring: it is what a name picker is expected to do, and
+ * it is the only form a b-tree index can serve — `like '%X%'` would table-scan
+ * every profile on every keystroke. Migration 010 adds the matching
+ * `text_pattern_ops` index.
+ *
+ * Case is not a concern: stored names are uppercase (§11n) and the query is
+ * normalized to match, so a plain case-sensitive `like` is correct AND indexable
+ * (`ilike` would not use the index).
+ *
+ * Grants no new visibility — `profiles` has always been readable to signed-in
+ * players; that is how friend lookup and profile links already work.
+ *
+ * @param {string} query
+ * @param {{excludeUserId?: string|null, limit?: number}} [options]
+ * @returns {Promise<Array<object>>} nameplate-shaped profile rows
+ */
+export async function searchProfiles(query, { excludeUserId = null, limit = 8 } = {}) {
+  const prefix = normalizeUsername(query);
+  // Below two characters every name in the game matches, which is a long list
+  // that tells the player nothing. Callers treat [] as "keep typing".
+  if (prefix.length < 2) return [];
+  const client = await requireSupabase();
+  // Escaped, because `%` and `_` are wildcards inside LIKE: a player typing "_"
+  // would otherwise match any single character rather than searching for an
+  // underscore, which is a legal username character here.
+  const escaped = prefix.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
+  // Every FILTER first, then order/limit. PostgREST accepts them in any order,
+  // but "narrow the rows, then shape the result" is what the chain actually
+  // means — appending a filter after `.limit()` reads as limiting before
+  // excluding, which is not what happens and is a trap for the next reader.
+  let request = client.from('profiles').select(NAMEPLATE_COLUMNS).like('username', `${escaped}%`);
+  if (excludeUserId) request = request.neq('id', excludeUserId);
+  const { data, error } = await request.order('username').limit(limit);
+  if (error) throw error;
+  return data ?? [];
 }
 
 // Incoming requests — friendships where `userId` is the addressee and
@@ -112,11 +198,25 @@ export async function getFriends(userId) {
     client,
     data.map((f) => otherUserId(f, userId)),
   );
-  return data.map((f) => ({
-    ...f,
-    friendUsername: profiles.get(otherUserId(f, userId))?.username ?? null,
-    friendProfile: profiles.get(otherUserId(f, userId)) ?? null,
-  }));
+  // ONE ROW PER PERSON, keyed on who the friend actually is rather than on the
+  // friendship id. Migration 010 removes the reciprocal duplicates and stops new
+  // ones, but this list must also be correct for anyone whose browser is talking
+  // to a database that has not run it yet — and "the same friend twice" is a
+  // visibly broken list, not a cosmetic wrinkle. Cheap, and it means the render
+  // path no longer depends on a schema constraint holding.
+  const seen = new Set();
+  return data
+    .map((f) => ({
+      ...f,
+      friendUsername: profiles.get(otherUserId(f, userId))?.username ?? null,
+      friendProfile: profiles.get(otherUserId(f, userId)) ?? null,
+    }))
+    .filter((f) => {
+      const other = otherUserId(f, userId);
+      if (seen.has(other)) return false;
+      seen.add(other);
+      return true;
+    });
 }
 
 // Only the addressee can accept (schema.sql's RLS policy allows either side

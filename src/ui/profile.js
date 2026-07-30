@@ -17,6 +17,7 @@ import {
   fetchProfileByUsername,
   updateUsername,
 } from '../state/profile.js';
+import { getFriendshipWith, sendFriendRequest, acceptFriendRequest } from '../state/friends.js';
 import { loadGameConfig } from '../state/game-config.js';
 import { derivePlayerStats, splitAchievements } from '../core/player-stats.js';
 import { resolveCosmetics, resolveEquipped, canEquip, DEFAULT_PAINT_ID } from '../core/cosmetics.js';
@@ -121,11 +122,19 @@ export async function initProfile(root, { username: viewingUsername = null } = {
   let history = [];
   let gameConfig = null;
   let loadError = null;
+  // Only meaningful when looking at SOMEBODY ELSE — `null` on your own profile,
+  // which is what keeps the friend button off it. Fetched alongside everything
+  // else rather than after render, so the button paints in its correct state
+  // instead of flickering from "Add Friend" to "Friends".
+  let friendship = null;
   try {
-    [profile, history, gameConfig] = await Promise.all([
+    [profile, history, gameConfig, friendship] = await Promise.all([
       viewedProfile ? Promise.resolve(viewedProfile) : getProfile(userId).catch(() => null),
       fetchPlayHistory(userId),
       loadGameConfig(),
+      // Tolerates failure: a friendship lookup that errors should cost the
+      // button, not the whole profile page.
+      canEdit ? Promise.resolve(null) : getFriendshipWith(viewerId, userId).catch(() => null),
     ]);
   } catch (error) {
     loadError = error;
@@ -204,6 +213,7 @@ export async function initProfile(root, { username: viewingUsername = null } = {
             <div class="profile-identity">
               <h2 class="profile-username">${nameplateHtml(equippedRow(), { fallbackName: username, custom })}</h2>
               <p class="profile-since">${stats.firstPlayDate ? `Playing since ${formatDate(stats.firstPlayDate)}` : 'No hands played yet'}</p>
+              ${friendActionHtml()}
             </div>
             ${levelBlockHtml(stats)}
           </div>
@@ -273,7 +283,57 @@ export async function initProfile(root, { username: viewingUsername = null } = {
 
     root.querySelector('#profile-rename')?.addEventListener('click', confirmRename);
     root.querySelector('#profile-delete')?.addEventListener('click', confirmDelete);
+    root.querySelector('#profile-friend-action')?.addEventListener('click', onFriendAction);
     if (canEdit) wireCustomizePickers();
+  }
+
+  // Add a friend straight from their profile (owner request: "click to add
+  // friend on their profile"). Previously the only route was the header panel,
+  // which meant seeing someone on the leaderboard, opening their profile, then
+  // going back and typing their name from memory somewhere else entirely.
+  //
+  // Renders the state rather than a fixed "Add Friend": the row already exists
+  // in three other shapes, and offering "Add" to someone who has already asked
+  // YOU would try to create the reciprocal duplicate that migration 010 forbids.
+  function friendActionHtml() {
+    if (canEdit) return ''; // your own profile — nothing to add
+    const label =
+      friendship === null
+        ? 'Add Friend'
+        : friendship.status === 'accepted'
+          ? 'Friends ✓'
+          : friendship.requester_id === viewerId
+            ? 'Request Sent'
+            : 'Accept Request';
+    // Only the two actionable states are clickable. "Friends" and "Request Sent"
+    // are statements — removing a friend or cancelling a request stays in the
+    // friends panel, where the confirmation context is.
+    const actionable = friendship === null || (friendship.status === 'pending' && friendship.requester_id !== viewerId);
+    return `<p class="profile-friend-row">
+      <button type="button" id="profile-friend-action" class="profile-friend-btn${actionable ? '' : ' profile-friend-btn--done'}"
+        ${actionable ? '' : 'disabled'}>${label}</button>
+    </p>`;
+  }
+
+  async function onFriendAction(event) {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      if (friendship === null) {
+        await sendFriendRequest(viewerId, username);
+      } else if (friendship.status === 'pending' && friendship.requester_id !== viewerId) {
+        await acceptFriendRequest(friendship.id);
+      }
+      // Re-read rather than assuming what the write produced — the accept path
+      // changes status while the send path creates a row whose id this page
+      // never saw, and a later render needs the real one.
+      friendship = await getFriendshipWith(viewerId, userId).catch(() => friendship);
+      render();
+    } catch (error) {
+      button.disabled = false;
+      const row = root.querySelector('.profile-friend-row');
+      if (row) row.insertAdjacentHTML('beforeend', `<span class="profile-friend-error">${escapeHtml(error.message ?? error)}</span>`);
+    }
   }
 
   // Each picker is a row of chips: unlocked ones selectable, locked ones

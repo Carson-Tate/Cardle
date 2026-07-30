@@ -8,7 +8,7 @@
 import { openModal } from './modal.js';
 import { nameplateHtml, PROFILE_UPDATED_EVENT } from './nameplate.js';
 import { getSession, onAuthStateChange, signInWithMagicLink, getProfile, createProfile } from '../state/auth.js';
-import { sendFriendRequest, getPendingRequests, getSentRequests, getFriends, acceptFriendRequest, removeFriendship } from '../state/friends.js';
+import { sendFriendRequest, getPendingRequests, getSentRequests, getFriends, acceptFriendRequest, removeFriendship, searchProfiles } from '../state/friends.js';
 import { isSupabaseConfigured } from '../state/supabase-client.js';
 import { isCurrentUserAdmin } from '../state/admin.js';
 import { loadGameConfig } from '../state/game-config.js';
@@ -358,11 +358,23 @@ export function initHeader(root, { signInError = null } = {}) {
       return;
     }
 
+    // SEARCH, THEN CLICK (owner request: "when adding friends it should first
+    // search then pop up names that are valid and then you click to add them").
+    // The old form was a blind submit: you typed a name you had to already know,
+    // exactly, and only found out on submit whether it existed. Now the results
+    // are the affordance — every row shown is a real player, and each carries
+    // the one action that makes sense for them.
+    //
+    // `.friend-results` is a plain div toggled with `hidden` and deliberately
+    // gets NO `display` rule in styles.css; an explicit one would beat the UA's
+    // `[hidden] { display: none }` and leave an empty results box permanently on
+    // screen. That trap has now bitten this codebase six times.
     body.innerHTML = `
-      <form class="add-friend-form">
-        <input type="text" class="add-friend-input" placeholder="username" required />
-        <button type="submit">Add Friend</button>
-      </form>
+      <div class="add-friend">
+        <input type="text" class="add-friend-input" placeholder="Search players by name…"
+          autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Search players by name" />
+        <div class="friend-results" hidden></div>
+      </div>
       <p class="login-status add-friend-status" hidden></p>
       ${
         pending.length > 0
@@ -416,25 +428,7 @@ export function initHeader(root, { signInError = null } = {}) {
       }
     `;
 
-    body.querySelector('.add-friend-form').addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const username = body.querySelector('.add-friend-input').value.trim();
-      const status = body.querySelector('.add-friend-status');
-      try {
-        await sendFriendRequest(userId, username);
-        await renderFriendsPanel(body, userId);
-        // Re-query the freshly rendered node: renderFriendsPanel replaced the
-        // whole body, so the `status` captured above is now detached.
-        const freshStatus = body.querySelector('.add-friend-status');
-        if (freshStatus) {
-          freshStatus.hidden = false;
-          freshStatus.textContent = `Invite sent to ${username}.`;
-        }
-      } catch (error) {
-        status.hidden = false;
-        status.textContent = error.message;
-      }
-    });
+    wireFriendSearch(body, userId, { friends, pending, sent });
 
     body.querySelectorAll('.friend-accept-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -449,5 +443,124 @@ export function initHeader(root, { signInError = null } = {}) {
         await renderFriendsPanel(body, userId);
       });
     });
+  }
+
+  // Live username search feeding a clickable result list.
+  //
+  // The already-loaded friends/pending/sent lists are reused to label each
+  // result rather than asking the database what the relationship is — the panel
+  // has just fetched all three, so every relationship the viewer has is already
+  // in memory. That keeps a keystroke to ONE query instead of one plus a
+  // per-result lookup, and it is why a result can say "Pending" or "Accept"
+  // rather than only finding out on click.
+  function wireFriendSearch(body, userId, { friends, pending, sent }) {
+    const input = body.querySelector('.add-friend-input');
+    const results = body.querySelector('.friend-results');
+    const status = body.querySelector('.add-friend-status');
+    if (!input) return;
+
+    // id -> what this viewer's relationship with them already is.
+    const relationship = new Map();
+    for (const f of friends) if (f.friendProfile) relationship.set(f.friendProfile.id, { kind: 'friend', id: f.id });
+    for (const r of pending) if (r.requesterProfile) relationship.set(r.requesterProfile.id, { kind: 'incoming', id: r.id });
+    for (const s of sent) if (s.addresseeProfile) relationship.set(s.addresseeProfile.id, { kind: 'outgoing', id: s.id });
+
+    // Debounced so typing a name is one query, not one per character; and
+    // sequence-numbered so a slow early response cannot overwrite the results of
+    // a later, more specific query — the classic out-of-order autocomplete bug.
+    let debounce = null;
+    let sequence = 0;
+
+    input.addEventListener('input', () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => runSearch(input.value), 180);
+    });
+
+    async function runSearch(raw) {
+      const mine = ++sequence;
+      const query = raw.trim();
+      if (query.length < 2) {
+        results.hidden = true;
+        results.innerHTML = '';
+        return;
+      }
+      let found;
+      try {
+        found = await searchProfiles(query, { excludeUserId: userId });
+      } catch (error) {
+        if (mine !== sequence) return;
+        results.hidden = false;
+        results.innerHTML = `<p class="friend-results-empty">${escapeHtml(error.message)}</p>`;
+        return;
+      }
+      if (mine !== sequence) return; // a newer search already answered
+
+      results.hidden = false;
+      if (found.length === 0) {
+        results.innerHTML = `<p class="friend-results-empty">No player whose name starts with “${escapeHtml(query)}”.</p>`;
+        return;
+      }
+
+      results.innerHTML = found
+        .map((profile) => {
+          const rel = relationship.get(profile.id);
+          // One action per row, decided by the existing relationship. Sending a
+          // request to someone who already sent you one would create the
+          // reciprocal duplicate migration 010 exists to prevent, so that case
+          // offers Accept instead of Add.
+          const action =
+            rel?.kind === 'friend'
+              ? '<span class="friend-result-tag">Friends</span>'
+              : rel?.kind === 'outgoing'
+                ? '<span class="friend-result-tag">Pending</span>'
+                : rel?.kind === 'incoming'
+                  ? `<button type="button" class="friend-result-btn" data-accept="${escapeHtml(rel.id)}">Accept</button>`
+                  : `<button type="button" class="friend-result-btn" data-add="${escapeHtml(profile.username)}">Add</button>`;
+          return `
+            <div class="friend-result">
+              <a class="friends-profile-link" href="/?profile=${encodeURIComponent(profile.username)}">
+                ${nameplateHtml(profile, { custom: customCosmetics })}
+              </a>
+              ${action}
+            </div>`;
+        })
+        .join('');
+
+      results.querySelectorAll('[data-add]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          const name = btn.dataset.add;
+          try {
+            await sendFriendRequest(userId, name);
+            await renderFriendsPanel(body, userId);
+            // renderFriendsPanel replaced the whole body, so the nodes captured
+            // above are detached — re-query before writing to them.
+            const fresh = body.querySelector('.add-friend-status');
+            if (fresh) {
+              fresh.hidden = false;
+              fresh.textContent = `Invite sent to ${name}.`;
+            }
+          } catch (error) {
+            btn.disabled = false;
+            status.hidden = false;
+            status.textContent = error.message;
+          }
+        });
+      });
+
+      results.querySelectorAll('[data-accept]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          try {
+            await acceptFriendRequest(btn.dataset.accept);
+            await renderFriendsPanel(body, userId);
+          } catch (error) {
+            btn.disabled = false;
+            status.hidden = false;
+            status.textContent = error.message;
+          }
+        });
+      });
+    }
   }
 }

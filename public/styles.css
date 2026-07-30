@@ -1009,7 +1009,7 @@ header h1 {
   color: white;
 }
 
-/* Edit Poem + Copy Result sit side by side as the LAST row of the story
+/* Edit Fortune + Copy Result sit side by side as the LAST row of the story
    block, in both the collapsed and editing states — the editor drops in
    above this row (see .story-editor and renderStoryBlock) so Copy Result
    never moves off the bottom line. */
@@ -1539,14 +1539,19 @@ header h1 {
   cursor: pointer;
 }
 
-.add-friend-form {
-  display: flex;
-  gap: 0.5rem;
+/* --- Add a friend by searching (DESIGN.md §11p) --------------------------
+   NOTE: no `display` on `.friend-results` anywhere in this file, deliberately.
+   It is toggled with the `hidden` attribute, and a block/flex value here would
+   beat the UA's `[hidden] { display: none }` and pin an empty results box open
+   before anything has been typed. Same trap as `.draw-btn[hidden]` and
+   `.login-form[hidden]`; a plain div's default `block` is what makes `hidden`
+   work at all. */
+.add-friend {
   margin-bottom: 1rem;
 }
 
-.add-friend-form input {
-  flex: 1;
+.add-friend-input {
+  width: 100%;
   font-family: inherit;
   font-size: 0.9rem;
   padding: 0.5rem 0.7rem;
@@ -1556,16 +1561,112 @@ header h1 {
   color: var(--text);
 }
 
-.add-friend-form button {
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 600;
-  padding: 0.5rem 1rem;
+.add-friend-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Capped and scrollable: eight results is already more than a name search needs,
+   and an unbounded list would push the actual friends list off the modal. */
+.friend-results {
+  margin-top: 0.4rem;
+  max-height: 15rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+.friend-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.9rem;
+}
+
+.friend-result + .friend-result {
+  border-top: 1px solid var(--border);
+}
+
+.friend-result .friends-profile-link {
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.friend-result-btn {
+  flex: 0 0 auto;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.28rem 0.8rem;
+  border-radius: 999px;
   border: none;
   background: var(--accent);
-  color: white;
+  color: #ffffff;
   cursor: pointer;
+}
+
+.friend-result-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Already friends / already asked — a statement, not an action, so it is
+   deliberately not styled as a button. */
+.friend-result-tag {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.friend-results-empty {
+  margin: 0;
+  padding: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* The Add Friend action on another player's profile (DESIGN.md §11p). */
+.profile-friend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 0.6rem 0 0;
+}
+
+.profile-friend-btn {
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.4rem 1rem;
+  border-radius: 999px;
+  border: none;
+  background: var(--accent);
+  color: #ffffff;
+  cursor: pointer;
+}
+
+/* Already friends, or already asked. Reads as a status rather than something
+   still to be done — undoing either lives in the friends panel, where the
+   confirmation context is. */
+.profile-friend-btn--done {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  cursor: default;
+}
+
+/* `--red` is the token this stylesheet already uses for error text
+   (see .profile-error) — not a new colour. */
+.profile-friend-error {
+  font-size: 0.78rem;
+  color: var(--red);
 }
 
 .friends-subheading {
@@ -2292,18 +2393,45 @@ header h1 {
   background-image: linear-gradient(95deg, #6b3fa0, #a45fd0 45%, #d4a437);
 }
 
+/* ═══ THE SWEEP RULE — read before changing any background-size below ═══
+   Every horizontally-animated background here uses `background-size: 200%` with
+   a sweep of exactly 200%, and the two numbers are NOT independent.
+
+   A percentage `background-position` does not mean "percent of the image". CSS
+   resolves it against (container − image), so for a background-size of s (as a
+   multiple of the box) each 100% of position moves the image by (s−1) box
+   widths, while one repeating TILE is s box widths wide. A loop is seamless
+   only when the sweep covers a whole number of tiles:
+
+       sweep × (s − 1) = k × s        →      sweep = 100% × s / (s − 1)
+
+   These previously used sizes of 250–320% with a flat 200% sweep, which covers
+   0.2–0.27 of a tile — so every cycle ended part-way through the gradient and
+   snapped back (owner: "when it reaches the end it jumps back to the beginning
+   and like flashes"). s = 2 is the one value where the formula gives a round
+   200%, which is why all of them are now 200%: it makes the pairing impossible
+   to get subtly wrong. Verified by rendering the first and last frame and
+   comparing bitmaps, not by algebra alone.
+
+   Durations are deliberately unchanged. A narrower tile means less travel per
+   cycle, so these now drift a little more slowly — which is the right direction
+   for a complaint about smoothness, and keeps each paint's relative character.
+
+   Ember below is vertical and was ALREADY seamless (it covers exactly 2 tiles),
+   so it is left alone. */
+
 /* The top two tiers animate, which is the point of them being level 20/25
    rewards — they should be recognizable across a room. Held to a slow, wide
    sweep so it reads as a shimmer rather than a distraction. */
 .paint-paint_diamond {
   background-image: linear-gradient(100deg, #4fd8ff, #ffffff 45%, #63c7d6 55%, #4fd8ff);
-  background-size: 250% 100%;
+  background-size: 200% 100%;
   animation: paint-shimmer 4.5s linear infinite;
 }
 
 .paint-paint_jackpot {
   background-image: linear-gradient(100deg, #b8860b, #ffe89a 45%, #d4a437 55%, #b8860b);
-  background-size: 250% 100%;
+  background-size: 200% 100%;
   animation: paint-shimmer 3.8s linear infinite;
 }
 
@@ -2311,9 +2439,12 @@ header h1 {
    All three sweep a repeating gradient rather than animating `color`, so the
    motion is a background-position change on a composited layer — no per-frame
    layout or paint of the text itself.
-   The gradient's first and last stops MATCH in every one of these, which is what
-   makes the loop seamless: the sweep travels exactly one tile and the join is
-   invisible. A mismatched pair reads as a jolt once per cycle. */
+
+   SEAMLESSNESS TAKES TWO THINGS, and this comment used to claim the first alone
+   was enough. (1) The gradient's first and last stops must MATCH, so adjacent
+   tiles join invisibly — true here all along. (2) The sweep must cover a whole
+   number of tiles, which was NOT true: see the sweep rule above. Matching stops
+   made the join invisible in space while the animation still jumped in time. */
 
 /* Ember: heat rising through the letters — the only one that moves vertically. */
 .paint-paint_ember {
@@ -2325,7 +2456,7 @@ header h1 {
 /* Aurora: a wide, slow, cold drift. Deliberately the calmest of the three. */
 .paint-paint_aurora {
   background-image: linear-gradient(100deg, #1f7a6a, #46e0a0 30%, #6fd0ff 50%, #a97cf0 70%, #1f7a6a);
-  background-size: 320% 100%;
+  background-size: 200% 100%;
   animation: paint-shimmer 6s linear infinite;
 }
 
@@ -2341,7 +2472,7 @@ header h1 {
     #a86fff 82%,
     #ff4d6d
   );
-  background-size: 300% 100%;
+  background-size: 200% 100%;
   animation: paint-shimmer 2.6s linear infinite;
 }
 
@@ -2868,19 +2999,24 @@ header h1 {
   --grade-b: #7b2ff7;
   --grade-glow: #ff5fa2;
   background-image: linear-gradient(110deg, #c3497c 0%, #7b2ff7 45%, #1d818f 70%, #c3497c 100%);
-  background-size: 280% 100%;
+  /* 200%, per the sweep rule above — 280% with a 280% sweep covered a third of
+     a tile and snapped back, the same defect as the name paints. */
+  background-size: 200% 100%;
   animation: line-in 300ms ease both, grade-sheen 3.2s linear infinite;
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, #ffffff 18%, transparent),
     0 3px 20px color-mix(in srgb, #ff5fa2 55%, transparent);
 }
 
+/* 200% to match `background-size: 200%` on every element using this — see the
+   sweep rule beside the name paints. Changing one without the other reintroduces
+   the jump. */
 @keyframes grade-sheen {
   from {
     background-position: 0 0;
   }
   to {
-    background-position: 280% 0;
+    background-position: 200% 0;
   }
 }
 
@@ -3202,7 +3338,8 @@ header h1 {
     var(--grade-b) 65%,
     var(--grade-a) 100%
   );
-  background-size: 280% 100%;
+  /* 200%, matching grade-sheen's own 200% sweep — see the sweep rule. */
+  background-size: 200% 100%;
   animation: grade-sheen 3.4s linear infinite;
 }
 

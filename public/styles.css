@@ -1018,6 +1018,13 @@ header h1 {
   text-align: left;
 }
 
+/* Same fix as .draw-btn[hidden] — `display: grid` above otherwise wins over
+   the browser's default `[hidden] { display: none }` (both 0-1-0
+   specificity; an author stylesheet always beats the UA one). */
+.story-builder[hidden] {
+  display: none;
+}
+
 .story-slot {
   display: flex;
   flex-direction: column;
@@ -1056,6 +1063,12 @@ header h1 {
   max-width: 320px;
   margin: 0 auto 1.25rem;
   animation: line-in 250ms ease both;
+}
+
+/* Same fix as .draw-btn[hidden] — an explicit `display` on the class
+   otherwise wins over the browser's default `[hidden] { display: none }`. */
+.meters[hidden] {
+  display: none;
 }
 
 .meter {
@@ -1112,6 +1125,12 @@ header h1 {
   gap: 0.15rem;
   margin-bottom: 1.25rem;
   animation: line-in 250ms ease both;
+}
+
+/* Same fix as .draw-btn[hidden] — an explicit `display` on the class
+   otherwise wins over the browser's default `[hidden] { display: none }`. */
+.personality-badge[hidden] {
+  display: none;
 }
 
 .personality-emoji {
@@ -1308,6 +1327,15 @@ header h1 {
 .login-form {
   display: flex;
   gap: 0.5rem;
+}
+
+/* Same fix as .draw-btn[hidden] — an explicit `display` on the class
+   otherwise wins over the browser's default `[hidden] { display: none }`.
+   Without this, the email input + Send Link button stayed visibly on
+   screen after a successful send instead of being replaced by the "check
+   your email" status text. */
+.login-form[hidden] {
+  display: none;
 }
 
 .login-form input {

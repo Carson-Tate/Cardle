@@ -1111,6 +1111,13 @@ function resolveStorySelections(originalHand, finalHand, discardIndices) {
 // Renders the story as 6 independent pickers — one per fragment slot — so
 // the player builds their own combination rather than picking a whole
 // pre-written sentence or an overall "voice."
+// Owner request: "i want the bottom poem/story part to have a submit
+// button and then only shows the story made and gets rid of the drop
+// downs... the submit button should replace the copy results button and
+// only show copy results once it is submitted." Two-stage UI: pickers +
+// Submit while composing, then (post-submit) just the finished line + Copy
+// Result — Submit and Copy Result occupy the same slot so it reads as one
+// button changing purpose, not two buttons stacking up.
 function renderStoryBlock(container, result) {
   const { originalHand, finalHand, discardIndices } = result;
   const { selections, options } = resolveStorySelections(originalHand, finalHand, discardIndices);
@@ -1118,7 +1125,7 @@ function renderStoryBlock(container, result) {
 
   container.innerHTML = `
     <p class="story-text" id="story-text">${story.text}</p>
-    <div class="story-builder">
+    <div class="story-builder" id="story-builder">
       ${STORY_SLOT_ORDER.map(
         (slot) => `
           <label class="story-slot">
@@ -1132,10 +1139,12 @@ function renderStoryBlock(container, result) {
         `,
       ).join('')}
     </div>
-    <button type="button" class="copy-btn" id="copy-btn">📋 Copy Result</button>
+    <button type="button" class="copy-btn" id="submit-story-btn">Submit</button>
+    <button type="button" class="copy-btn" id="copy-btn" hidden>📋 Copy Result</button>
   `;
 
   const storyTextEl = container.querySelector('#story-text');
+  const storyBuilderEl = container.querySelector('#story-builder');
   container.querySelectorAll('select[data-slot]').forEach((select) => {
     select.addEventListener('change', () => {
       const slot = select.dataset.slot;
@@ -1146,7 +1155,14 @@ function renderStoryBlock(container, result) {
     });
   });
 
+  const submitBtn = container.querySelector('#submit-story-btn');
   const copyBtn = container.querySelector('#copy-btn');
+  submitBtn.addEventListener('click', () => {
+    storyBuilderEl.hidden = true;
+    submitBtn.hidden = true;
+    copyBtn.hidden = false;
+  });
+
   copyBtn.addEventListener('click', async () => {
     await copyToClipboard(story.shareText); // reads the current `story` at click time, not bind time
     const original = copyBtn.textContent;

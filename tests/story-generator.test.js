@@ -287,13 +287,12 @@ describe('buildShareText / generateStory', () => {
   };
 
   test('shareText includes the day number, hand, score, and rating', () => {
-    const { text, emojiGrid, shareText } = generateStory(baseResult);
+    const { finalHandText, shareText } = generateStory(baseResult);
     assert.match(shareText, /Cardle #7/);
     assert.match(shareText, /High Card/);
     assert.match(shareText, /12 pts/);
     assert.match(shareText, /75%/);
-    assert.ok(shareText.includes(emojiGrid));
-    assert.ok(shareText.includes(text));
+    assert.ok(shareText.includes(finalHandText));
   });
 
   test('handles a non-finite decision rating gracefully', () => {
@@ -302,9 +301,28 @@ describe('buildShareText / generateStory', () => {
     assert.match(shareText, /Decision Rating: —/);
   });
 
-  test("never leaks exact ranks into the share text's emoji grid line", () => {
+  test("never leaks exact ranks into buildEmojiGrid's own output (kept spoiler-safe for any caller still using it)", () => {
     const { emojiGrid } = generateStory(baseResult);
     assert.ok(!/\d/.test(emojiGrid));
+  });
+
+  test('shareText shows the actual final hand, ranks included (owner request: "showing what cards were drawn")', () => {
+    const { finalHandText, shareText } = generateStory(baseResult);
+    assert.equal(finalHandText, '2♠ 5♥ 9♦ J♣ K♠');
+    assert.match(shareText, /Final Hand: 2♠ 5♥ 9♦ J♣ K♠/);
+  });
+
+  test('no ✨ markers on drawn replacement cards (owner request: "remove the stars in the copied")', () => {
+    const result = { ...baseResult, discardIndices: [1, 3] };
+    const { finalHandText, shareText } = generateStory(result);
+    assert.equal(finalHandText, '2♠ 5♥ 9♦ J♣ K♠');
+    assert.ok(!shareText.includes('✨'));
+  });
+
+  test('shareText no longer includes the poem, just the site URL below the final hand (owner request)', () => {
+    const { text, shareText } = generateStory(baseResult);
+    assert.ok(!shareText.includes(text));
+    assert.match(shareText, /cardle\.lol\s*$/);
   });
 
   test('accepts explicit selections and returns them back', () => {

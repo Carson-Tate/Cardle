@@ -1,4 +1,4 @@
-import { hashSeed, createRng, shuffle, suitGlyph } from '../core/deck.js';
+import { hashSeed, createRng, shuffle, rankLabel, suitGlyph } from '../core/deck.js';
 import { evaluateHand, handStrengthIndex } from '../core/hand-evaluator.js';
 import { FRAGMENTS } from './templates.js';
 
@@ -126,21 +126,42 @@ export function buildStoryText(originalHand, finalHand, discardIndices, date = n
 
 // Wordle-style share grid: one token per final-hand position, suit only
 // (never rank), with a ✨ marker on positions that were drawn replacements
-// rather than kept from the original deal — enough to brag about without
-// spoiling the actual hand.
+// rather than kept from the original deal. Dates from when every player got
+// the same daily hand (spoiler-safe, so a friend who hadn't played yet
+// couldn't see the answer) — kept for callers that still want it, but no
+// longer what buildShareText uses (see buildFinalHandText below): now that
+// hands are randomly dealt per player (§42), there's no shared puzzle left
+// to spoil.
 export function buildEmojiGrid(finalHand, discardIndices) {
   const discarded = new Set(discardIndices);
   return finalHand.map((card, index) => suitGlyph(card.suit) + (discarded.has(index) ? '✨' : '')).join(' ');
 }
 
-export function buildShareText(result, storyText, emojiGrid) {
+// The actual final hand, rank and suit, in play order — owner request:
+// "redesign what is copied from the copy results, showing what cards were
+// drawn." No drawn/kept marker (owner: "remove the stars in the copied") —
+// just the plain final hand.
+export function buildFinalHandText(finalHand) {
+  return finalHand.map((card) => `${rankLabel(card.rank)}${suitGlyph(card.suit)}`).join(' ');
+}
+
+// Owner: "i think we should remove the poem from the copy and just add the
+// website below the final hand" — the poem/story stays fully visible and
+// editable in the UI (renderStoryBlock, board.js), it just isn't part of
+// what gets copied anymore. The `https://` prefix isn't just cosmetic:
+// pasted as plain text (copyToClipboard, board.js, is a plain writeText),
+// most apps' auto-linkifiers (iMessage, Slack, Discord, email...) only
+// reliably turn a bare domain into a tappable link when it has an explicit
+// scheme — owner report: "the cardle.lol cannot be clicked" when pasted.
+const SITE_URL = 'https://cardle.lol';
+
+export function buildShareText(result, finalHandText) {
   const ratingPct = Number.isFinite(result.decisionRating) ? `${Math.round(result.decisionRating * 100)}%` : '—';
   return [
     `Cardle #${result.dayNumber} — ${result.score.handResult.label} — ${result.score.total.toLocaleString()} pts`,
     `Decision Rating: ${ratingPct}`,
-    emojiGrid,
-    '',
-    storyText,
+    `Final Hand: ${finalHandText}`,
+    SITE_URL,
   ].join('\n');
 }
 
@@ -156,6 +177,7 @@ export function generateStory(result, selections, date = new Date()) {
     selections ?? getDefaultSelections(result.originalHand, result.finalHand, result.discardIndices, date);
   const text = buildStoryTextFromSelections(result.originalHand, result.finalHand, result.discardIndices, resolvedSelections, date);
   const emojiGrid = buildEmojiGrid(result.finalHand, result.discardIndices);
-  const shareText = buildShareText(result, text, emojiGrid);
-  return { text, emojiGrid, shareText, selections: resolvedSelections };
+  const finalHandText = buildFinalHandText(result.finalHand);
+  const shareText = buildShareText(result, finalHandText);
+  return { text, emojiGrid, finalHandText, shareText, selections: resolvedSelections };
 }

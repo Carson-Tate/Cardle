@@ -2932,11 +2932,23 @@ header h1 {
 
 /* --- Leaderboards (DESIGN.md §11j) --------------------------------------- */
 
+/* Board tabs on the left, the Global/Friends scope inline on the right (owner
+   request). `align-items: flex-end` keeps the scope control sitting on the same
+   baseline as the LAST row of tabs when they wrap, rather than floating beside
+   the first row. */
+.lb-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 0.6rem 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
 .lb-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
-  margin-bottom: 0.6rem;
 }
 
 .lb-tab {
@@ -2961,14 +2973,38 @@ header h1 {
   color: var(--accent);
 }
 
-.lb-friends-toggle {
+/* A segmented pair sharing one outline, so the two options read as two states of
+   one control rather than two separate buttons. */
+.lb-scope {
   display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin-bottom: 1rem;
-  font-size: 0.8rem;
+  flex-shrink: 0;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.lb-scope-btn {
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.3rem 0.75rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
   color: var(--text-muted);
   cursor: pointer;
+}
+
+.lb-scope-btn:hover:not(.lb-scope-btn--active) {
+  color: var(--text);
+}
+
+.lb-scope-btn--active {
+  background: var(--accent);
+  color: #ffffff;
 }
 
 .lb-list {

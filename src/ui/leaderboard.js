@@ -78,20 +78,37 @@ export async function initLeaderboard(root) {
         <a class="profile-back-link" href="/">← Back to today's hand</a>
         <h2 class="admin-title">Leaderboards</h2>
 
-        <div class="lb-tabs" role="tablist">
-          ${BOARDS.map(
-            (b) => `
-            <button type="button" role="tab" aria-selected="${b.id === boardId}"
-              class="lb-tab${b.id === boardId ? ' lb-tab--active' : ''}" data-board="${escapeHtml(b.id)}">
-              ${escapeHtml(b.label)}
-            </button>`,
-          ).join('')}
-        </div>
+        <div class="lb-controls">
+          <div class="lb-tabs" role="tablist">
+            ${BOARDS.map(
+              (b) => `
+              <button type="button" role="tab" aria-selected="${b.id === boardId}"
+                class="lb-tab${b.id === boardId ? ' lb-tab--active' : ''}" data-board="${escapeHtml(b.id)}">
+                ${escapeHtml(b.label)}
+              </button>`,
+            ).join('')}
+          </div>
 
-        <label class="lb-friends-toggle">
-          <input type="checkbox" id="lb-friends-only"${friendsOnly ? ' checked' : ''} />
-          <span>Friends only</span>
-        </label>
+          <!-- Global vs Friends, inline to the right of the board tabs (owner
+               request). A two-option segmented control rather than the checkbox
+               this replaces: "Friends only" left the other state unnamed, so it
+               never said what unticking it actually showed. Marked up as a
+               radiogroup because the two are mutually exclusive - aria-pressed
+               buttons would announce as two independent toggles. -->
+          <div class="lb-scope" role="radiogroup" aria-label="Leaderboard scope">
+            ${[
+              { id: 'global', label: 'Global', on: !friendsOnly },
+              { id: 'friends', label: 'Friends', on: friendsOnly },
+            ]
+              .map(
+                (opt) => `
+              <button type="button" role="radio" aria-checked="${opt.on}"
+                class="lb-scope-btn${opt.on ? ' lb-scope-btn--active' : ''}"
+                data-scope="${opt.id}">${opt.label}</button>`,
+              )
+              .join('')}
+          </div>
+        </div>
 
         <section class="profile-section">
           ${
@@ -112,9 +129,13 @@ export async function initLeaderboard(root) {
         load();
       });
     });
-    root.querySelector('#lb-friends-only')?.addEventListener('change', (event) => {
-      friendsOnly = event.currentTarget.checked;
-      load();
+    root.querySelectorAll('[data-scope]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const next = btn.dataset.scope === 'friends';
+        if (next === friendsOnly) return; // already on this scope — no reload
+        friendsOnly = next;
+        load();
+      });
     });
   }
 

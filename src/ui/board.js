@@ -65,9 +65,15 @@ const ANTICIPATION_BY_RARITY = { bronze: 150, silver: 250, gold: 350, joker: 500
 // How long the card sits showing its face-down back, mid-flip, before
 // turning to reveal its face — rare tiers linger longer for extra suspense.
 const HOLD_BY_RARITY = { bronze: 300, silver: 400, gold: 550, joker: 800, diamond: 950 };
+// Timing for the opening deal's card-into-place animation (.card--deal-in,
+// styles.css) — how long each card takes to land, and the stagger between
+// each card starting.
+const DEAL_IN_DURATION_MS = 260;
+const DEAL_IN_STAGGER_MS = 90;
 
 export function initBoard(root) {
   const handRow = root.querySelector('#hand-row');
+  const drawBtn = root.querySelector('#draw-btn');
   const discardHint = root.querySelector('#discard-hint');
   const lockInBtn = root.querySelector('#lock-in-btn');
   const dayLabel = root.querySelector('#day-label');
@@ -162,7 +168,25 @@ export function initBoard(root) {
   if (config.persist) {
     beginRealPlay();
   } else {
-    startHand({ seed: config.seed });
+    beginWithDrawButton({ seed: config.seed });
+  }
+
+  // Owner request: "i want a draw button before you get the cards to start
+  // the game, not right when the page is loaded." Shows the Draw button in
+  // place of the (still-empty) hand row and waits for a click before
+  // actually dealing — only ever used for the FIRST hand of a run. A
+  // redeal from the test-mode admin panel is already its own explicit
+  // button click, so those call startHand() directly with no extra gate.
+  function beginWithDrawButton(dealOptions) {
+    drawBtn.hidden = false;
+    drawBtn.addEventListener(
+      'click',
+      () => {
+        drawBtn.hidden = true;
+        startHand(dealOptions);
+      },
+      { once: true },
+    );
   }
 
   // Resolves which identity (if any) is playing, claims/loads today's seed
@@ -180,7 +204,7 @@ export function initBoard(root) {
         if (result) {
           renderAlreadyPlayed(result);
         } else {
-          startHand({ seed });
+          beginWithDrawButton({ seed });
         }
         return;
       } catch (error) {
@@ -193,7 +217,7 @@ export function initBoard(root) {
       renderAlreadyPlayed(existingResult);
     } else {
       renderAnonHint("Sign up before drawing to save your score — otherwise this one won't be saved.");
-      startHand({ seed: getOrCreateTodaySeed(today) });
+      beginWithDrawButton({ seed: getOrCreateTodaySeed(today) });
     }
   }
 
@@ -290,24 +314,33 @@ export function initBoard(root) {
     return true;
   }
 
-  // Starts on a face-down "draw" state, then flips each card face-up left
-  // to right — reusing the exact same flip animation (including
+  // Starts by dealing each card face-down into its slot — staggered, so it
+  // reads as cards being dealt rather than appearing all at once (owner
+  // request: "it should be like the cards are getting dealt and then once
+  // they are all in the normal position is when it does the normal
+  // reveal") — then, once every card has actually landed, flips each face-up
+  // left to right, reusing the exact same flip animation (including
   // rarity-aware duration/glow) as a discard's replacement reveal, so the
-  // opening hand is a reveal too, not data that just appears (owner
-  // request). Cards aren't clickable until the whole deal finishes: a click
-  // mid-deal would call renderHand(), which rebuilds the row instantly and
-  // would spoil the cards still mid-animation. Double or Nothing (§4e) only
-  // flips the first 2 here and stops for the wager prompt instead of
-  // finishing the deal — see resolveWager() for the other 3.
+  // opening hand is a reveal too, not data that just appears. Cards aren't
+  // clickable until the whole deal finishes: a click mid-deal would call
+  // renderHand(), which rebuilds the row instantly and would spoil the
+  // cards still mid-animation. Double or Nothing (§4e) only flips the first
+  // 2 here and stops for the wager prompt instead of finishing the deal —
+  // see resolveWager() for the other 3.
   async function dealInitialHand(token) {
     handRow.innerHTML = '';
-    cardEls = originalHand.map((card) => {
+    cardEls = originalHand.map((card, index) => {
       const el = createCardElement(card, { faceUp: false });
+      el.classList.add('card--deal-in');
+      el.style.animationDelay = `${index * DEAL_IN_STAGGER_MS}ms`;
       handRow.appendChild(el);
       return el;
     });
 
-    await delay(400); // let the face-down draw screen register for a beat
+    // Every card is in position once the last-starting one's own animation
+    // finishes, plus a short hold so the fully-dealt hand registers as a
+    // beat before the reveal starts (mirrors the old flat 400ms pause here).
+    await delay((originalHand.length - 1) * DEAL_IN_STAGGER_MS + DEAL_IN_DURATION_MS + 150);
     if (token !== dealToken) return; // superseded by a newer deal — stop here
 
     if (isPeekWagerModifier()) {

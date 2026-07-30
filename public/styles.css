@@ -487,7 +487,8 @@ header h1 {
   margin-bottom: 0.75rem;
 }
 
-#lock-in-btn {
+#lock-in-btn,
+.draw-btn {
   font-family: inherit;
   font-size: 1rem;
   font-weight: 600;
@@ -502,6 +503,41 @@ header h1 {
 #lock-in-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.draw-btn {
+  display: block;
+  margin: 1rem auto 1.5rem;
+  font-size: 1.1rem;
+  padding: 0.8rem 2.5rem;
+}
+
+/* The `display: block` above otherwise wins over the browser's default
+   `[hidden] { display: none }` (both are 0-1-0 specificity — an author
+   stylesheet always beats the UA one regardless of order), so setting
+   `.hidden = true` in JS would stop actually hiding the button. */
+.draw-btn[hidden] {
+  display: none;
+}
+
+/* Each card animates into its own slot before the normal face-down-hold-
+   then-flip reveal starts (owner request: "it should be like the cards are
+   getting dealt and then once they are all in the normal position is when
+   it does the normal reveal") — staggered per-card via an inline
+   animation-delay set in dealInitialHand(). */
+@keyframes card-deal-in {
+  from {
+    transform: translateY(-28px) scale(0.9);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.card--deal-in {
+  animation: card-deal-in 260ms ease-out both;
 }
 
 .wager-prompt {

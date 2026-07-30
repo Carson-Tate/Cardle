@@ -1131,43 +1131,66 @@ function resolveStorySelections(originalHand, finalHand, discardIndices) {
   return { selections, options };
 }
 
-// Renders the story as 6 independent pickers — one per fragment slot — so
-// the player builds their own combination rather than picking a whole
-// pre-written sentence or an overall "voice."
-// Owner request: "i want the bottom poem/story part to have a submit
-// button and then only shows the story made and gets rid of the drop
-// downs... the submit button should replace the copy results button and
-// only show copy results once it is submitted." Two-stage UI: pickers +
-// Submit while composing, then (post-submit) just the finished line + Copy
-// Result — Submit and Copy Result occupy the same slot so it reads as one
-// button changing purpose, not two buttons stacking up.
+// The story starts as a finished, randomly-seeded line (see
+// resolveStorySelections) with its 6 slot pickers collapsed behind an "Edit
+// Poem" button — owner request: "give a random starting poem like it always
+// has done but instead of having all the options immediately, have an 'edit
+// poem' button that then drops down the selections and a submit button
+// after." So the default state is just the poem plus two buttons, and the
+// pickers are opt-in rather than six dropdowns greeting every player.
+//
+// Copy Result is ALWAYS visible (owner: "i want to always have a copy result
+// button on the bottom"), which replaces the earlier arrangement where Submit
+// occupied that slot until you'd submitted. Copying and editing are
+// independent now: the poem is complete from the moment it renders, so
+// there's never a state where the result can't be copied. Editing collapses
+// back to the same default state on Submit, so the button pair stays stable.
 function renderStoryBlock(container, result) {
   const { originalHand, finalHand, discardIndices } = result;
   const { selections, options } = resolveStorySelections(originalHand, finalHand, discardIndices);
   let story = generateStory(result, selections);
 
+  // The editor sits ABOVE the button row on purpose, so Copy Result is the
+  // last thing in the block in BOTH states — "always have a copy result
+  // button on the bottom" stays literally true while the pickers are open,
+  // instead of the editor pushing Copy Result up into the middle.
   container.innerHTML = `
-    <p class="story-text" id="story-text">${story.text}</p>
-    <div class="story-builder" id="story-builder">
-      ${STORY_SLOT_ORDER.map(
-        (slot) => `
-          <label class="story-slot">
-            <span class="story-slot-label">${SLOT_META[slot].label}</span>
-            <select data-slot="${slot}">
-              ${options[slot]
-                .map((option, index) => `<option value="${index}"${index === selections[slot] ? ' selected' : ''}>${option}</option>`)
-                .join('')}
-            </select>
-          </label>
-        `,
-      ).join('')}
+    <p class="story-text" id="story-text"></p>
+    <div class="story-editor" id="story-editor" hidden>
+      <div class="story-builder">
+        ${STORY_SLOT_ORDER.map(
+          (slot) => `
+            <label class="story-slot">
+              <span class="story-slot-label">${SLOT_META[slot].label}</span>
+              <select data-slot="${slot}">
+                ${options[slot]
+                  .map((option, index) => `<option value="${index}"${index === selections[slot] ? ' selected' : ''}>${option}</option>`)
+                  .join('')}
+              </select>
+            </label>
+          `,
+        ).join('')}
+      </div>
+      <button type="button" class="copy-btn" id="submit-story-btn">Submit</button>
     </div>
-    <button type="button" class="copy-btn" id="submit-story-btn">Submit</button>
-    <button type="button" class="copy-btn" id="copy-btn" hidden>📋 Copy Result</button>
+    <div class="story-actions">
+      <button type="button" class="story-edit-btn" id="edit-poem-btn">✏️ Edit Poem</button>
+      <button type="button" class="copy-btn" id="copy-btn">📋 Copy Result</button>
+    </div>
   `;
 
   const storyTextEl = container.querySelector('#story-text');
-  const storyBuilderEl = container.querySelector('#story-builder');
+  const storyEditorEl = container.querySelector('#story-editor');
+  const editBtn = container.querySelector('#edit-poem-btn');
+  const submitBtn = container.querySelector('#submit-story-btn');
+  const copyBtn = container.querySelector('#copy-btn');
+
+  // textContent, not interpolated into the innerHTML above — the fragments are
+  // repo-authored so nothing here is untrusted, but this is also the same
+  // element the change handler below writes to, so using one mechanism for
+  // both keeps them from drifting.
+  storyTextEl.textContent = story.text;
+
   container.querySelectorAll('select[data-slot]').forEach((select) => {
     select.addEventListener('change', () => {
       const slot = select.dataset.slot;
@@ -1178,12 +1201,17 @@ function renderStoryBlock(container, result) {
     });
   });
 
-  const submitBtn = container.querySelector('#submit-story-btn');
-  const copyBtn = container.querySelector('#copy-btn');
+  editBtn.addEventListener('click', () => {
+    storyEditorEl.hidden = false;
+    editBtn.hidden = true;
+  });
+
+  // Submit only closes the editor — the poem itself is already applied live
+  // on every dropdown change, so there's nothing to commit here. It exists to
+  // get the six pickers back out of the way.
   submitBtn.addEventListener('click', () => {
-    storyBuilderEl.hidden = true;
-    submitBtn.hidden = true;
-    copyBtn.hidden = false;
+    storyEditorEl.hidden = true;
+    editBtn.hidden = false;
   });
 
   copyBtn.addEventListener('click', async () => {

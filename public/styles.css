@@ -1009,6 +1009,47 @@ header h1 {
   color: white;
 }
 
+/* Edit Poem + Copy Result sit side by side as the LAST row of the story
+   block, in both the collapsed and editing states — the editor drops in
+   above this row (see .story-editor and renderStoryBlock) so Copy Result
+   never moves off the bottom line. */
+.story-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+/* Visually secondary to .copy-btn — muted rather than accent-outlined — so
+   the primary action (Copy Result) still reads as the primary one. */
+.story-edit-btn {
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.5rem 1.25rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.story-edit-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* No `display` property here on purpose: a block/flex value would override
+   the browser's default `[hidden] { display: none }` and stop the editor
+   collapsing at all — the exact bug that hit .draw-btn, .story-builder,
+   .meters, .personality-badge and .login-form (see .draw-btn[hidden]).
+   Leaving it as the default `block` for a div keeps `hidden` working. */
+.story-editor {
+  animation: line-in 250ms ease both;
+  margin-bottom: 1rem;
+}
+
 .story-builder {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

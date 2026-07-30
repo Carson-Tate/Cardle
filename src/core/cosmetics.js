@@ -76,9 +76,16 @@ export const NAME_PAINTS = [
   { id: 'paint_sunset', label: 'Sunset', level: 5 },
   { id: 'paint_tide', label: 'Tide', level: 8 },
   { id: 'paint_emerald', label: 'Emerald', level: 12 },
+  // `animated: true` is metadata for the PICKER only — the motion itself lives
+  // entirely in CSS (see `.paint-*` in styles.css). It exists so a chip can say
+  // "Animated", which is the whole appeal of these tiers and is invisible on a
+  // static swatch. Nothing branches on it.
+  { id: 'paint_ember', label: 'Ember', level: 15, animated: true },
   { id: 'paint_royal', label: 'Royal', level: 16 },
-  { id: 'paint_diamond', label: 'Diamond', level: 20 },
-  { id: 'paint_jackpot', label: 'Jackpot', level: 25 },
+  { id: 'paint_diamond', label: 'Diamond', level: 20, animated: true },
+  { id: 'paint_aurora', label: 'Aurora', level: 22, animated: true },
+  { id: 'paint_jackpot', label: 'Jackpot', level: 25, animated: true },
+  { id: 'paint_prism', label: 'Prism', level: 30, animated: true },
 ];
 
 export const DEFAULT_PAINT_ID = 'paint_default';

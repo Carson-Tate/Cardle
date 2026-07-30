@@ -120,13 +120,25 @@ function flipSwap(el, buildNewEl, duration) {
  *
  * @param {HTMLElement} oldEl - the currently-displayed card element
  * @param {Card} card - the card to reveal
- * @param {number} [duration] - each flip stage's duration in ms (default 180)
+ * @param {number} [duration] - the REVEAL flip's duration in ms (default 180)
+ * @param {number} [backDuration] - the turn-to-back flip's duration; defaults to
+ *   `duration`, but a rarity-paced reveal should pass the common duration here.
+ *   The turn-to-back happens while the OLD card is still on screen and says
+ *   nothing about what is coming, so slowing it down puts the drama in the wrong
+ *   place — see the note in board.js's revealDrawnCards.
+ * @param {number} [anticipationMs] - extra pause once the card is face-down,
+ *   before the reveal begins. Separate from `holdMs` only so callers can express
+ *   "anticipation" and "hold" independently; both happen on the back.
  * @param {number} [holdMs] - how long to sit on the face-down back before revealing (default 250)
  * @param {string|null} [dramaticClass] - CSS class added once the final face-up card lands (see styles.css `.card--reveal-rare`)
  * @param {boolean} [disabled] - whether the resulting face-up element should be disabled (default true)
  * @returns {Promise<HTMLElement>} the new face-up element, so the caller can update its own references
  */
-export async function flipReplaceCard(oldEl, card, { duration = 180, holdMs = 250, dramaticClass = null, disabled = true } = {}) {
+export async function flipReplaceCard(
+  oldEl,
+  card,
+  { duration = 180, backDuration = null, anticipationMs = 0, holdMs = 250, dramaticClass = null, disabled = true } = {},
+) {
   let backEl = oldEl;
   if (!oldEl.classList.contains('card--face-down')) {
     backEl = await flipSwap(
@@ -136,10 +148,12 @@ export async function flipReplaceCard(oldEl, card, { duration = 180, holdMs = 25
         el.disabled = true;
         return el;
       },
-      duration,
+      backDuration ?? duration,
     );
   }
 
+  // Both pauses land here, on the face-down back — never on the outgoing card.
+  if (anticipationMs > 0) await delay(anticipationMs);
   await delay(holdMs);
 
   const frontEl = await flipSwap(

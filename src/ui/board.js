@@ -57,12 +57,22 @@ const METER_META = {
 
 const STORY_SLOT_ORDER = ['opening', 'action', 'object', 'connector', 'ending', 'emoji'];
 
+// A common card's flip speed, and the fallback for every rarity-keyed map
+// below. Also the speed of EVERY turn-to-back, rare or not (see
+// revealDrawnCards).
+const BASE_FLIP_MS = 180;
 // How long a card's flip takes, by rarity — common stays snappy (180ms,
 // matching the original animation); rare tiers slow down and add a glow
 // pulse once they land, so a rare card's reveal reads as unmistakably
 // different (owner request). Same maps drive both the initial deal and a
 // discard's replacement reveal — see flipReplaceCard in animations.js.
 // Diamond (rarer than Joker, §3o) gets the most dramatic timing of all.
+//
+// These pace the REVEAL only. Both reveal paths are serialized — a `for` loop
+// awaiting each card — so cards always land strictly left to right no matter how
+// their durations differ. The discard path used to run them in parallel with a
+// fixed 90ms stagger, which meant a slow rare card and a fast common one landed
+// in whatever order their durations happened to produce.
 const FLIP_DURATION_BY_RARITY = { bronze: 350, silver: 500, gold: 700, joker: 1000, diamond: 1200 };
 // A brief hold before a rare card even starts its flip, so its moment
 // doesn't get lost in the normal cascading reveal.
@@ -384,7 +394,7 @@ export function initBoard(root) {
       const anticipation = ANTICIPATION_BY_RARITY[card.rarity] ?? 0;
       if (anticipation) await delay(anticipation);
       if (token !== dealToken) return false;
-      const duration = FLIP_DURATION_BY_RARITY[card.rarity] ?? 180;
+      const duration = FLIP_DURATION_BY_RARITY[card.rarity] ?? BASE_FLIP_MS;
       const holdMs = HOLD_BY_RARITY[card.rarity] ?? 250;
       const dramaticClass = card.rarity ? 'card--reveal-rare' : null;
       // no onClick yet — renderHand() (or the wager prompt) wires up
@@ -704,18 +714,32 @@ export function initBoard(root) {
   // back, and a glow pulse once it lands — common cards keep the original
   // snappy 180ms flip untouched.
   async function revealDrawnCards(discardIndices, finalHand, token) {
-    const flips = discardIndices.map((index, order) => {
+    for (const index of discardIndices) {
+      if (token !== dealToken) return; // a redeal fired mid-cascade — stop touching these slots
       const card = finalHand[index];
-      const anticipation = ANTICIPATION_BY_RARITY[card.rarity] ?? 0;
-      return delay(order * 90 + anticipation).then(async () => {
-        if (token !== dealToken) return; // a redeal fired mid-cascade — stop touching these slots
-        const duration = FLIP_DURATION_BY_RARITY[card.rarity] ?? 180;
-        const holdMs = HOLD_BY_RARITY[card.rarity] ?? 250;
-        const dramaticClass = card.rarity ? 'card--reveal-rare' : null;
-        cardEls[index] = await flipReplaceCard(cardEls[index], card, { duration, holdMs, dramaticClass, disabled: true });
+      const duration = FLIP_DURATION_BY_RARITY[card.rarity] ?? BASE_FLIP_MS;
+      const holdMs = HOLD_BY_RARITY[card.rarity] ?? 250;
+      const dramaticClass = card.rarity ? 'card--reveal-rare' : null;
+      cardEls[index] = await flipReplaceCard(cardEls[index], card, {
+        duration,
+        // The turn-to-back is ALWAYS the common speed, however rare the
+        // replacement is. It happens while the discarded card is still on
+        // screen, so a rarity-paced one put the slow, dramatic motion on the
+        // card being thrown away rather than on the reveal — owner bug report:
+        // "the slower animation starts when it flips the card back over to the
+        // back".
+        backDuration: BASE_FLIP_MS,
+        // Anticipation now waits on the face-down back instead of delaying the
+        // start, so a rare slot no longer sits showing its old card longer than
+        // its neighbours.
+        anticipationMs: ANTICIPATION_BY_RARITY[card.rarity] ?? 0,
+        holdMs,
+        dramaticClass,
+        disabled: true,
       });
-    });
-    await Promise.all(flips);
+      if (token !== dealToken) return;
+      await delay(90);
+    }
     await delay(150);
   }
 

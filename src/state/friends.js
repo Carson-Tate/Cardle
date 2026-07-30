@@ -9,6 +9,7 @@
 
 import { requireSupabase } from './supabase-client.js';
 import { NAMEPLATE_COLUMNS } from './profile.js';
+import { normalizeUsername } from './auth.js';
 
 // Looks up a friendships row's "OTHER side" — whichever of
 // requester_id/addressee_id isn't `userId`. Used to figure out whose profile
@@ -40,7 +41,14 @@ async function profilesById(client, ids) {
 // Postgres errors into messages a request-by-username UI can show directly.
 export async function sendFriendRequest(userId, username) {
   const client = await requireSupabase();
-  const { data: target, error: lookupError } = await client.from('profiles').select('id').eq('username', username).maybeSingle();
+  // Normalized for the LOOKUP (stored names are uppercase, §11n) so a request
+  // typed in lower case still finds the player, while the error messages below
+  // quote the name as the sender actually typed it.
+  const { data: target, error: lookupError } = await client
+    .from('profiles')
+    .select('id')
+    .eq('username', normalizeUsername(username))
+    .maybeSingle();
   if (lookupError) throw lookupError;
   if (!target) throw new Error(`No user found with the username "${username}".`);
   if (target.id === userId) throw new Error("You can't send a friend request to yourself.");

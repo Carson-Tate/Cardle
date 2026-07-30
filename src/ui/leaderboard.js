@@ -133,23 +133,36 @@ export async function initLeaderboard(root) {
             // you're not at the top of.
             const isMe = row.userId === userId;
             const grade = board.career ? null : gradeForScore(row.value);
+            // The score itself carries the rarity highlight (owner request:
+            // "make the score on the leaderboards be highlighted in the rarity
+            // of the score instead of just showing the rarity next to it"), so
+            // the separate grade pill is gone. The tier name would be lost with
+            // it, so it moves to a tooltip and an aria-label — the colour is the
+            // at-a-glance signal, but the name stays available and is the only
+            // form a screen reader can convey.
+            const gradeClass = grade ? ` lb-value--graded score-grade--${grade.id}` : '';
+            const gradeTip = grade ? ` title="${escapeHtml(`${grade.label} — ${row.value.toLocaleString()} points`)}"` : '';
             return `
             <li class="lb-row${isMe ? ' lb-row--me' : ''}">
               <span class="lb-rank${index < 3 ? ` lb-rank--${index + 1}` : ''}">${index + 1}</span>
               <a class="lb-name" href="/?profile=${encodeURIComponent(row.profile.username ?? '')}">
                 ${nameplateHtml(row.profile, { custom })}
               </a>
-              ${
+              <span class="lb-hand">${
                 // The winning hand, on the score boards only — a career total
-                // isn't a single hand, so there is nothing to show there.
-                row.finalHand ? `<span class="lb-hand">${miniHandHtml(row.finalHand)}</span>` : ''
-              }
-              <span class="lb-value">
-                ${row.value.toLocaleString()}${board.career ? ' pts' : ''}
+                // isn't a single hand. The wrapper is always present so the grid
+                // column exists on every row and the hands line up (owner
+                // request: "align hands on the leaderboard").
+                row.finalHand ? miniHandHtml(row.finalHand) : ''
+              }</span>
+              <span class="lb-value-cell">
+                <span class="lb-value${gradeClass ? ` grade-pill${gradeClass}` : ''}"${gradeTip}${
+                  grade ? ` aria-label="${escapeHtml(`${grade.label}: ${row.value.toLocaleString()} points`)}"` : ''
+                }>${row.value.toLocaleString()}${board.career ? ' pts' : ''}</span>
                 <small>${
                   board.career
                     ? `${(row.runs ?? 0).toLocaleString()} run${row.runs === 1 ? '' : 's'}`
-                    : `${grade ? `<span class="lb-grade score-grade--${grade.id}">${grade.emoji} ${escapeHtml(grade.label)}</span>` : ''}${row.playDate ? ` <span class="lb-date">${escapeHtml(formatDate(row.playDate))}</span>` : ''}`
+                    : `${row.playDate ? `<span class="lb-date">${escapeHtml(formatDate(row.playDate))}</span>` : ''}`
                 }</small>
               </span>
             </li>`;

@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidUsername, signInWithMagicLink, signOut, getSession, onAuthStateChange, getProfile, createProfile, SupabaseNotConfiguredError } from '../src/state/auth.js';
+import { isValidUsername, normalizeUsername, signInWithMagicLink, signOut, getSession, onAuthStateChange, getProfile, createProfile, SupabaseNotConfiguredError } from '../src/state/auth.js';
 import { isSupabaseConfigured } from '../src/state/supabase-client.js';
 import { updateUsername } from '../src/state/profile.js';
 
@@ -78,5 +78,49 @@ describe('updateUsername validation', () => {
   test('a null or undefined name is refused rather than throwing a type error', async () => {
     await assert.rejects(() => updateUsername('user-1', null), /3-20 characters/);
     await assert.rejects(() => updateUsername('user-1', undefined), /3-20 characters/);
+  });
+});
+
+// Usernames are stored uppercase (§11n). The transform is tiny, but it sits on
+// every write AND every exact-match lookup, so getting it wrong makes players
+// unfindable rather than merely misspelt.
+describe('normalizeUsername', () => {
+  test('uppercases and trims', () => {
+    assert.equal(normalizeUsername('car'), 'CAR');
+    assert.equal(normalizeUsername('  Card_le42  '), 'CARD_LE42');
+    assert.equal(normalizeUsername('ALREADY'), 'ALREADY');
+  });
+
+  test('is idempotent — normalizing twice changes nothing', () => {
+    for (const name of ['car', 'MiXeD', '  pad  ', 'a_b_9']) {
+      assert.equal(normalizeUsername(normalizeUsername(name)), normalizeUsername(name));
+    }
+  });
+
+  test('never throws on junk, and yields the empty string', () => {
+    assert.equal(normalizeUsername(null), '');
+    assert.equal(normalizeUsername(undefined), '');
+    assert.equal(normalizeUsername(''), '');
+    assert.equal(normalizeUsername('   '), '');
+  });
+
+  test('output still satisfies the stored-username pattern', () => {
+    // The schema CHECK is ASCII-only, so the transform must not introduce a
+    // character outside it. This is why the implementation uses toUpperCase()
+    // rather than toLocaleUpperCase(), whose Turkish 'i' -> '\u0130' would be
+    // rejected by the constraint.
+    for (const name of ['car', 'iris', 'Istanbul', 'a_b_9', 'ii']) {
+      const normalized = normalizeUsername(name);
+      if (!isValidUsername(name)) continue; // only names that were legal to begin with
+      assert.ok(
+        isValidUsername(normalized),
+        `${JSON.stringify(name)} normalized to ${JSON.stringify(normalized)}, which the pattern rejects`,
+      );
+    }
+  });
+
+  test("a dotted-capital-I never appears (the Turkish-locale trap)", () => {
+    assert.equal(normalizeUsername('iris'), 'IRIS');
+    assert.ok(!normalizeUsername('iris').includes('\u0130'));
   });
 });

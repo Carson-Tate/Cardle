@@ -1295,10 +1295,60 @@ header h1 {
   letter-spacing: 0.06em;
 }
 
-/* The help button is a single "?" — uppercasing does nothing to it, but the
-   letter-spacing would push it off-centre inside its circle. */
-.header-help {
+/* --- Optical centring in the top bar -------------------------------------
+   Uppercase text has no descenders, so centring it by its LINE BOX leaves the
+   unused descender space sitting below the glyphs and the text reads as riding
+   high in its pill. (This is why the bar only started looking off once it was
+   uppercased.) The fix is to centre on the ink rather than the box: shift the
+   text down by roughly half a descender using asymmetric padding, which needs no
+   transform and cannot affect the button's outer size.
+   --descender-nudge is that half-descender for the bar's 0.85rem text. */
+#site-header {
+  --descender-nudge: 0.07rem;
+}
+
+#site-header button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* THE `[hidden]` TRAP, for the sixth time in this project (§11e). Giving these
+   buttons an explicit `display` overrides the UA stylesheet's
+   `[hidden] { display: none }` — author rules beat UA rules, and `#site-header
+   button` (1-0-1) buries `[hidden]` (0-1-0) besides. Without this, the Friends
+   button showed to signed-out visitors and the Admin button showed to everyone,
+   because both are hidden via the attribute. Caught by the admin suite's "a
+   non-admin never sees the link" assertion.
+   Rule of thumb for this codebase: never set `display` on a selector without
+   asking whether anything toggles that element with `hidden`. */
+#site-header button[hidden] {
+  display: none;
+}
+
+.header-login-btn,
+.header-user-btn,
+.header-friends-btn,
+.header-admin-btn {
+  padding-top: calc(0.4rem - var(--descender-nudge));
+  padding-bottom: calc(0.4rem + var(--descender-nudge));
+}
+
+/* The help button is a single "?" — it needs the same downward nudge, and it must
+   NOT be letter-spaced: a trailing letter-space is dead width on the right only,
+   which pushes a lone glyph left of centre. Selector is `#site-header .header-help`
+   rather than `.header-help` because `#site-header button` (1-0-1) outranks a bare
+   class (0-1-0) — the first attempt at this rule silently lost. */
+#site-header .header-help {
   letter-spacing: normal;
+  padding-top: calc(var(--descender-nudge) * 2);
+  padding-bottom: 0;
+}
+
+/* The wordmark is larger, so its half-descender is proportionally larger too. */
+#site-header .header-logo {
+  padding-top: 0;
+  padding-bottom: calc(var(--descender-nudge) * 1.6);
 }
 
 /* On narrow screens the button labels are trimmed to their icons — the emoji
@@ -1613,21 +1663,100 @@ header h1 {
 
 .profile-header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1.25rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 1.1rem;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 1.25rem;
   margin-bottom: 1.25rem;
+  /* EXPLICITLY left. `.profile-header` is a <header> element, and the global
+     `header { text-align: center }` rule for the board's day/modifier heading was
+     also catching it — which centred the inline-flex nameplate inside its `h2`
+     and left the name and title floating away from the left edge of the panel
+     (owner: "change the name and title to hug the left of the box its in, it
+     looks awkward being out a little"). A generic element selector reaching a
+     component that happens to use that element is worth remembering. */
+  text-align: left;
+}
+
+.profile-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
 }
 
 .profile-username {
   margin: 0;
   font-size: 1.6rem;
   overflow-wrap: anywhere;
+}
+
+/* --- Best-run showcase (owner request) -----------------------------------
+   Sits directly under the name: the hand, what it was, and what it scored with
+   the points wearing their own rarity colour. */
+.best-run {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  /* A hair different from the panel it sits in, so it reads as a mounted plaque
+     rather than another section. */
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+
+.best-run-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.best-run-label {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+
+.best-run-hand-name {
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.best-run-cards {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.best-run-score {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.best-run-points {
+  font-size: 1.15rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  /* Roomier than the leaderboard's version of the same pill — here it is the
+     headline number, not one cell in a list. */
+  padding: 0.25rem 0.75rem;
+}
+
+.best-run-grade {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
 }
 
 .profile-since {
@@ -2101,9 +2230,12 @@ header h1 {
 .paint-paint_sunset,
 .paint-paint_tide,
 .paint-paint_emerald,
+.paint-paint_ember,
 .paint-paint_royal,
 .paint-paint_diamond,
-.paint-paint_jackpot {
+.paint-paint_aurora,
+.paint-paint_jackpot,
+.paint-paint_prism {
   background-clip: text;
   -webkit-background-clip: text;
   font-weight: 800;
@@ -2113,9 +2245,12 @@ header h1 {
   .paint-paint_sunset,
   .paint-paint_tide,
   .paint-paint_emerald,
+  .paint-paint_ember,
   .paint-paint_royal,
   .paint-paint_diamond,
-  .paint-paint_jackpot {
+  .paint-paint_aurora,
+  .paint-paint_jackpot,
+  .paint-paint_prism {
     color: transparent;
   }
 }
@@ -2149,6 +2284,73 @@ header h1 {
   background-image: linear-gradient(100deg, #b8860b, #ffe89a 45%, #d4a437 55%, #b8860b);
   background-size: 250% 100%;
   animation: paint-shimmer 3.8s linear infinite;
+}
+
+/* --- Animated paints (owner request) --------------------------------------
+   All three sweep a repeating gradient rather than animating `color`, so the
+   motion is a background-position change on a composited layer — no per-frame
+   layout or paint of the text itself.
+   The gradient's first and last stops MATCH in every one of these, which is what
+   makes the loop seamless: the sweep travels exactly one tile and the join is
+   invisible. A mismatched pair reads as a jolt once per cycle. */
+
+/* Ember: heat rising through the letters — the only one that moves vertically. */
+.paint-paint_ember {
+  background-image: linear-gradient(0deg, #b8321a, #ff8a3c 35%, #ffd06b 55%, #ff8a3c 75%, #b8321a);
+  background-size: 100% 300%;
+  animation: paint-rise 3.2s linear infinite;
+}
+
+/* Aurora: a wide, slow, cold drift. Deliberately the calmest of the three. */
+.paint-paint_aurora {
+  background-image: linear-gradient(100deg, #1f7a6a, #46e0a0 30%, #6fd0ff 50%, #a97cf0 70%, #1f7a6a);
+  background-size: 320% 100%;
+  animation: paint-shimmer 6s linear infinite;
+}
+
+/* Prism: the level-30 payoff, so it is the fastest and the most saturated. */
+.paint-paint_prism {
+  background-image: linear-gradient(
+    100deg,
+    #ff4d6d,
+    #ffa93c 18%,
+    #ffe74d 34%,
+    #4de08a 50%,
+    #4db8ff 66%,
+    #a86fff 82%,
+    #ff4d6d
+  );
+  background-size: 300% 100%;
+  animation: paint-shimmer 2.6s linear infinite;
+}
+
+@keyframes paint-rise {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 -300%;
+  }
+}
+
+/* Motion is the entire point of these tiers, so they are not switched off for
+   reduced-motion — they are slowed to a crawl instead, which keeps the cosmetic
+   recognisable without a fast repeating sweep. */
+@media (prefers-reduced-motion: reduce) {
+  .paint-paint_ember,
+  .paint-paint_aurora,
+  .paint-paint_jackpot,
+  .paint-paint_diamond,
+  .paint-paint_prism {
+    animation-duration: 24s;
+  }
+}
+
+/* The ✨ on an animated paint's picker chip. */
+.paint-animated-mark {
+  margin-left: 0.25rem;
+  font-size: 0.7em;
+  opacity: 0.85;
 }
 
 @keyframes paint-shimmer {
@@ -2667,11 +2869,11 @@ header h1 {
   }
 }
 
-/* Compact variants: the profile's history rows and the leaderboard. Same fills
-   as the full badge above, so a grade is recognisably the same thing wherever it
-   appears — just smaller. */
-.history-grade,
-.lb-grade {
+/* Compact variant: the profile's history rows. Same fills as the full badge
+   above, so a grade is recognisably the same thing wherever it appears — just
+   smaller. (The leaderboard used to share this; its score now carries the tier
+   colour directly instead — see .lb-value--graded.) */
+.history-grade {
   display: inline-block;
   padding: 0.1rem 0.4rem;
   border-radius: 999px;
@@ -2779,8 +2981,22 @@ header h1 {
   counter-reset: none;
 }
 
+/* A GRID, not a flex row, and the column widths are fixed rather than
+   content-sized. That is what makes the hands line up across rows (owner
+   request: "align hands on the leaderboard") — with flex, the hand started
+   wherever that row's name happened to end, so every row began at a different
+   x. Fixed tracks mean each row resolves identical widths independently, which
+   gets alignment without needing `subgrid`.
+   Tracks: rank | name | hand | score. Every track LEFT of the hand is a fixed
+   width, and the flexible `1fr` is the SCORE — the rightmost one. That ordering
+   is the whole trick: scores range from 300 to 900,000,000, so a content-sized
+   score column is a different width on every row, and when the flexible track
+   sat on the name instead, a wide score stole space from the name and shifted
+   that row's hand ~19px left of its neighbours'. With the flex on the far right,
+   all variation is absorbed after the hand rather than before it. */
 .lb-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1.9rem 8.5rem auto minmax(0, 1fr);
   align-items: center;
   gap: 0.7rem;
   padding: 0.5rem 0.7rem;
@@ -2796,7 +3012,6 @@ header h1 {
 }
 
 .lb-rank {
-  flex: 0 0 1.9rem;
   text-align: center;
   font-weight: 700;
   font-size: 0.9rem;
@@ -2814,74 +3029,133 @@ header h1 {
 }
 
 .lb-name {
-  flex: 1 1 auto;
   min-width: 0;
   text-decoration: none;
   color: inherit;
+  /* A long name must not push the hand column out of alignment. */
+  overflow: hidden;
+}
+
+/* The nameplate is nested inline-flex boxes, which default to min-width:auto and
+   therefore refuse to shrink below their content — so the name clipped dead at
+   the column edge with no ellipsis. Both wrappers have to be allowed to shrink
+   before text-overflow on the name itself can do anything. */
+.lb-name .nameplate,
+.lb-name .nameplate-line {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.lb-name .nameplate-name {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lb-name:hover .nameplate-name {
   text-decoration: underline;
 }
 
-.lb-value {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  font-weight: 700;
-  font-size: 0.9rem;
-  white-space: nowrap;
-}
-
-.lb-value small {
-  font-weight: 400;
-  font-size: 0.65rem;
-  color: var(--text-muted);
-}
-
-/* --- Viewing another player's profile ------------------------------------ */
-
-.profile-viewing-note {
-  margin: 0 0 1rem;
-  font-size: 0.72rem;
-  font-style: italic;
-  color: var(--text-muted);
-}
-
-.friends-profile-link {
-  text-decoration: none;
-  color: inherit;
-}
-
-.friends-profile-link:hover .nameplate-name {
-  text-decoration: underline;
-}
-
-/* --- Leaderboard: the winning hand, and the reset countdown (§11l) -------- */
-
+/* The winning hand. Fixed to a nowrap row so five cards always occupy the same
+   width and the column can't reflow between rows. */
 .lb-hand {
   display: flex;
   gap: 0.2rem;
-  flex-wrap: wrap;
-  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
 }
 
-/* Below this the row has no room for a name, five cards and a score side by
-   side, so the hand drops to its own line beneath the name. */
-@media (max-width: 620px) {
-  .lb-row {
-    flex-wrap: wrap;
-  }
+.lb-value-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.15rem;
+  min-width: 0;
+}
 
-  .lb-hand {
-    order: 3;
-    flex-basis: 100%;
-    padding-left: 2.6rem;
+.lb-value {
+  font-weight: 800;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A SCORE WEARING ITS OWN RARITY. On the leaderboard this replaces the separate
+   grade pill that used to sit beside the number (owner request: "make the score
+   on the leaderboards be highlighted in the rarity of the score instead of just
+   showing the rarity next to it"); the profile's best-run points reuse it.
+   Shared rather than written twice, and it reuses the very same
+   --grade-a/-b/-glow custom properties the `.score-grade--*` tier classes
+   already define — so a tier's colours exist in exactly one place and no surface
+   can disagree with another about what a rarity looks like. */
+.grade-pill {
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--grade-a) 0%, var(--grade-b) 100%);
+  color: var(--grade-ink, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--grade-glow) 65%, transparent);
+  box-shadow: 0 1px 8px color-mix(in srgb, var(--grade-glow) 35%, transparent);
+}
+
+/* Animated rarity highlights (owner request). A slow sheen travelling across the
+   fill, so a high score visibly shimmers. Only the top tiers move: if every row
+   animated, motion would stop signalling anything — and a board of 25
+   simultaneously shimmering rows is worse than a still one. */
+.grade-pill.score-grade--whale,
+.grade-pill.score-grade--casinoLegend,
+.grade-pill.score-grade--impossible {
+  background-image: linear-gradient(
+    100deg,
+    var(--grade-a) 0%,
+    var(--grade-b) 35%,
+    color-mix(in srgb, var(--grade-glow) 85%, #ffffff) 50%,
+    var(--grade-b) 65%,
+    var(--grade-a) 100%
+  );
+  background-size: 280% 100%;
+  animation: grade-sheen 3.4s linear infinite;
+}
+
+/* ??? already sheens via its own .score-grade--unknown rule; it just needs the
+   pill geometry, which it inherits above. */
+
+@media (prefers-reduced-motion: reduce) {
+  .grade-pill {
+    animation: none;
   }
+}
+
+.lb-value-cell small {
+  font-weight: 600;
+  font-size: 0.68rem;
+  color: var(--text-muted);
 }
 
 .lb-date {
   white-space: nowrap;
+}
+
+/* Below this a rank, a name, five cards and a score cannot share one line, so
+   the hand drops to its own row spanning the full width, under the name. */
+@media (max-width: 640px) {
+  .lb-row {
+    grid-template-columns: 1.9rem minmax(0, 1fr) auto;
+    row-gap: 0.4rem;
+  }
+
+  .lb-hand {
+    grid-column: 2 / -1;
+    grid-row: 2;
+    flex-wrap: wrap;
+  }
+
+  .lb-value-cell {
+    grid-column: 3;
+    grid-row: 1;
+  }
 }
 
 .next-reset {

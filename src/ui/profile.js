@@ -21,7 +21,7 @@ import { loadGameConfig } from '../state/game-config.js';
 import { derivePlayerStats, splitAchievements } from '../core/player-stats.js';
 import { resolveCosmetics, resolveEquipped, canEquip, DEFAULT_PAINT_ID } from '../core/cosmetics.js';
 import { nameplateHtml, announceProfileUpdate } from './nameplate.js';
-import { miniCardHtml } from './mini-card.js';
+import { miniCardHtml, miniHandHtml } from './mini-card.js';
 import { PERSONALITIES } from '../core/personality.js';
 import { HAND_RANKS } from '../core/hand-evaluator.js';
 import { gradeForScore } from '../core/score-grade.js';
@@ -200,11 +200,14 @@ export async function initProfile(root, { username: viewingUsername = null } = {
         ${canEdit ? '' : '<p class="profile-viewing-note">Viewing another player&rsquo;s profile.</p>'}
 
         <header class="profile-header">
-          <div class="profile-identity">
-            <h2 class="profile-username">${nameplateHtml(equippedRow(), { fallbackName: username, custom })}</h2>
-            <p class="profile-since">${stats.firstPlayDate ? `Playing since ${formatDate(stats.firstPlayDate)}` : 'No hands played yet'}</p>
+          <div class="profile-header-top">
+            <div class="profile-identity">
+              <h2 class="profile-username">${nameplateHtml(equippedRow(), { fallbackName: username, custom })}</h2>
+              <p class="profile-since">${stats.firstPlayDate ? `Playing since ${formatDate(stats.firstPlayDate)}` : 'No hands played yet'}</p>
+            </div>
+            ${levelBlockHtml(stats)}
           </div>
-          ${levelBlockHtml(stats)}
+          ${bestRunHtml(stats)}
         </header>
 
         <section class="profile-section">
@@ -340,7 +343,12 @@ export async function initProfile(root, { username: viewingUsername = null } = {
         })}
         ${pickerHtml('Name Paint', 'paints', cosmetics.paints, equipped.paint, {
           noneLabel: null, // the default paint IS the "none" option
-          renderChip: (item) => `<span class="paint-${escapeHtml(item.id)}">${escapeHtml(item.label)}</span>`,
+          // The swatch already shows the colour; the ✨ marks the ones that move,
+          // which a still chip can't convey on its own.
+          renderChip: (item) =>
+            `<span class="paint-${escapeHtml(item.id)}">${escapeHtml(item.label)}</span>${
+              item.animated ? '<span class="paint-animated-mark" title="Animated">✨</span>' : ''
+            }`,
         })}
       </section>
     `;
@@ -420,8 +428,11 @@ export async function initProfile(root, { username: viewingUsername = null } = {
           event.preventDefault();
           const next = input.value.trim();
           // Saying "that's already your name" beats a silent no-op that looks
-          // like the save failed.
-          if (next === username) return fail('That is already your name.');
+          // like the save failed. Compared case-INSENSITIVELY: stored names are
+          // uppercase (§11n), so typing "car" when you are CAR is the same name,
+          // not a rename — a case-sensitive check here would let it through as a
+          // pointless write that appears to succeed while changing nothing.
+          if (next.toUpperCase() === username.toUpperCase()) return fail('That is already your name.');
           submit.disabled = true;
           input.disabled = true;
           status.hidden = true;
@@ -464,13 +475,19 @@ export async function initProfile(root, { username: viewingUsername = null } = {
         const confirmBtn = body.querySelector('#delete-confirm-btn');
         const status = body.querySelector('#delete-status');
 
+        // Case-insensitive. The friction that matters here is having to type your
+        // own name deliberately, not matching its case — and since names became
+        // uppercase (§11n), an exact-match check would reject the lower-case
+        // spelling most people would type and give no clue why.
+        const matches = () => input.value.trim().toUpperCase() === username.toUpperCase();
+
         input.addEventListener('input', () => {
-          confirmBtn.disabled = input.value !== username;
+          confirmBtn.disabled = !matches();
         });
 
         body.querySelector('#delete-form').addEventListener('submit', async (event) => {
           event.preventDefault();
-          if (input.value !== username) return;
+          if (!matches()) return;
           confirmBtn.disabled = true;
           input.disabled = true;
           try {
@@ -487,6 +504,43 @@ export async function initProfile(root, { username: viewingUsername = null } = {
       },
     });
   }
+}
+
+// The best run, showcased directly under the name (owner request: "in the
+// profile i would like to display the best hand right under the name, along with
+// the points and rarity of points under it").
+//
+// Uses `bestRun` — the highest-SCORING run — rather than `bestHandLabel`, which
+// tracks the highest-ranked hand category and can come from a different day.
+// They have to be the same run here: showing one run's cards above another run's
+// points would be quietly wrong in a way nobody would catch.
+//
+// Renders nothing at all for a player with no completed runs. An empty medal
+// frame reads as a loading failure, and the stats grid below already says the
+// history is empty.
+function bestRunHtml(stats) {
+  const run = stats.bestRun;
+  if (!run || !stats.bestScore) return '';
+  const hand = Array.isArray(run.finalHand) ? run.finalHand : null;
+  const grade = gradeForScore(stats.bestScore);
+  const handLabel = run.score?.handResult?.label ?? null;
+
+  return `
+    <div class="best-run">
+      <div class="best-run-head">
+        <span class="best-run-label">Best Hand</span>
+        ${handLabel ? `<span class="best-run-hand-name">${escapeHtml(handLabel)}</span>` : ''}
+      </div>
+      ${hand ? `<div class="best-run-cards">${miniHandHtml(hand)}</div>` : ''}
+      <div class="best-run-score">
+        <span class="best-run-points grade-pill score-grade--${grade.id}"
+          title="${escapeHtml(`${grade.label} — ${stats.bestScore.toLocaleString()} points`)}">
+          ${stats.bestScore.toLocaleString()}
+        </span>
+        <span class="best-run-grade">${grade.emoji} ${escapeHtml(grade.label)}</span>
+      </div>
+    </div>
+  `;
 }
 
 function levelBlockHtml(stats) {

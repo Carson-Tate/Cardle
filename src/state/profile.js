@@ -9,7 +9,7 @@
 
 import { requireSupabase } from './supabase-client.js';
 // Reused rather than duplicated: one definition of what a legal username is.
-import { isValidUsername } from './auth.js';
+import { isValidUsername, normalizeUsername } from './auth.js';
 
 // How far back the profile reads. One row per day played, so this is a
 // hard bound on both the query and the derived stats: 400 rows covers over a
@@ -40,12 +40,6 @@ export async function fetchPlayHistory(userId, { limit = HISTORY_LIMIT } = {}) {
 }
 
 /**
- * Looks up a profile by username, for viewing someone else's profile
- * (`?profile=<username>`, §11j). `profiles` has always been publicly readable —
- * that's how friend lookup works — so this needs no special permission; reading
- * their RUNS does, which migration 006 grants for completed runs only.
- */
-/**
  * Every column `ui/nameplate.js` needs to render a player correctly — shared so
  * the several places that fetch "a profile to draw a name with" cannot drift
  * apart.
@@ -60,12 +54,20 @@ export async function fetchPlayHistory(userId, { limit = HISTORY_LIMIT } = {}) {
  */
 export const NAMEPLATE_COLUMNS = 'id, username, equipped_badge, equipped_title, equipped_paint, admin_unlocks';
 
+/**
+ * Looks up a profile by username, for viewing someone else's profile
+ * (`?profile=<username>`, §11j). `profiles` has always been publicly readable —
+ * that's how friend lookup works — so this needs no special permission; reading
+ * their RUNS does, which migration 006 grants for completed runs only.
+ */
 export async function fetchProfileByUsername(username) {
   const client = await requireSupabase();
   const { data, error } = await client
     .from('profiles')
     .select(`${NAMEPLATE_COLUMNS}, created_at`)
-    .eq('username', username)
+    // Normalized, because stored names are uppercase (§11n) and a `?profile=car`
+    // link shared before that change must still resolve to CAR.
+    .eq('username', normalizeUsername(username))
     .maybeSingle();
   if (error) throw error;
   return data;
@@ -108,10 +110,14 @@ export async function saveEquippedCosmetics(userId, { badge = null, title = null
  * @returns {Promise<string>} the saved username, trimmed
  */
 export async function updateUsername(userId, rawUsername) {
-  const username = String(rawUsername ?? '').trim();
-  if (!isValidUsername(username)) {
+  const typed = String(rawUsername ?? '').trim();
+  if (!isValidUsername(typed)) {
     throw new Error('Usernames must be 3-20 characters: letters, numbers, and underscores only.');
   }
+  // Stored uppercase (§11n). Note the consequence for callers: comparing the
+  // returned name against what the player typed will differ in case, so
+  // "is this the same name?" checks must compare normalized forms.
+  const username = normalizeUsername(typed);
 
   const client = await requireSupabase();
   // Only `username` is written, and RLS restricts updates to `auth.uid() = id`,

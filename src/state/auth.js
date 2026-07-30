@@ -93,15 +93,43 @@ export function isValidUsername(username) {
   return USERNAME_PATTERN.test(username);
 }
 
+/**
+ * The stored form of a username: trimmed and UPPERCASED (owner: "i would like to
+ * change all names to all caps and all future names to be all caps").
+ *
+ * Uppercasing at the boundary — once, here — rather than at each call site, so
+ * "what a username looks like in the database" has a single answer. Every write
+ * goes through this, and every exact-match lookup does too, because a stored
+ * 'CAR' will not be found by `.eq('username', 'car')`: a `?profile=car` link
+ * someone shared before this change, or a friend request typed in lower case,
+ * must both still resolve.
+ *
+ * Input is still accepted in any case — players type naturally and the display
+ * form is derived, not demanded.
+ *
+ * Deliberately NOT `toLocaleUpperCase()`. That is locale-sensitive: in Turkish
+ * locales 'i' uppercases to 'İ' (dotted capital I), which is outside the
+ * `[A-Za-z0-9_]` pattern the schema enforces — so a Turkish player naming
+ * themselves "iris" would have had it rejected by the CHECK constraint. The
+ * pattern is ASCII-only, so the transform must be too.
+ */
+export function normalizeUsername(username) {
+  return String(username ?? '').trim().toUpperCase();
+}
+
 // Creates the one-time username row for a newly signed-in user. The
 // `profiles.username` unique constraint (schema.sql) is the actual source of
 // truth for "is this name taken" — Supabase surfaces that as a Postgres
 // unique-violation error (code 23505), re-thrown here with a message a
 // username-picker UI can show directly instead of a raw Postgres error.
-export async function createProfile(userId, username) {
-  if (!isValidUsername(username)) {
+export async function createProfile(userId, rawUsername) {
+  // Validated on the typed form, stored in the normalized one — so the error
+  // message quotes what the player actually entered, but the row is uppercase.
+  const typed = String(rawUsername ?? '').trim();
+  if (!isValidUsername(typed)) {
     throw new Error('Usernames must be 3-20 characters: letters, numbers, and underscores only.');
   }
+  const username = normalizeUsername(typed);
   const client = await requireSupabase();
   const { data, error } = await client.from('profiles').insert({ id: userId, username }).select().single();
   if (!error) return data;

@@ -349,6 +349,7 @@ export function initBoard(root) {
     }
     renderHand(originalHand, selected);
     updateHint();
+    updateLockInButtonLabel();
   }
 
   function updateHint() {
@@ -356,13 +357,16 @@ export function initBoard(root) {
     discardHint.textContent = `${selected.size}/${maxDiscards} marked for discard${roundNote} — click a card to mark it, click again to unmark.`;
   }
 
-  // Second Look (§4d, owner request: "2 rounds of discards but the second
-  // should be less than the first") button label — "Draw" while round 1 is
-  // still open (it only replaces cards and moves to round 2, nothing is
-  // scored yet), "Lock In" everywhere else (round 2, or any other/no
-  // modifier, unchanged from before this feature).
+  // Owner bug report: a friend thought the cards you click were the ones
+  // you KEEP, not the ones you discard — the plain "Lock In" label gave no
+  // hint either way. Spelling out the actual count/action removes the
+  // ambiguity: "Discard 0/3" up to "Discard 3/3" as cards get marked,
+  // updating live on every toggle (see toggleDiscard). Second Look's round 1
+  // keeps its own "(Round 1 of 2)" qualifier — it's still a discard count
+  // in the same sense, just not the final scored one yet.
   function updateLockInButtonLabel() {
-    lockInBtn.textContent = isTwoRoundModifier() && discardRound === 1 ? 'Draw (Round 1 of 2)' : 'Lock In';
+    const roundNote = isTwoRoundModifier() && discardRound === 1 ? ' (Round 1 of 2)' : '';
+    lockInBtn.textContent = `Discard ${selected.size}/${maxDiscards}${roundNote}`;
   }
 
   // Second Look's round 1: replaces whatever's marked for discard (same

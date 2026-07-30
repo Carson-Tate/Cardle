@@ -10,7 +10,7 @@
 // how routing works.
 
 import { getSession, signOut, getProfile } from '../state/auth.js';
-import { fetchPlayHistory, deleteOwnAccount, saveEquippedCosmetics } from '../state/profile.js';
+import { fetchPlayHistory, deleteOwnAccount, saveEquippedCosmetics, fetchProfileByUsername } from '../state/profile.js';
 import { loadGameConfig } from '../state/game-config.js';
 import { derivePlayerStats, splitAchievements } from '../core/player-stats.js';
 import { resolveCosmetics, resolveEquipped, canEquip, DEFAULT_PAINT_ID } from '../core/cosmetics.js';
@@ -45,10 +45,52 @@ function formatPercent(ratio) {
   return `${Math.round(ratio * 100)}%`;
 }
 
-export async function initProfile(root) {
-  root.innerHTML = `<p class="profile-loading">Loading your profile…</p>`;
+/**
+ * @param {HTMLElement} root
+ * @param {{username?: string|null}} [options] - `username` views SOMEONE ELSE's
+ *   profile (`?profile=<username>`, §11j). Omitted/null means your own.
+ */
+export async function initProfile(root, { username: viewingUsername = null } = {}) {
+  root.innerHTML = `<p class="profile-loading">Loading profile…</p>`;
 
   const session = await getSession().catch(() => null);
+
+  // Viewing another player: resolve their id from the username first. Kept
+  // separate from the signed-out branch below because a signed-in visitor
+  // viewing a stranger is a perfectly normal case, whereas being signed out is
+  // not — reading anyone's runs requires an authenticated caller (§11j).
+  let viewedProfile = null;
+  if (viewingUsername) {
+    if (!session) {
+      root.innerHTML = `
+        <div class="profile-empty">
+          <h2>${escapeHtml(viewingUsername)}</h2>
+          <p>Log in to view other players' profiles.</p>
+          <a class="profile-back-link" href="/">← Back to today's hand</a>
+        </div>
+      `;
+      return;
+    }
+    try {
+      viewedProfile = await fetchProfileByUsername(viewingUsername);
+    } catch {
+      viewedProfile = null;
+    }
+    if (!viewedProfile) {
+      root.innerHTML = `
+        <div class="profile-empty">
+          <h2>Not found</h2>
+          <p>No player called <strong>${escapeHtml(viewingUsername)}</strong>.</p>
+          <a class="profile-back-link" href="/">← Back to today's hand</a>
+        </div>
+      `;
+      return;
+    }
+    // Viewing your own username via the URL is just your own profile — don't
+    // render a read-only copy of it with the controls stripped out.
+    if (session.user.id === viewedProfile.id) viewedProfile = null;
+  }
+
   if (!session) {
     // Reachable by typing the URL while signed out (the header only shows the
     // username button when signed in), and also whenever accounts are
@@ -63,14 +105,19 @@ export async function initProfile(root) {
     return;
   }
 
-  const userId = session.user.id;
+  // `userId` is whose data is shown; `viewerId` is who is looking. They differ
+  // when viewing someone else, and every write path below is gated on them
+  // matching (`canEdit`).
+  const viewerId = session.user.id;
+  const userId = viewedProfile ? viewedProfile.id : viewerId;
+  const canEdit = !viewedProfile;
   let profile = null;
   let history = [];
   let gameConfig = null;
   let loadError = null;
   try {
     [profile, history, gameConfig] = await Promise.all([
-      getProfile(userId).catch(() => null),
+      viewedProfile ? Promise.resolve(viewedProfile) : getProfile(userId).catch(() => null),
       fetchPlayHistory(userId),
       loadGameConfig(),
     ]);
@@ -132,7 +179,10 @@ export async function initProfile(root) {
   function render() {
     root.innerHTML = `
       <div class="profile">
-        <a class="profile-back-link" href="/">← Back to today's hand</a>
+        <a class="profile-back-link" href="${canEdit ? '/' : '/?leaderboard'}">${
+          canEdit ? '← Back to today&rsquo;s hand' : '← Back to the leaderboards'
+        }</a>
+        ${canEdit ? '' : '<p class="profile-viewing-note">Viewing another player&rsquo;s profile.</p>'}
 
         <header class="profile-header">
           <div class="profile-identity">
@@ -160,19 +210,23 @@ export async function initProfile(root) {
           </div>
         </section>
 
-        ${customizeHtml()}
+        ${canEdit ? customizeHtml() : ''}
 
         ${recentHandsHtml(history, shownHands)}
         ${achievementsHtml(stats)}
         ${collectionHtml(stats)}
 
-        <section class="profile-section profile-danger">
+        ${
+          canEdit
+            ? `<section class="profile-section profile-danger">
           <h3 class="profile-section-title">Account</h3>
           <div class="profile-account-actions">
             <button type="button" class="profile-signout-btn" id="profile-signout">Sign Out</button>
             <button type="button" class="profile-delete-btn" id="profile-delete">Delete Account</button>
           </div>
-        </section>
+        </section>`
+            : ''
+        }
       </div>
     `;
 
@@ -186,7 +240,7 @@ export async function initProfile(root) {
       });
     }
 
-    root.querySelector('#profile-signout').addEventListener('click', async (event) => {
+    root.querySelector('#profile-signout')?.addEventListener('click', async (event) => {
       const button = event.currentTarget;
       button.disabled = true;
       try {
@@ -198,8 +252,8 @@ export async function initProfile(root) {
       }
     });
 
-    root.querySelector('#profile-delete').addEventListener('click', confirmDelete);
-    wireCustomizePickers();
+    root.querySelector('#profile-delete')?.addEventListener('click', confirmDelete);
+    if (canEdit) wireCustomizePickers();
   }
 
   // Each picker is a row of chips: unlocked ones selectable, locked ones

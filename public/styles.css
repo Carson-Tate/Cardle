@@ -1259,6 +1259,38 @@ header h1 {
   display: flex;
   align-items: center;
   gap: 0.6rem;
+  min-width: 0;
+}
+
+/* The right side now holds up to four controls (Ranks, name, Friends, Admin),
+   which overflows a 375px viewport. Wrapping is preferable to shrinking them
+   below a comfortable tap target, and `justify-content: flex-end` keeps the
+   wrapped row aligned with the side it belongs to. */
+.site-header-right {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+/* On narrow screens the button labels are trimmed to their icons — the emoji
+   carry the meaning, and a header that wraps to three lines is worse than a
+   compact one. Done with CSS rather than JS so it responds to rotation and
+   resize without any listener. */
+@media (max-width: 460px) {
+  #site-header {
+    padding: 0.6rem 0.75rem;
+    gap: 0.5rem;
+  }
+
+  .header-leaderboard-label,
+  .header-admin-label {
+    display: none;
+  }
+
+  .header-friends-btn,
+  .header-admin-btn {
+    padding: 0.4rem 0.6rem;
+  }
 }
 
 .header-logo {
@@ -2621,4 +2653,133 @@ header h1 {
 .friend-cancel-btn:hover {
   border-color: var(--red);
   color: var(--red);
+}
+
+/* --- Leaderboards (DESIGN.md §11j) --------------------------------------- */
+
+.lb-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.6rem;
+}
+
+.lb-tab {
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.lb-tab:hover {
+  border-color: var(--accent);
+}
+
+.lb-tab--active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.lb-friends-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.lb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  counter-reset: none;
+}
+
+.lb-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+/* Your own row, highlighted — the main reason to look at a board you aren't
+   winning. */
+.lb-row--me {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.lb-rank {
+  flex: 0 0 1.9rem;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.lb-rank--1 {
+  color: #d4a017;
+}
+.lb-rank--2 {
+  color: #8a94a6;
+}
+.lb-rank--3 {
+  color: #b0763a;
+}
+
+.lb-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.lb-name:hover .nameplate-name {
+  text-decoration: underline;
+}
+
+.lb-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-weight: 700;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.lb-value small {
+  font-weight: 400;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+/* --- Viewing another player's profile ------------------------------------ */
+
+.profile-viewing-note {
+  margin: 0 0 1rem;
+  font-size: 0.72rem;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.friends-profile-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.friends-profile-link:hover .nameplate-name {
+  text-decoration: underline;
 }

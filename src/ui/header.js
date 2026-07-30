@@ -41,6 +41,7 @@ export function initHeader(root) {
   const authSlot = root.querySelector('#header-auth-slot');
   const friendsBtn = root.querySelector('#header-friends-btn');
   const adminBtn = root.querySelector('#header-admin-btn');
+  const leaderboardBtn = root.querySelector('#header-leaderboard-btn');
 
   // Mirrors whatever onAuthStateChange last reported — read by the friends
   // button and the auth slot's own click handler, so they always act on the
@@ -78,6 +79,10 @@ export function initHeader(root) {
   });
 
   helpBtn.addEventListener('click', openHelpModal);
+
+  leaderboardBtn.addEventListener('click', () => {
+    window.location.href = '/?leaderboard';
+  });
 
   adminBtn.addEventListener('click', () => {
     window.location.href = '/?admin';
@@ -320,7 +325,7 @@ export function initHeader(root) {
                  .map(
                    (r) => `
                  <li class="friends-list-item">
-                   <span>${r.requesterProfile ? nameplateHtml(r.requesterProfile) : escapeHtml(r.requesterUsername ?? 'Unknown')}</span>
+                   <span>${r.requesterUsername ? `<a class="friends-profile-link" href="/?profile=${encodeURIComponent(r.requesterUsername)}">${r.requesterProfile ? nameplateHtml(r.requesterProfile) : escapeHtml(r.requesterUsername)}</a>` : 'Unknown'}</span>
                    <button type="button" class="friend-accept-btn" data-id="${r.id}">Accept</button>
                    <button type="button" class="friend-decline-btn" data-id="${r.id}">Decline</button>
                  </li>`,
@@ -337,7 +342,7 @@ export function initHeader(root) {
                  .map(
                    (r) => `
                  <li class="friends-list-item">
-                   <span>${r.addresseeProfile ? nameplateHtml(r.addresseeProfile) : escapeHtml(r.addresseeUsername ?? 'Unknown')}</span>
+                   <span>${r.addresseeUsername ? `<a class="friends-profile-link" href="/?profile=${encodeURIComponent(r.addresseeUsername)}">${r.addresseeProfile ? nameplateHtml(r.addresseeProfile) : escapeHtml(r.addresseeUsername)}</a>` : 'Unknown'}</span>
                    <span class="friends-pending-tag">Pending</span>
                    <button type="button" class="friend-cancel-btn" data-id="${escapeHtml(r.id)}">Cancel</button>
                  </li>`,
@@ -355,7 +360,7 @@ export function initHeader(root) {
                 .map(
                   (f) => `
                 <li class="friends-list-item">
-                  <span>${f.friendProfile ? nameplateHtml(f.friendProfile) : escapeHtml(f.friendUsername ?? 'Unknown')}</span>
+                  <span>${f.friendUsername ? `<a class="friends-profile-link" href="/?profile=${encodeURIComponent(f.friendUsername)}">${f.friendProfile ? nameplateHtml(f.friendProfile) : escapeHtml(f.friendUsername)}</a>` : 'Unknown'}</span>
                   <button type="button" class="friend-remove-btn" data-id="${f.id}">Remove</button>
                 </li>`,
                 )

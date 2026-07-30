@@ -941,6 +941,32 @@ Replaces §11i's placeholder six-tier ladder with the owner's nine named tiers, 
 
 **Verified** with the score-grade suite rewritten around the new ladder (exact order and labels, threshold inclusivity in both directions, hand-rank anchoring, ??? reachability, rank/`reachesGrade` comparisons, junk input) plus 11 browser assertions confirming a High-Roller-grade run earns the grade achievement *and* every tier below it, unlocks the matching badge and title, leaves higher tiers locked, does **not** earn the floor, and that the grade title equips and renders. Two of those browser assertions initially failed on my own faulty assumptions — CSS uppercasing the grade label, and a 410-XP run actually being level 2 rather than level 1 — not on the code.
 
+### 11j. Leaderboards + Viewable Player Profiles ✅ built (owner: "leaderboards... be able to click friends profile")
+
+The last two items of the punch-list, built together because they need the same thing: permission to read other players' scores.
+
+**One migration serves both.** `daily_plays`' SELECT policy was own-rows-only, which blocked a leaderboard AND blocked showing a friend's history. Asked how open it should be; the owner chose completed runs readable by anyone, specifically because friends-only would have forced the boards to be friends-only too.
+
+**The policy is written narrowly, and the narrowness is the point.** It grants `to authenticated` where **`result is not null`** — not a blanket `using (true)`. A row with a null result carries the SEED for a hand the player hasn't locked in yet (§11c), so a blanket policy would have let anyone read another player's seed, deal it themselves, and see today's hand before them. That's the one genuinely sensitive thing in the table, so the policy is shaped around it.
+
+**Four boards** (owner's spec): Today, This Week, All-Time top scores, and All-Time career points, each with a friends-only toggle.
+- The three top-score boards are **one** SQL function with a different date window, not three — the only difference is a cutoff, and three copies would mean fixing any future bug three times.
+- Computed in SQL so the payload stays a fixed handful of rows however many players exist, and the score is dug out of the jsonb result (`result->'score'->>'total'`) in one place. Cast to `numeric` rather than `bigint` because totals reach into the hundreds of millions once multipliers stack, and a malformed row could hold anything.
+- `security invoker` (the default), deliberately **not** `security definer`: they read exactly what the caller may already read, so there's no reason to elevate — and not elevating means a future policy change automatically applies here too.
+- A partial index on `play_date` where `result is not null`, since every board sorts on it.
+
+**Friends-only filtering happens client-side, on purpose.** Friendship rows are already readable only to the two people involved (§11a), so the client can cheaply fetch its own friend ids and filter — whereas doing it in SQL would mean threading an id list through every board or duplicating the friendship join inside each function. The cost is asking for a bigger page and trimming it, which is why the friends path requests 100 rows for a 25-row board.
+
+**Your own row is highlighted** wherever you land, which is the main reason to look at a board you aren't winning.
+
+**Viewing another player reuses the profile page rather than duplicating it.** `?profile=<username>` — the shape §11d was already designed for — resolves the username to an id and renders the same page with `canEdit` false, which hides the Customize and Account sections and skips wiring their handlers. Everything else (derived stats, history, achievements, collection, nameplate) is identical, so a friend's profile can't drift out of sync with your own. Names are clickable from both the leaderboard and the friends list.
+
+Three edge cases are handled explicitly and tested: visiting **your own** username by URL gives the editable page rather than a read-only copy of it; an unknown username says so rather than rendering an empty profile; and a signed-out visitor is told to log in, because reading anyone's runs requires an authenticated caller — a policy fact, not a UI preference.
+
+**A real regression, caught by three existing suites.** The new header button pushed the right-hand controls (Ranks, name, Friends, Admin) past a 375px viewport. Fixed by letting that group wrap and trimming the button labels to their icons below 460px — in CSS rather than JS, so it responds to rotation and resize with no listener. Verified at 375px and 900px.
+
+**Verified** with 42 browser assertions: all four boards present and correct, each tab querying the right window (0 / 7 / null days, and the separate career function), sorting and ranking, your own row highlighted, nameplates rendering with badge/title/paint, per-row score grades, career rows showing run counts instead, friends-only excluding a non-friend while keeping you and your friend, clicking through to a read-only profile with no edit controls, your own username staying editable, unknown usernames, signed-out states for both pages, clickable friends-list names, and no overflow at 375px.
+
 ---
 
 ## 12. Implementation Status
@@ -1013,3 +1039,12 @@ None of the three touch `dailySeed`/`hashSeed` or persistence — every redeal d
     - **Titles gained a second unlock source.** Grade titles unlock from an achievement, not a level, because a level threshold cannot express "you scored like a Whale". Built-in titles now support an optional `achievementId`.
     - **A duplicate label ("High Roller" as both a level-8 title and a grade) was caught and resolved** by relabelling the older one to Big Spender, keeping its id so nobody loses it — plus a new test forbidding duplicate title labels.
     - Two browser assertions failed on my own wrong assumptions rather than on the code (CSS `text-transform` changing `innerText` casing, and a 410-XP run being level 2 not level 1). Both are recurring traps in this project's tests and are now noted here.
+
+63. **Leaderboards and viewable profiles** (§11j) — the last two punch-list items, deliberately built as one pass.
+    - **They were surfaced as a single linked decision** rather than two separate features, because both were blocked on the same thing: `daily_plays` was own-rows-only. Asking "how open should scores be?" once answered both, and the owner's choice (completed runs readable by anyone) is what makes a global board possible at all.
+    - **The read policy is narrow on purpose.** `result is not null` isn't tidiness — an unfinished row holds the seed for a hand not yet locked in, so a blanket `using (true)` would have let anyone preview another player's day. Worth remembering that this table has two very different kinds of row in it.
+    - **Three boards, one function.** Today / This Week / All-Time differ only by a date cutoff, so they share one SQL function; only career points, which aggregates, needed its own.
+    - **Chose `security invoker` over `security definer`** for the board functions, unlike every admin function in the project. The distinction is worth recording: admin functions elevate because they must do things the caller cannot, whereas these read exactly what the caller already may — so not elevating keeps them automatically correct if the policy changes.
+    - **Friends-only filtering is client-side**, because friendship rows are already restricted to their two participants and the alternative was duplicating a join into every board function.
+    - **Viewing another player reuses the same profile page** with an edit flag, rather than a second read-only page that could drift. Three edge cases needed explicit handling: your own username via URL (must stay editable), an unknown username, and signed-out visitors.
+    - **A layout regression I introduced was caught by three unrelated suites' 375px checks** — the new header button overflowed mobile. Those overflow assertions have now earned their place twice.

@@ -38,6 +38,23 @@ export async function fetchPlayHistory(userId, { limit = HISTORY_LIMIT } = {}) {
 }
 
 /**
+ * Looks up a profile by username, for viewing someone else's profile
+ * (`?profile=<username>`, §11j). `profiles` has always been publicly readable —
+ * that's how friend lookup works — so this needs no special permission; reading
+ * their RUNS does, which migration 006 grants for completed runs only.
+ */
+export async function fetchProfileByUsername(username) {
+  const client = await requireSupabase();
+  const { data, error } = await client
+    .from('profiles')
+    .select('id, username, equipped_badge, equipped_title, equipped_paint, admin_unlocks, created_at')
+    .eq('username', username)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+/**
  * Saves the player's equipped cosmetics (DESIGN.md §11e). Null clears a slot.
  *
  * Only ever called for the signed-in user's own row, and RLS enforces that

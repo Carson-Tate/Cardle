@@ -19,11 +19,12 @@
       <button type="button" id="header-help" class="header-help" aria-label="How to play">?</button>
     </div>
     <div class="site-header-right">
+      <button type="button" id="header-leaderboard-btn" class="header-friends-btn" aria-label="Leaderboards">🏆<span class="header-leaderboard-label"> Ranks</span></button>
       <div id="header-auth-slot"></div>
       <button type="button" id="header-friends-btn" class="header-friends-btn" hidden>Friends</button>
       <!-- Shown only for admins. This is presentation, not access control —
            the database authorizes every admin action (DESIGN.md §11f). -->
-      <button type="button" id="header-admin-btn" class="header-admin-btn" hidden>🛠️ Admin</button>
+      <button type="button" id="header-admin-btn" class="header-admin-btn" aria-label="Admin" hidden>🛠️<span class="header-admin-label"> Admin</span></button>
     </div>
   </header>
   <div id="app">

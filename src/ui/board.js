@@ -594,9 +594,18 @@ export function initBoard(root) {
 // label — always visible, since every day has exactly one active modifier
 // (no "vanilla" day). `forced` (admin panel only, §4a) marks it as an ad-hoc
 // preview rather than the real day's modifier, so it's never mistaken for one.
+// Owner: "i want the modifier to be more announced that it is a daily
+// modifier" — the plain pill (just the modifier's own name/description) gave
+// no sense that this is a distinct daily mechanic, not flavor text. An
+// uppercase "Daily Modifier" eyebrow above the name/description makes that
+// explicit, matching the small-caps label style already used elsewhere
+// (e.g. .admin-panel-title) rather than inventing a new one.
 function renderModifierBanner(el, dailyModifier, forced = false) {
   el.hidden = false;
-  el.textContent = `${dailyModifier.emoji} ${dailyModifier.label} — ${dailyModifier.description}${forced ? ' (admin preview)' : ''}`;
+  el.innerHTML = `
+    <span class="modifier-banner-eyebrow">Daily Modifier${forced ? ' (admin preview)' : ''}</span>
+    <span class="modifier-banner-body">${dailyModifier.emoji} <strong>${dailyModifier.label}</strong> — ${dailyModifier.description}</span>
+  `;
 }
 
 function renderTestBanner(root, config) {

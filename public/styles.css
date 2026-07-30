@@ -71,14 +71,29 @@ header h1 {
 }
 
 .modifier-banner {
-  display: inline-block;
-  margin: 0.5rem auto 0;
-  padding: 0.3rem 0.75rem;
-  border-radius: 999px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  width: fit-content;
+  margin: 0.6rem auto 0;
+  padding: 0.4rem 1rem;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--selected) 16%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--selected) 40%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--selected) 55%, transparent);
   color: var(--text);
+}
+
+.modifier-banner-eyebrow {
+  font-weight: 700;
+  color: var(--selected);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   font-size: 0.85rem;
+}
+
+.modifier-banner-body {
+  font-size: 0.9rem;
 }
 
 .anon-hint {

@@ -90,7 +90,7 @@ export const MODIFIERS = [
     label: 'Clean Slate',
     type: 'discardLimit',
     maxDiscards: 5,
-    describe: () => 'Discard up to all 5 cards today — a full redraw, no held-card safety net.',
+    describe: () => 'Discard up to all 5 cards today.',
   },
   {
     id: 'highRoller',

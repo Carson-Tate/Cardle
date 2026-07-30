@@ -922,6 +922,25 @@ Five items from an owner punch-list. Leaderboards and clickable friend profiles 
 
 **Verified** with 14 new unit tests for the grade (threshold inclusivity in both directions, hand-rank anchoring, monotonicity, and junk/non-finite input) plus 22 browser assertions covering all five items — including reproducing the username collision and the login flash before fixing them.
 
+### 11k. Score Grade Ladder + Grade Rewards ✅ built (owner: "change the score rarity names to be Busted / Average / Hot / Blessed / High Roller / Whale / Casino Legend / Impossible / ??? ... also make badges titles and achievements for earning these")
+
+Replaces §11i's placeholder six-tier ladder with the owner's nine named tiers, and hangs three reward systems off them.
+
+**The ladder**, worst to best: Busted 💀 · Average 😐 · Hot 🔥 · Blessed ✨ · High Roller 🎩 · Whale 🐋 · Casino Legend 👑 · Impossible 🌌 · ??? 🕳️. Thresholds stay anchored to `HAND_RANKS` values rather than round numbers, for the reason §11i already gives: that table has been rebalanced before, and magic numbers here would silently stop meaning anything.
+
+**??? had to be more than "the best hand".** A bare Royal Flush lands on **Impossible**; ??? sits at 4× that, so it needs the Royal *and* a multiplier stacked on top — a rare card in the winning combo, or a scoring modifier. Tests pin both halves: that a plain Royal is not ???, and that it IS reachable with a realistic multiplier (Flush Frenzy's ×4, or a Diamond's ×15). Otherwise ??? would just be a synonym for the tier below it.
+
+**Three reward systems, all generated from the ladder rather than hand-listed** — so renaming or adding a grade can't leave the lists disagreeing, the same reasoning as badges being generated from achievements (§11e):
+- **Achievements**: one per grade (27 total now, up from 18). Every tier is "reach it or better", so a big run cascades down the ladder — *except* the floor, which is exact-match. "Busted or better" would be true of literally every run; as an exact match it's a wooden spoon you have to actually earn by whiffing.
+- **Badges**: free, since badges are already generated from the achievement registry.
+- **Titles**: nine new ones, unlocked by their **grade achievement** rather than by level. That needed a new unlock source for built-in titles (an optional `achievementId`), because "Whale" should mean you scored like one — a level threshold could never express that.
+
+**A label collision had to be resolved.** The existing level-8 title was already called "High Roller", which is now also a grade. Two selectable titles reading identically would be genuinely confusing, so the level-8 one was relabelled **Big Spender**; its id is unchanged, so anyone already wearing it keeps it. A new test asserts no two titles share a label, so this can't recur.
+
+**Grading garbage as the floor is deliberate.** `gradeForScore(Infinity)` returns Busted, not ???. Infinity isn't a reachable score, so it's corrupt input — and since a grade now gates an achievement, a badge and a title, mis-grading garbage *upward* would hand out rewards off a bad row. The test says so explicitly, because "it returns the lowest tier" looks like a bug until you know why.
+
+**Verified** with the score-grade suite rewritten around the new ladder (exact order and labels, threshold inclusivity in both directions, hand-rank anchoring, ??? reachability, rank/`reachesGrade` comparisons, junk input) plus 11 browser assertions confirming a High-Roller-grade run earns the grade achievement *and* every tier below it, unlocks the matching badge and title, leaves higher tiers locked, does **not** earn the floor, and that the grade title equips and renders. Two of those browser assertions initially failed on my own faulty assumptions — CSS uppercasing the grade label, and a 410-XP run actually being level 2 rather than level 1 — not on the code.
+
 ---
 
 ## 12. Implementation Status
@@ -986,3 +1005,11 @@ None of the three touch `dailySeed`/`hashSeed` or persistence — every redeal d
     - **Leaderboards and clickable friend profiles turned out to need the same thing** (permission to read other players' scores), so they were surfaced as one linked decision instead of two, and deferred to a single migration pass (§11j). Owner chose: daily + weekly + all-time top scores plus all-time career points, with a friends-only toggle, and completed runs readable by anyone.
     - **Two of the seven were bugs I had introduced**, and both are worth remembering as patterns. `createProfile` assumed one meaning for a Postgres error code that has two (unique constraint on `id` AND on `username` both raise 23505) — the fix asks the database what is true rather than parsing error text. And the header painted a logged-OUT state before it knew, because its first synchronous render predates the async session answer; the general lesson is that "render immediately so nothing is blank" needs a third state for *unknown*, not a default to one of the two known ones.
     - **An existing test earned its keep**: it caught that moving the config await into the Draw click left the button with no immediate feedback. Fixed, and the now-outdated assertion was rewritten rather than deleted.
+
+62. **Score grade ladder renamed, with grade rewards** (§11k), owner: the nine names, "also make badges titles and achievements for earning these". Points worth keeping:
+    - **All three reward systems are generated from the ladder**, not authored alongside it. Nine grades produced nine achievements, nine badges (free, since badges already derive from achievements) and nine titles with no parallel lists to keep in sync — the same discipline as §11e.
+    - **The floor grade needed different logic from the rest.** Every other tier is "reach it or better" so a good run cascades; "Busted or better" would be every run ever, so it is exact-match — a wooden spoon.
+    - **"???" required a deliberate reachability decision.** Set at 4× a Royal Flush so it needs the best hand AND a multiplier, rather than being a second name for Impossible. Tested from both directions: unreachable on a bare Royal, reachable with a real modifier or rare card.
+    - **Titles gained a second unlock source.** Grade titles unlock from an achievement, not a level, because a level threshold cannot express "you scored like a Whale". Built-in titles now support an optional `achievementId`.
+    - **A duplicate label ("High Roller" as both a level-8 title and a grade) was caught and resolved** by relabelling the older one to Big Spender, keeping its id so nobody loses it — plus a new test forbidding duplicate title labels.
+    - Two browser assertions failed on my own wrong assumptions rather than on the code (CSS `text-transform` changing `innerText` casing, and a 410-XP run being level 2 not level 1). Both are recurring traps in this project's tests and are now noted here.

@@ -167,14 +167,36 @@ describe('cumulative achievements', () => {
 describe('evaluateAchievements', () => {
   test('returns only satisfied achievements, in registry order', () => {
     // baseScore kept close to total so centuryBonus's "Two-Pair-worth+ from
-    // bonuses alone" doesn't also fire — isolating this to just highRoller + firstSteps.
+    // bonuses alone" doesn't also fire — isolating this to just highRoller +
+    // firstSteps among the NON-grade achievements.
     const highRollerThreshold = scoreForHandId('FULL_HOUSE');
     const context = ctx({
       score: { ...ctx().score, baseScore: highRollerThreshold, total: highRollerThreshold + 200 },
       stats: { ...ctx().stats, gamesPlayed: 1 },
     });
-    const ids = idsOf(context);
+    // Score-grade achievements (§11k) fire off the same total and are asserted
+    // separately below, so they're excluded here to keep this focused on what it
+    // was written to check: the non-grade set, in registry order.
+    const ids = idsOf(context).filter((id) => !id.startsWith('grade_'));
     assert.deepEqual(ids, ['highRoller', 'firstSteps']);
+  });
+
+  // Score grades (§11k, DESIGN.md): one achievement per grade, "or better" for
+  // every tier except the floor.
+  test('a run unlocks its grade achievement and every grade below it', () => {
+    const context = ctx({ score: { ...ctx().score, total: scoreForHandId('FULL_HOUSE') } });
+    const ids = idsOf(context).filter((id) => id.startsWith('grade_'));
+    assert.ok(ids.includes('grade_highRoller'), 'the grade actually reached');
+    assert.ok(ids.includes('grade_blessed') && ids.includes('grade_hot') && ids.includes('grade_average'), 'and every tier below');
+    assert.ok(!ids.includes('grade_whale'), 'but nothing above');
+    assert.ok(!ids.includes('grade_busted'), 'and not the floor, which is exact-match only');
+  });
+
+  test('the floor grade is exact-match, so a good run does not also earn it', () => {
+    const busted = idsOf(ctx({ score: { ...ctx().score, total: 0 } })).filter((id) => id.startsWith('grade_'));
+    assert.deepEqual(busted, ['grade_busted'], 'a whiff earns exactly the wooden spoon');
+    const good = idsOf(ctx({ score: { ...ctx().score, total: scoreForHandId('STRAIGHT') } }));
+    assert.ok(!good.includes('grade_busted'));
   });
 
   test('every achievement id is unique', () => {

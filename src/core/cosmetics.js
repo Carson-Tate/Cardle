@@ -10,6 +10,7 @@
 
 import { ACHIEVEMENTS } from './achievements.js';
 import { levelForXp } from './progression.js';
+import { SCORE_GRADES_ASCENDING } from './score-grade.js';
 
 // Every achievement grants the matching badge, generated from the achievement
 // registry rather than hand-listed. Deliberate: a hand-written parallel list
@@ -27,11 +28,15 @@ export const BADGES = ACHIEVEMENTS.map((achievement) => ({
 // Titles unlock on level. Level 1 gets none — a title should feel earned, and
 // there's a "no title" option in the picker for players who'd rather show
 // nothing.
-export const TITLES = [
+// Level-gated titles. `title_high_roller` was relabelled from "High Roller" to
+// "Big Spender" when the score grades landed (§11k): the grade ladder has its own
+// High Roller, and two selectable titles reading identically would be genuinely
+// confusing. The id is unchanged, so anyone who already had it keeps it.
+const LEVEL_TITLES = [
   { id: 'title_newcomer', label: 'Newcomer', level: 2 },
   { id: 'title_card_counter', label: 'Card Counter', level: 4 },
   { id: 'title_bluff_artist', label: 'Bluff Artist', level: 6 },
-  { id: 'title_high_roller', label: 'High Roller', level: 8 },
+  { id: 'title_high_roller', label: 'Big Spender', level: 8 },
   { id: 'title_sharp', label: 'Sharp', level: 10 },
   { id: 'title_table_captain', label: 'Table Captain', level: 13 },
   { id: 'title_shark', label: 'Shark', level: 16 },
@@ -39,6 +44,19 @@ export const TITLES = [
   { id: 'title_legend', label: 'Legend of the Felt', level: 25 },
   { id: 'title_immortal', label: 'Cardle Immortal', level: 30 },
 ];
+
+// One title per score grade (§11k), unlocked by that grade's ACHIEVEMENT rather
+// than by level — so wearing "Whale" means you actually scored like one, which a
+// level threshold could never express. Generated from the grade ladder so the
+// two can't drift apart.
+const GRADE_TITLES = SCORE_GRADES_ASCENDING.map((grade) => ({
+  id: `title_grade_${grade.id}`,
+  label: grade.label,
+  achievementId: `grade_${grade.id}`,
+  gradeId: grade.id,
+}));
+
+export const TITLES = [...LEVEL_TITLES, ...GRADE_TITLES];
 
 // Name paints. The five plain colours are available from level 1 (owner:
 // "with like 5 basic colors as default") so customising your name is possible
@@ -148,7 +166,13 @@ export function resolveCosmetics({ level = 1, achievementsUnlocked = [], adminUn
     badges: badges.map((badge) =>
       resolveEntry(badge, Boolean(badge.achievementId) && earned.has(badge.achievementId), `Achievement: ${badge.label}`),
     ),
-    titles: titles.map((title) => resolveEntry(title, safeLevel >= title.level, `Reach level ${title.level}`)),
+    titles: titles.map((title) =>
+      // A title with an `achievementId` is earned by that achievement, not by
+      // level — the grade titles above. Everything else is level-gated as before.
+      title.achievementId
+        ? resolveEntry(title, earned.has(title.achievementId), `Earn the ${title.label} achievement`)
+        : resolveEntry(title, safeLevel >= title.level, `Reach level ${title.level}`),
+    ),
     paints: paints.map((paint) =>
       resolveEntry(
         paint,

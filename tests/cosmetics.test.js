@@ -47,16 +47,32 @@ describe('registries', () => {
     assert.equal(atLevelOne.filter((p) => p.id !== DEFAULT_PAINT_ID).length, 5);
   });
 
-  test('titles and paints are ordered by ascending unlock level', () => {
-    for (const list of [TITLES, NAME_PAINTS]) {
+  // Titles come in two kinds now (§11k): level-gated, and achievement-gated
+  // (one per score grade). The ordering invariant only applies to the former.
+  test('level-gated titles and paints are ordered by ascending unlock level', () => {
+    const levelTitles = TITLES.filter((t) => !t.achievementId);
+    for (const list of [levelTitles, NAME_PAINTS]) {
       for (let i = 1; i < list.length; i++) {
         assert.ok(list[i].level >= list[i - 1].level, `${list[i].id} is out of order`);
       }
     }
   });
 
-  test('no title is available at level 1 — a title has to be earned', () => {
-    assert.equal(TITLES.filter((t) => t.level <= 1).length, 0);
+  test('no level-gated title is available at level 1 — a title has to be earned', () => {
+    assert.equal(TITLES.filter((t) => !t.achievementId && t.level <= 1).length, 0);
+  });
+
+  test('every score grade has a title, unlocked by that grade achievement', () => {
+    const gradeTitles = TITLES.filter((t) => t.achievementId);
+    assert.equal(gradeTitles.length, 9, 'one per grade');
+    for (const title of gradeTitles) {
+      assert.match(title.achievementId, /^grade_/);
+    }
+  });
+
+  test('no two titles share a label — a duplicate would be unpickable in the UI', () => {
+    const labels = TITLES.map((t) => t.label);
+    assert.equal(new Set(labels).size, labels.length, `duplicate title label in: ${labels.join(', ')}`);
   });
 });
 
@@ -78,18 +94,27 @@ describe('resolveCosmetics', () => {
     assert.equal(unlocked[0].achievementId, 'firstSteps');
   });
 
-  test('titles and paints unlock from level, not achievements', () => {
+  test('level-gated titles and all paints unlock from level, not achievements', () => {
     const everyAchievement = resolveCosmetics({ level: 1, achievementsUnlocked: ACHIEVEMENTS.map((a) => a.id) });
-    assert.equal(everyAchievement.titles.filter((t) => t.unlocked).length, 0);
-    assert.equal(everyAchievement.paints.filter((p) => p.unlocked).length, 6);
+    // Grade titles DO come from achievements (§11k), so only the level-gated
+    // ones should still be locked at level 1.
+    assert.equal(everyAchievement.titles.filter((t) => t.unlocked && !t.achievementId).length, 0);
+    assert.equal(everyAchievement.paints.filter((p) => p.unlocked).length, 6, 'no achievement unlocks a paint');
 
     const levelTen = resolveCosmetics({ level: 10, achievementsUnlocked: [] });
-    assert.ok(levelTen.titles.filter((t) => t.unlocked).length >= 5);
+    assert.ok(levelTen.titles.filter((t) => t.unlocked && !t.achievementId).length >= 5);
+    assert.equal(levelTen.titles.filter((t) => t.unlocked && t.achievementId).length, 0, 'level alone earns no grade title');
     assert.ok(levelTen.paints.filter((p) => p.unlocked).length > 6);
   });
 
+  test('a grade title unlocks from its achievement, at any level', () => {
+    const resolved = resolveCosmetics({ level: 1, achievementsUnlocked: ['grade_whale'] });
+    assert.equal(resolved.titles.find((t) => t.id === 'title_grade_whale').unlocked, true);
+    assert.equal(resolved.titles.find((t) => t.id === 'title_grade_impossible').unlocked, false);
+  });
+
   test('unlocking is inclusive at the exact threshold level', () => {
-    for (const title of TITLES) {
+    for (const title of TITLES.filter((t) => !t.achievementId)) {
       const atLevel = resolveCosmetics({ level: title.level }).titles.find((t) => t.id === title.id);
       const below = resolveCosmetics({ level: title.level - 1 }).titles.find((t) => t.id === title.id);
       assert.equal(atLevel.unlocked, true, `${title.id} should unlock AT level ${title.level}`);

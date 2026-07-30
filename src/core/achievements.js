@@ -1,5 +1,6 @@
 import { HAND_RANKS, scoreForHandId, handStrengthIndex } from './hand-evaluator.js';
 import { PERSONALITIES } from './personality.js';
+import { SCORE_GRADES_ASCENDING, gradeForScore, reachesGrade } from './score-grade.js';
 
 // Point thresholds anchored to specific hand ranks rather than hardcoded
 // (owner request rebalanced HAND_RANKS to be odds-proportional — see
@@ -155,6 +156,28 @@ export const ACHIEVEMENTS = [
     description: 'Unlock every personality type.',
     check: (ctx) => ctx.stats.personalitiesSeen.length >= PERSONALITIES.length,
   },
+  // One achievement per score grade (§11k, owner request: "make badges titles
+  // and achievements for earning these"). Generated from the grade ladder rather
+  // than hand-listed, so adding or renaming a grade can't leave the two lists
+  // disagreeing — the same reasoning as badges being generated from achievements
+  // (§11e).
+  //
+  // "or better" for every grade EXCEPT the floor: `Busted or better` would be
+  // true of literally every run, so the bottom rung is an exact match instead —
+  // a wooden spoon you actually have to earn by whiffing.
+  ...SCORE_GRADES_ASCENDING.map((grade, index) => ({
+    id: `grade_${grade.id}`,
+    emoji: grade.emoji,
+    label: grade.label,
+    description:
+      index === 0
+        ? `Finish a run graded ${grade.label} — someone has to.`
+        : `Finish a run graded ${grade.label} or better (${grade.min.toLocaleString()}+ points).`,
+    check:
+      index === 0
+        ? (ctx) => gradeForScore(ctx.score.total).id === grade.id
+        : (ctx) => reachesGrade(ctx.score.total, grade.id),
+  })),
   {
     id: 'newPersonalBest',
     emoji: '📈',

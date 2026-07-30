@@ -2492,41 +2492,81 @@ header h1 {
   line-height: 1;
 }
 
-/* Each tier's colour. `currentColor` on the border above means one declaration
-   per tier covers text and outline together. */
-.score-grade--common {
+/* Each tier's colour, Busted through ??? (§11k). `currentColor` on the border
+   above means one declaration per tier covers text and outline together. The
+   ramp runs grey → green → warm → gold → violet, so where a run landed is
+   readable at a glance without reading the label. */
+.score-grade--busted {
   color: var(--text-muted);
 }
-.score-grade--uncommon {
+.score-grade--average {
+  color: #6b7a8f;
+}
+.score-grade--hot {
+  color: #cf5a2a;
+}
+.score-grade--blessed {
   color: #2f8f52;
 }
-.score-grade--rare {
+.score-grade--highRoller {
   color: #2477b3;
 }
-.score-grade--epic {
-  color: #8046c8;
+.score-grade--whale {
+  color: #1f6f8f;
 }
-.score-grade--legendary {
+.score-grade--casinoLegend {
   color: #b8860b;
 }
-.score-grade--mythic {
+.score-grade--impossible {
+  color: #8046c8;
+}
+/* ??? is the only tier that animates — it needs a Royal Flush AND a multiplier
+   stacked on top, so it should look like something went wrong in a good way. */
+.score-grade--unknown {
   color: #c2417a;
+  border-style: dashed;
+  animation: line-in 300ms ease both, grade-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes grade-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .score-grade--unknown {
+    animation: line-in 300ms ease both;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
-  .score-grade--uncommon {
+  .score-grade--average {
+    color: #9aabc0;
+  }
+  .score-grade--hot {
+    color: #f0834f;
+  }
+  .score-grade--blessed {
     color: #62c78d;
   }
-  .score-grade--rare {
+  .score-grade--highRoller {
     color: #63b1e8;
   }
-  .score-grade--epic {
-    color: #b78ce8;
+  .score-grade--whale {
+    color: #5fc4e0;
   }
-  .score-grade--legendary {
+  .score-grade--casinoLegend {
     color: #e6b54a;
   }
-  .score-grade--mythic {
+  .score-grade--impossible {
+    color: #b78ce8;
+  }
+  .score-grade--unknown {
     color: #f083ad;
   }
 }

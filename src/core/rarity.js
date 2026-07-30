@@ -57,7 +57,14 @@ export const RARITIES = [
   { id: 'bronze', emoji: '🥉', label: 'Bronze', chance: 0.07, basePoints: 150, perRankPoints: 12, multiplier: 1.2 },
   { id: 'silver', emoji: '🥈', label: 'Silver', chance: 0.03, basePoints: 210, perRankPoints: 18, multiplier: 1.5 },
   { id: 'gold', emoji: '🥇', label: 'Gold', chance: 0.01, basePoints: 300, perRankPoints: 25, multiplier: 2.5 },
-  { id: 'joker', emoji: '🃏', label: 'Joker', chance: 0.002 },
+  // Owner: "rename the joker to a wild, i think it makes more sense" —
+  // display-only rename. `id`/`jokerTier`/`hasWildJoker`/etc. stay 'joker'
+  // throughout the codebase on purpose: renaming the internal id too would
+  // touch dozens of call sites for no player-facing benefit, and would
+  // silently mismatch any already-saved result (localStorage, or a signed-in
+  // player's `daily_plays` row, §11c) that recorded `rarity: 'joker'` before
+  // this label existed.
+  { id: 'joker', emoji: '🃏', label: 'Wild', chance: 0.002 },
   { id: 'diamond', emoji: '💎', label: 'Diamond', chance: 0.001, basePoints: 850, perRankPoints: 70, multiplier: 15 },
 ];
 

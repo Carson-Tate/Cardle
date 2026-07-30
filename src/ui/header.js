@@ -117,8 +117,10 @@ export function initHeader(root) {
         body.innerHTML = `
           <ol class="help-steps">
             <li>You get one hand of 5 cards, once per day.</li>
-            <li>Click a card to mark it for discard — the number you're allowed to mark is shown under your hand.</li>
-            <li>Click <strong>Lock In</strong>. Marked cards get swapped for new ones, and your final 5-card poker hand is scored — stronger hands (and rare cards) score more.</li>
+            <li>Every day has a <strong>Daily Modifier</strong> (shown above your hand) that changes the rules for the day — more or fewer discards, bonus multipliers, or a special twist on the usual flow.</li>
+            <li>Click a card to mark it for discard — the <strong>Discard X/Y</strong> button shows how many you've marked.</li>
+            <li>Click it to lock in. Marked cards get swapped for new ones, and your final 5-card poker hand is scored — stronger hands score more.</li>
+            <li>Some cards are rare — 🥉 Bronze, 🥈 Silver, 🥇 Gold, 🃏 Wild, 💎 Diamond. If a rare card ends up part of your final winning hand (not just sitting there unused), it multiplies your <strong>entire score</strong> — the rarer the card, the bigger the multiplier.</li>
             <li>That's it for today — come back tomorrow for a new hand.</li>
           </ol>
         `;

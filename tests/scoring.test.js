@@ -231,8 +231,8 @@ describe('rarityBonus', () => {
     const goldJoker = rarityBonus([c(2, 'H', 'joker', 'gold'), c(5, 'S'), c(9, 'D'), c(11, 'C'), c(13, 'H')]);
     assert.ok(goldJoker.total > bronzeJoker.total);
     assert.equal(goldJoker.total, 300);
-    assert.equal(bronzeJoker.items[0].label, 'Bronze Joker');
-    assert.equal(goldJoker.items[0].label, 'Gold Joker');
+    assert.equal(bronzeJoker.items[0].label, 'Bronze Wild');
+    assert.equal(goldJoker.items[0].label, 'Gold Wild');
   });
 });
 
@@ -261,7 +261,7 @@ describe('discardedRarityBonus', () => {
 
   test("a discarded joker uses its rolled flavor's points, same as rarityBonus", () => {
     const result = discardedRarityBonus([c(2, 'H', 'joker', 'gold')]);
-    assert.equal(result.items[0].label, 'Gold Joker');
+    assert.equal(result.items[0].label, 'Gold Wild');
     assert.equal(result.total, Math.round(300 * 0.5));
   });
 });

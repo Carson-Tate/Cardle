@@ -167,7 +167,7 @@ export function rarityBonus(cards) {
     if (!tier) return;
     const points = pointsForRarity(card.rarity, card.rank, card.jokerTier);
     const jokerFlavor = card.rarity === 'joker' ? (RARITY_BY_ID[card.jokerTier] ?? RARITY_BY_ID.bronze) : null;
-    const label = jokerFlavor ? `${jokerFlavor.label} Joker` : tier.label;
+    const label = jokerFlavor ? `${jokerFlavor.label} Wild` : tier.label;
     items.push({ card, index, rarity: tier.id, jokerTier: card.jokerTier ?? null, emoji: tier.emoji, label, points });
     total += points;
   });
@@ -196,7 +196,7 @@ export function discardedRarityBonus(discardedCards) {
     const fullPoints = pointsForRarity(card.rarity, card.rank, card.jokerTier);
     const points = Math.round(fullPoints * DISCARD_RARITY_SHARE);
     const jokerFlavor = card.rarity === 'joker' ? (RARITY_BY_ID[card.jokerTier] ?? RARITY_BY_ID.bronze) : null;
-    const label = jokerFlavor ? `${jokerFlavor.label} Joker` : tier.label;
+    const label = jokerFlavor ? `${jokerFlavor.label} Wild` : tier.label;
     items.push({ card, index, rarity: tier.id, jokerTier: card.jokerTier ?? null, emoji: tier.emoji, label, points });
     total += points;
   });

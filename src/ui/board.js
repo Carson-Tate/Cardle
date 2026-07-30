@@ -238,7 +238,7 @@ export function initBoard(root) {
     } else {
       const usedSeed = seed ?? freshSeed();
       if (seed === undefined && config.isTestMode) {
-        const forcedLabel = forceRarity === 'joker' && forceJokerTier ? `${forceJokerTier} joker` : forceRarity;
+        const forcedLabel = forceRarity === 'joker' && forceJokerTier ? `${forceJokerTier} wild` : forceRarity;
         const luckNote = forceRarity ? `, forced ${forcedLabel}` : luckMultiplier > 1 ? `, luck ×${luckMultiplier}` : '';
         dayLabel.textContent = `🧪 Test hand (admin redeal${luckNote})`;
       }
@@ -656,10 +656,11 @@ const CUSTOM_SLOT_DEFAULT_SUITS = ['S', 'H', 'D', 'C', 'S'];
 
 function rarityOptionsHtml() {
   const none = '<option value="">— none —</option>';
+  const jokerTier = RARITIES.find((tier) => tier.id === 'joker');
   const tiers = RARITIES.filter((tier) => tier.id !== 'joker')
     .map((tier) => `<option value="${tier.id}">${tier.emoji} ${tier.label}</option>`)
     .join('');
-  return `${none}${tiers}<option value="joker">🃏 Joker</option>`;
+  return `${none}${tiers}<option value="joker">${jokerTier.emoji} ${jokerTier.label}</option>`;
 }
 
 function jokerTierOptionsHtml() {
@@ -707,7 +708,7 @@ function renderAdminPanel(root, onRedeal) {
       ${RARITIES.filter((tier) => tier.id !== 'joker')
         .map(
           (tier) =>
-            `<button type="button" class="admin-force-btn" data-force="joker" data-joker-tier="${tier.id}">🃏 ${tier.label} Joker</button>`,
+            `<button type="button" class="admin-force-btn" data-force="joker" data-joker-tier="${tier.id}">🃏 ${tier.label} Wild</button>`,
         )
         .join('')}
     </div>
@@ -1204,7 +1205,7 @@ function buildScoreBadges(score, finalHand, discardIndices = []) {
   for (const item of score.rarity.items) {
     const label =
       item.rarity === 'joker'
-        ? item.label // already "<Flavor> Joker", e.g. "Gold Joker" — see rarityBonus()
+        ? item.label // already "<Flavor> Wild", e.g. "Gold Wild" — see rarityBonus()
         : `${item.label} ${rankLabel(item.card.rank)}${suitGlyph(item.card.suit)}`;
     const tierForTag = item.rarity === 'joker' ? (item.jokerTier ?? 'bronze') : item.rarity;
     badges.push({
@@ -1224,7 +1225,7 @@ function buildScoreBadges(score, finalHand, discardIndices = []) {
   for (const item of score.discardedRarity.items) {
     const label =
       item.rarity === 'joker'
-        ? item.label // already "<Flavor> Joker", e.g. "Gold Joker" — see discardedRarityBonus()
+        ? item.label // already "<Flavor> Wild", e.g. "Gold Wild" — see discardedRarityBonus()
         : `${item.label} ${rankLabel(item.card.rank)}${suitGlyph(item.card.suit)}`;
     const tierForTag = item.rarity === 'joker' ? (item.jokerTier ?? 'bronze') : item.rarity;
     badges.push({

@@ -37,10 +37,10 @@ export function createCardElement(card, { faceUp = true, selected = false, locke
     if (card.rarity === 'joker') {
       el.innerHTML = `
         <span class="card__joker-face">🃏</span>
-        <span class="card__joker-label">${jokerFlavor.label.toUpperCase()} JOKER</span>
+        <span class="card__joker-label">${jokerFlavor.label.toUpperCase()} WILD</span>
         ${locked ? '<span class="card__lock-badge">🔒</span>' : ''}
       `;
-      el.setAttribute('aria-label', `${jokerFlavor.label} Joker${locked ? ', locked in, cannot be discarded' : selected ? ', marked for discard' : ''}`);
+      el.setAttribute('aria-label', `${jokerFlavor.label} Wild${locked ? ', locked in, cannot be discarded' : selected ? ', marked for discard' : ''}`);
     } else {
       const color = RED_SUITS.has(card.suit) ? 'card--red' : 'card--black';
       el.classList.add(color);

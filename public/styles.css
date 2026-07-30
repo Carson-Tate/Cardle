@@ -111,6 +111,23 @@ header h1 {
   margin-bottom: 1.5rem;
 }
 
+/* 5 cards + gaps don't fit most phone widths, so they'd otherwise wrap as
+   4-then-1 (owner report: looked lopsided) — this covers both card sizes
+   below the .card breakpoint's own 480px cutoff (72px cards) and the
+   awkward 480-499px band just above it, where 84px cards *also* don't
+   quite fit 5 across. Capping the row's width to fit exactly 3 cards + 2
+   gaps (using the larger 84px card as the binding case; 3 of the smaller
+   72px ones fit with room to spare, so this one value covers both) forces
+   a 3-then-2 wrap instead — flexbox applies justify-content per wrapped
+   line, so both rows stay centered. */
+@media (max-width: 499px) {
+  .hand-row {
+    max-width: 275px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
 .card {
   position: relative;
   width: 72px;

@@ -18,6 +18,7 @@ import { SLOT_META } from '../story/templates.js';
 import { RARITIES, TOTAL_SPECIAL_CHANCE, jokerTierForRoll } from '../core/rarity.js';
 import { getDailyModifier, buildModifierById, modifierScoringMultiplier, MODIFIERS } from '../core/modifiers.js';
 import { gradeForScore } from '../core/score-grade.js';
+import { formatCountdown, msUntilNextReset } from '../core/game-day.js';
 import { createCardElement } from './card-view.js';
 import { delay, animateCountUp, flipReplaceCard, flySparks } from './animations.js';
 
@@ -83,6 +84,7 @@ export function initBoard(root) {
   const dayLabel = root.querySelector('#day-label');
   const modifierBanner = root.querySelector('#modifier-banner');
   const anonHint = root.querySelector('#anon-hint');
+  const nextResetEl = root.querySelector('#next-reset');
   const resultPanel = root.querySelector('#result');
   const wagerPrompt = root.querySelector('#wager-prompt');
   const wagerYesBtn = root.querySelector('#wager-yes-btn');
@@ -128,6 +130,36 @@ export function initBoard(root) {
 
   function isPeekWagerModifier() {
     return dailyModifier?.type === 'peekWager';
+  }
+
+  startResetCountdown();
+
+  // Ticks the "next hand in ..." label (DESIGN.md §11l). Every second rather
+  // than every minute so the final stretch actually counts down; the work is a
+  // single string write, so the cost is irrelevant.
+  //
+  // When the timer runs out the page reloads itself: at that moment this page is
+  // showing a hand (or a result) for a day that has just ended, and every other
+  // path — the seed claim, the modifier, the caption pools — is derived at load
+  // time. Reloading is the honest way to move to the new day, and far less
+  // error-prone than trying to hot-swap every one of those in place.
+  function startResetCountdown() {
+    if (!nextResetEl) return;
+    const tick = () => {
+      if (msUntilNextReset() <= 0) {
+        nextResetEl.textContent = 'New hand ready — reloading…';
+        window.location.reload();
+        return;
+      }
+      nextResetEl.hidden = false;
+      nextResetEl.textContent = `Next hand in ${formatCountdown()}`;
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    // Not strictly required for a page that lives until navigation, but it keeps
+    // the interval from outliving a board that gets torn down in a future
+    // single-page navigation.
+    window.addEventListener('beforeunload', () => clearInterval(timer), { once: true });
   }
 
   // A pure function of the real calendar date by default — always today's

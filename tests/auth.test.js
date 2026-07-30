@@ -2,6 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { isValidUsername, signInWithMagicLink, signOut, getSession, onAuthStateChange, getProfile, createProfile, SupabaseNotConfiguredError } from '../src/state/auth.js';
 import { isSupabaseConfigured } from '../src/state/supabase-client.js';
+import { updateUsername } from '../src/state/profile.js';
 
 describe('isValidUsername', () => {
   test('accepts 3-20 characters of letters, numbers, and underscores', () => {
@@ -50,5 +51,32 @@ describe('auth.js without a configured Supabase project', () => {
     await assert.rejects(() => signOut(), SupabaseNotConfiguredError);
     await assert.rejects(() => getProfile('some-id'), SupabaseNotConfiguredError);
     await assert.rejects(() => createProfile('some-id', 'validname'), SupabaseNotConfiguredError);
+  });
+});
+
+// updateUsername lives in state/, so it can't be exercised without a client —
+// but its VALIDATION runs before any network call, which is exactly the part
+// worth pinning: a rename must be held to the same rule as the original signup,
+// not a looser one invented at the rename site (§11m).
+describe('updateUsername validation', () => {
+  test('rejects anything isValidUsername rejects, before touching the network', async () => {
+    for (const bad of ['ab', 'a'.repeat(21), 'has space', 'has-dash', 'emoji😀', '', '   ']) {
+      await assert.rejects(
+        () => updateUsername('user-1', bad),
+        /Usernames must be 3-20 characters/,
+        `expected ${JSON.stringify(bad)} to be refused`,
+      );
+    }
+  });
+
+  test('trims surrounding whitespace before judging the name', async () => {
+    // '  ab  ' is too short once trimmed, so it must be refused for LENGTH
+    // rather than accidentally passing as a 6-character name.
+    await assert.rejects(() => updateUsername('user-1', '  ab  '), /3-20 characters/);
+  });
+
+  test('a null or undefined name is refused rather than throwing a type error', async () => {
+    await assert.rejects(() => updateUsername('user-1', null), /3-20 characters/);
+    await assert.rejects(() => updateUsername('user-1', undefined), /3-20 characters/);
   });
 });

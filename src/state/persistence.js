@@ -1,9 +1,13 @@
 import { freshSeed } from '../core/deck.js';
+import { gameDayFor, gameDayNumber } from '../core/game-day.js';
 
 const STORAGE_PREFIX = 'cardle';
 
+// Keyed by GAME day, not UTC day (DESIGN.md §11l) — the day rolls at 7pm New
+// York. In winter that is the same string the old UTC logic produced, so keys
+// written before this change still resolve.
 function todayKey(date = new Date()) {
-  return `${STORAGE_PREFIX}:result:${date.toISOString().slice(0, 10)}`;
+  return `${STORAGE_PREFIX}:result:${gameDayFor(date)}`;
 }
 
 // Every localStorage touch in this file goes through these two helpers.
@@ -46,7 +50,7 @@ export function saveTodayResult(result, date = new Date()) {
 }
 
 function seedKey(date = new Date()) {
-  return `${STORAGE_PREFIX}:seed:${date.toISOString().slice(0, 10)}`;
+  return `${STORAGE_PREFIX}:seed:${gameDayFor(date)}`;
 }
 
 // Each player gets their own randomly-dealt hand (owner request — everyone
@@ -83,11 +87,7 @@ export function getOrCreateTodaySeed(date = new Date()) {
   return seed;
 }
 
-const EPOCH = new Date('2026-07-27T00:00:00Z');
-
-export function dayNumber(date = new Date()) {
-  const msPerDay = 24 * 60 * 60 * 1000;
-  const startOfToday = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-  const startOfEpoch = Date.UTC(EPOCH.getUTCFullYear(), EPOCH.getUTCMonth(), EPOCH.getUTCDate());
-  return Math.floor((startOfToday - startOfEpoch) / msPerDay) + 1;
-}
+// Re-exported from core/game-day.js so "Cardle #N" advances with the 7pm reset
+// rather than at midnight UTC. Kept as a named export here because board.js and
+// admin.js already import it from this module.
+export { gameDayNumber as dayNumber };

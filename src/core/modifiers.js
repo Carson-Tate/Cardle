@@ -16,6 +16,7 @@
 
 import { hashSeed, createRng, shuffle, SUITS, suitGlyph } from './deck.js';
 import { handStrengthIndex } from './hand-evaluator.js';
+import { gameDayFor, gameDayNumber } from './game-day.js';
 
 // Owner request: modifiers should MULTIPLY the total when their condition is
 // in the winning hand, not add flat points that get lost against the
@@ -126,8 +127,11 @@ export const MODIFIERS = [
   },
 ];
 
+// Game day, so the modifier changes at the same moment the hand does (§11l) —
+// a modifier that rolled over hours before or after the new hand would be a
+// visible inconsistency.
 function isoDay(date) {
-  return date.toISOString().slice(0, 10);
+  return gameDayFor(date);
 }
 
 // Same project epoch as src/state/persistence.js's dayNumber() (not
@@ -138,9 +142,8 @@ function isoDay(date) {
 const EPOCH = new Date('2026-07-27T00:00:00Z');
 
 function daysSinceEpoch(date) {
-  const startOfDay = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-  const startOfEpoch = Date.UTC(EPOCH.getUTCFullYear(), EPOCH.getUTCMonth(), EPOCH.getUTCDate());
-  return Math.max(0, Math.floor((startOfDay - startOfEpoch) / 86_400_000));
+  // gameDayNumber is 1-based from the same epoch; the rotation counts from 0.
+  return Math.max(0, gameDayNumber(date) - 1);
 }
 
 // Greedy sliding-window construction: day D's modifier is a seeded pick

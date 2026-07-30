@@ -8,6 +8,7 @@
 // then batch-fetch the relevant profiles by id and merge client-side.
 
 import { requireSupabase } from './supabase-client.js';
+import { NAMEPLATE_COLUMNS } from './profile.js';
 
 // Looks up a friendships row's "OTHER side" — whichever of
 // requester_id/addressee_id isn't `userId`. Used to figure out whose profile
@@ -19,10 +20,12 @@ function otherUserId(friendship, userId) {
 async function profilesById(client, ids) {
   if (ids.length === 0) return new Map();
   // Cosmetic columns come along so a friend's nameplate renders with their
-  // badge/title/paint (ui/nameplate.js) rather than a bare username.
+  // badge/title/paint (ui/nameplate.js) rather than a bare username. Uses the
+  // shared column list, because this select was previously missing
+  // `admin_unlocks` and silently hid admin-granted cosmetics here only.
   const { data, error } = await client
     .from('profiles')
-    .select('id, username, equipped_badge, equipped_title, equipped_paint')
+    .select(NAMEPLATE_COLUMNS)
     .in('id', ids);
   if (error) throw error;
   return new Map(data.map((p) => [p.id, p]));

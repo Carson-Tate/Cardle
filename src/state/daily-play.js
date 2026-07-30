@@ -6,9 +6,12 @@
 
 import { requireSupabase } from './supabase-client.js';
 import { freshSeed } from '../core/deck.js';
+import { gameDayFor } from '../core/game-day.js';
 
+// The GAME day (DESIGN.md §11l), which is what `daily_plays.play_date` means —
+// one row per player per game day, rolling at 7pm New York.
 function isoDate(date) {
-  return date.toISOString().slice(0, 10);
+  return gameDayFor(date);
 }
 
 // Claims (or re-fetches) `userId`'s row for `date` — the FIRST call each day

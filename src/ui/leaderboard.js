@@ -8,6 +8,7 @@ import { BOARDS, BOARD_SIZE, fetchLeaderboard } from '../state/leaderboard.js';
 import { loadGameConfig } from '../state/game-config.js';
 import { nameplateHtml } from './nameplate.js';
 import { gradeForScore } from '../core/score-grade.js';
+import { miniHandHtml } from './mini-card.js';
 
 function escapeHtml(value) {
   return String(value)
@@ -138,12 +139,17 @@ export async function initLeaderboard(root) {
               <a class="lb-name" href="/?profile=${encodeURIComponent(row.profile.username ?? '')}">
                 ${nameplateHtml(row.profile, { custom })}
               </a>
+              ${
+                // The winning hand, on the score boards only — a career total
+                // isn't a single hand, so there is nothing to show there.
+                row.finalHand ? `<span class="lb-hand">${miniHandHtml(row.finalHand)}</span>` : ''
+              }
               <span class="lb-value">
                 ${row.value.toLocaleString()}${board.career ? ' pts' : ''}
                 <small>${
                   board.career
                     ? `${(row.runs ?? 0).toLocaleString()} run${row.runs === 1 ? '' : 's'}`
-                    : `${grade ? `${grade.emoji} ${escapeHtml(grade.label)}` : ''}${row.playDate ? ` · ${escapeHtml(formatDate(row.playDate))}` : ''}`
+                    : `${grade ? `<span class="lb-grade score-grade--${grade.id}">${grade.emoji} ${escapeHtml(grade.label)}</span>` : ''}${row.playDate ? ` <span class="lb-date">${escapeHtml(formatDate(row.playDate))}</span>` : ''}`
                 }</small>
               </span>
             </li>`;

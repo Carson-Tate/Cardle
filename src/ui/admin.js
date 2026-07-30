@@ -35,6 +35,7 @@ import {
 import { loadGameConfig, adminSetConfig, adminClearConfig } from '../state/game-config.js';
 import { dayNumber } from '../state/persistence.js';
 import { openModal } from './modal.js';
+import { gameDayFor } from '../core/game-day.js';
 
 function escapeHtml(value) {
   return String(value)
@@ -51,8 +52,10 @@ function formatDate(isoDate) {
   return parsed.toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// The current GAME day (§11l), so an admin resetting "today" clears the day the
+// player is actually on rather than whatever the UTC calendar says.
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return gameDayFor(new Date());
 }
 
 export async function initAdmin(root) {

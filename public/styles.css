@@ -1262,14 +1262,43 @@ header h1 {
   min-width: 0;
 }
 
-/* The right side now holds up to four controls (Ranks, name, Friends, Admin),
-   which overflows a 375px viewport. Wrapping is preferable to shrinking them
-   below a comfortable tap target, and `justify-content: flex-end` keeps the
-   wrapped row aligned with the side it belongs to. */
+/* The right side holds up to four controls (Leaderboards, Friends, Admin, and
+   your own nameplate last), which overflows a 375px viewport. Wrapping is
+   preferable to shrinking them below a comfortable tap target, and
+   `justify-content: flex-end` keeps the wrapped row aligned with the side it
+   belongs to. */
 .site-header-right {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.4rem;
+}
+
+/* ALL CAPS across the whole top bar (owner request), including the player's own
+   username.
+   Done here rather than by uppercasing any string, for two reasons: the stored
+   username keeps the casing the player chose — it still renders as typed on the
+   profile page, the leaderboards and friends lists — and screen readers get the
+   original text rather than something they may spell out letter by letter.
+   `letter-spacing` is added because uppercase set at small sizes packs tighter
+   than lowercase and reads as cramped without it.
+   Note for tests: this changes `innerText` to uppercase, so header assertions
+   have to be case-insensitive.
+
+   The buttons are listed explicitly and NOT left to inherit. `text-transform`
+   is an inherited property, but the UA stylesheet declares `text-transform: none`
+   on form controls, and an explicit declaration — even a UA one — beats an
+   inherited value. So setting it on the bar alone left every button unchanged,
+   which is exactly what happened on the first attempt. */
+#site-header,
+#site-header button {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* The help button is a single "?" — uppercasing does nothing to it, but the
+   letter-spacing would push it off-centre inside its circle. */
+.header-help {
+  letter-spacing: normal;
 }
 
 /* On narrow screens the button labels are trimmed to their icons — the emoji
@@ -1297,7 +1326,9 @@ header h1 {
   font-family: inherit;
   font-size: 1.15rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  /* Wider than the rest of the bar: the wordmark carries the uppercase best
+     with a little more air. */
+  letter-spacing: 0.08em;
   background: none;
   border: none;
   color: var(--text);
@@ -1920,6 +1951,7 @@ header h1 {
   flex-wrap: wrap;
 }
 
+.profile-rename-btn,
 .profile-signout-btn,
 .profile-delete-btn {
   font-family: inherit;
@@ -1933,9 +1965,28 @@ header h1 {
   color: var(--text);
 }
 
+.profile-rename-btn:hover,
 .profile-signout-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* In the rename modal this is the primary action, so it is filled there rather
+   than outlined — the same button class, weighted for its context. */
+.modal-body .profile-rename-btn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.modal-body .profile-rename-btn:hover:not(:disabled) {
+  color: #ffffff;
+  filter: brightness(1.08);
+}
+
+.modal-body .profile-rename-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* Destructive action, styled as such — and deliberately not the same shape as
@@ -2503,15 +2554,31 @@ header h1 {
 .score-grade {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   margin: 0 auto 1rem;
-  padding: 0.25rem 0.8rem;
+  padding: 0.3rem 0.9rem;
   border-radius: 999px;
-  border: 1.5px solid currentColor;
-  font-size: 0.8rem;
-  font-weight: 700;
+  /* Filled rather than outlined (owner request: "make the score rarities pop
+     more with better highlighted colors").
+     Each tier supplies three custom properties:
+       --grade-a / --grade-b  the gradient fill, dark enough that the label
+                              clears 4.5:1 against BOTH stops
+       --grade-glow           the same hue at full vividness, used only for the
+                              rim and the outer glow
+     Splitting fill from glow is what makes these pop without going unreadable:
+     a fill bright enough to look neon can't carry white 0.6rem text (that is
+     normal-size text by WCAG, so 4.5:1, not 3:1), but a dark saturated body
+     wearing a neon rim reads as *more* vivid than a washed-out pastel would. */
+  background: linear-gradient(135deg, var(--grade-a) 0%, var(--grade-b) 100%);
+  color: var(--grade-ink, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--grade-glow) 75%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 18%, transparent),
+    0 3px 14px color-mix(in srgb, var(--grade-glow) 40%, transparent);
+  font-size: 0.85rem;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.09em;
   animation: line-in 300ms ease both;
 }
 
@@ -2520,53 +2587,77 @@ header h1 {
 }
 
 .score-grade-emoji {
-  font-size: 0.95rem;
+  font-size: 1rem;
   line-height: 1;
 }
 
-/* Each tier's colour, Busted through ??? (§11k). `currentColor` on the border
-   above means one declaration per tier covers text and outline together. The
-   ramp runs grey → green → warm → gold → violet, so where a run landed is
-   readable at a glance without reading the label. */
+/* --- The nine tiers, ramping grey -> steel -> ember -> green -> blue -> teal ->
+   gold -> violet -> prismatic as the score climbs. Fills are the vivid hue
+   darkened just far enough for 4.6:1 white text (computed, not eyeballed);
+   --grade-glow keeps the undarkened hue so the rim stays neon. ---------------- */
 .score-grade--busted {
-  color: var(--text-muted);
+  --grade-a: #6e6e73;
+  --grade-b: #4a4a4f;
+  --grade-glow: #9a9aa2;
 }
 .score-grade--average {
-  color: #6b7a8f;
+  --grade-a: #687788;
+  --grade-b: #566577;
+  --grade-glow: #9fb2c9;
 }
 .score-grade--hot {
-  color: #cf5a2a;
+  --grade-a: #a8652a;
+  --grade-b: #d1432e;
+  --grade-glow: #ff8a3c;
 }
 .score-grade--blessed {
-  color: #2f8f52;
+  --grade-a: #2f8454;
+  --grade-b: #1f7a4d;
+  --grade-glow: #46e08c;
 }
 .score-grade--highRoller {
-  color: #2477b3;
+  --grade-a: #387ba9;
+  --grade-b: #1f5f9e;
+  --grade-glow: #52b6ff;
 }
 .score-grade--whale {
-  color: #1f6f8f;
+  --grade-a: #228189;
+  --grade-b: #1a6f8f;
+  --grade-glow: #35e0f0;
 }
 .score-grade--casinoLegend {
-  color: #b8860b;
+  /* The only tier that stays bright: gold is the point of it, so it takes dark
+     ink instead of being darkened. */
+  --grade-a: #ffd75e;
+  --grade-b: #e0a11f;
+  --grade-glow: #ffd75e;
+  --grade-ink: #3a2a05;
 }
 .score-grade--impossible {
-  color: #8046c8;
+  --grade-a: #8b62bd;
+  --grade-b: #6b2fb5;
+  --grade-glow: #c68cff;
 }
-/* ??? is the only tier that animates — it needs a Royal Flush AND a multiplier
-   stacked on top, so it should look like something went wrong in a good way. */
+/* ??? needs a Royal Flush AND a multiplier on top of it, so it is the only tier
+   that moves: a slow prismatic sheen sweeping across the fill. */
 .score-grade--unknown {
-  color: #c2417a;
-  border-style: dashed;
-  animation: line-in 300ms ease both, grade-pulse 2.2s ease-in-out infinite;
+  --grade-a: #c3497c;
+  --grade-b: #7b2ff7;
+  --grade-glow: #ff5fa2;
+  background-image: linear-gradient(110deg, #c3497c 0%, #7b2ff7 45%, #1d818f 70%, #c3497c 100%);
+  background-size: 280% 100%;
+  animation: line-in 300ms ease both, grade-sheen 3.2s linear infinite;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 18%, transparent),
+    0 3px 20px color-mix(in srgb, #ff5fa2 55%, transparent);
 }
 
-@keyframes grade-pulse {
-  0%,
-  100% {
-    opacity: 1;
+@keyframes grade-sheen {
+  from {
+    background-position: 0 0;
   }
-  50% {
-    opacity: 0.55;
+  to {
+    background-position: 280% 0;
   }
 }
 
@@ -2576,37 +2667,19 @@ header h1 {
   }
 }
 
-@media (prefers-color-scheme: dark) {
-  .score-grade--average {
-    color: #9aabc0;
-  }
-  .score-grade--hot {
-    color: #f0834f;
-  }
-  .score-grade--blessed {
-    color: #62c78d;
-  }
-  .score-grade--highRoller {
-    color: #63b1e8;
-  }
-  .score-grade--whale {
-    color: #5fc4e0;
-  }
-  .score-grade--casinoLegend {
-    color: #e6b54a;
-  }
-  .score-grade--impossible {
-    color: #b78ce8;
-  }
-  .score-grade--unknown {
-    color: #f083ad;
-  }
-}
-
-/* The compact variant inside a profile history row. */
-.history-grade {
-  font-size: 0.62rem;
-  font-weight: 700;
+/* Compact variants: the profile's history rows and the leaderboard. Same fills
+   as the full badge above, so a grade is recognisably the same thing wherever it
+   appears — just smaller. */
+.history-grade,
+.lb-grade {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--grade-a) 0%, var(--grade-b) 100%);
+  color: var(--grade-ink, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--grade-glow) 60%, transparent);
+  font-size: 0.6rem;
+  font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -2782,4 +2855,39 @@ header h1 {
 
 .friends-profile-link:hover .nameplate-name {
   text-decoration: underline;
+}
+
+/* --- Leaderboard: the winning hand, and the reset countdown (§11l) -------- */
+
+.lb-hand {
+  display: flex;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+  flex: 0 1 auto;
+}
+
+/* Below this the row has no room for a name, five cards and a score side by
+   side, so the hand drops to its own line beneath the name. */
+@media (max-width: 620px) {
+  .lb-row {
+    flex-wrap: wrap;
+  }
+
+  .lb-hand {
+    order: 3;
+    flex-basis: 100%;
+    padding-left: 2.6rem;
+  }
+}
+
+.lb-date {
+  white-space: nowrap;
+}
+
+.next-reset {
+  margin: 0.5rem auto 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }

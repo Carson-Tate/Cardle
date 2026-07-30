@@ -8,6 +8,8 @@
 // core/player-stats.js's comment on why derived beats accumulated here.
 
 import { requireSupabase } from './supabase-client.js';
+// Reused rather than duplicated: one definition of what a legal username is.
+import { isValidUsername } from './auth.js';
 
 // How far back the profile reads. One row per day played, so this is a
 // hard bound on both the query and the derived stats: 400 rows covers over a
@@ -43,11 +45,26 @@ export async function fetchPlayHistory(userId, { limit = HISTORY_LIMIT } = {}) {
  * that's how friend lookup works — so this needs no special permission; reading
  * their RUNS does, which migration 006 grants for completed runs only.
  */
+/**
+ * Every column `ui/nameplate.js` needs to render a player correctly — shared so
+ * the several places that fetch "a profile to draw a name with" cannot drift
+ * apart.
+ *
+ * `admin_unlocks` is the one that is easy to forget and silent when missing, and
+ * it has already caused a bug (§11m). `resolveEquipped` drops a grant-only
+ * custom cosmetic unless the row proves the player was granted it — that check
+ * is what makes re-locking an over-permissive cosmetic actually take effect
+ * (§11h). Fetch a row without this column and the check sees no grants, so the
+ * cosmetic silently vanishes from that one surface while working everywhere
+ * else. Selecting a constant rather than a hand-written list is the fix.
+ */
+export const NAMEPLATE_COLUMNS = 'id, username, equipped_badge, equipped_title, equipped_paint, admin_unlocks';
+
 export async function fetchProfileByUsername(username) {
   const client = await requireSupabase();
   const { data, error } = await client
     .from('profiles')
-    .select('id, username, equipped_badge, equipped_title, equipped_paint, admin_unlocks, created_at')
+    .select(`${NAMEPLATE_COLUMNS}, created_at`)
     .eq('username', username)
     .maybeSingle();
   if (error) throw error;
@@ -71,6 +88,42 @@ export async function saveEquippedCosmetics(userId, { badge = null, title = null
     .update({ equipped_badge: badge, equipped_title: title, equipped_paint: paint })
     .eq('id', userId);
   if (error) throw error;
+}
+
+/**
+ * Renames the signed-in player (owner request: "i also would like the option to
+ * change my name").
+ *
+ * Validation and collision handling deliberately mirror `createProfile` rather
+ * than being reinvented: the same `USERNAME_PATTERN`, and the same treatment of
+ * Postgres 23505. The difference is which constraint can realistically fire
+ * here. On an UPDATE the primary key isn't changing, so a 23505 can only be the
+ * `username` unique index — meaning "taken" is a safe conclusion here, where on
+ * INSERT it was not (see the long note in auth.js's createProfile).
+ *
+ * One extra case worth handling explicitly: renaming to the name you already
+ * have. Postgres would accept that as a no-op update, but reporting it plainly
+ * is better than a silent success that looks like nothing happened.
+ *
+ * @returns {Promise<string>} the saved username, trimmed
+ */
+export async function updateUsername(userId, rawUsername) {
+  const username = String(rawUsername ?? '').trim();
+  if (!isValidUsername(username)) {
+    throw new Error('Usernames must be 3-20 characters: letters, numbers, and underscores only.');
+  }
+
+  const client = await requireSupabase();
+  // Only `username` is written, and RLS restricts updates to `auth.uid() = id`,
+  // so this cannot be repointed at another player's row. The column-level grant
+  // from migration 004 already permits exactly this column.
+  const { error } = await client.from('profiles').update({ username }).eq('id', userId);
+  if (!error) return username;
+
+  if (error.code === '23505') {
+    throw new Error(`"${username}" is already taken — try another.`);
+  }
+  throw error;
 }
 
 /**

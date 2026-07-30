@@ -19,12 +19,17 @@
       <button type="button" id="header-help" class="header-help" aria-label="How to play">?</button>
     </div>
     <div class="site-header-right">
-      <button type="button" id="header-leaderboard-btn" class="header-friends-btn" aria-label="Leaderboards">🏆<span class="header-leaderboard-label"> Ranks</span></button>
-      <div id="header-auth-slot"></div>
+      <!-- Order matters: navigation first, then the player's own nameplate in
+           the RIGHTMOST slot (owner request). The auth slot is last so your name
+           always sits at the far edge whether or not the Friends and Admin
+           buttons are showing — with it in the middle, the position of your own
+           name shifted depending on whether you were an admin. -->
+      <button type="button" id="header-leaderboard-btn" class="header-friends-btn" aria-label="Leaderboards">🏆<span class="header-leaderboard-label"> Leaderboards</span></button>
       <button type="button" id="header-friends-btn" class="header-friends-btn" hidden>Friends</button>
       <!-- Shown only for admins. This is presentation, not access control —
            the database authorizes every admin action (DESIGN.md §11f). -->
       <button type="button" id="header-admin-btn" class="header-admin-btn" aria-label="Admin" hidden>🛠️<span class="header-admin-label"> Admin</span></button>
+      <div id="header-auth-slot"></div>
     </div>
   </header>
   <div id="app">
@@ -32,6 +37,8 @@
       <p id="day-label">Loading today's hand…</p>
       <p id="modifier-banner" class="modifier-banner" hidden></p>
       <p id="anon-hint" class="anon-hint" hidden></p>
+      <!-- Countdown to the next hand (DESIGN.md §11l). Populated by board.js. -->
+      <p id="next-reset" class="next-reset" hidden></p>
     </header>
     <main>
       <button type="button" id="draw-btn" class="draw-btn" hidden>🂠 Draw</button>

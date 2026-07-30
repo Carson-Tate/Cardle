@@ -68,10 +68,20 @@ export async function fetchLeaderboard({ boardId, friendsOnly = false, userId = 
       equipped_badge: row.equipped_badge,
       equipped_title: row.equipped_title,
       equipped_paint: row.equipped_paint,
+      // Required, not decorative: resolveEquipped() hides a grant-only custom
+      // cosmetic unless the row proves the grant (§11h), so without this an
+      // admin-granted badge or title vanished on the boards alone. Defaulted to
+      // [] so a pre-migration-008 response degrades to "no grants" rather than
+      // throwing.
+      admin_unlocks: Array.isArray(row.admin_unlocks) ? row.admin_unlocks : [],
     },
     value: Number(board.career ? row.total_points : row.score),
     playDate: row.play_date ?? null,
     runs: row.runs != null ? Number(row.runs) : null,
+    // The hand they won with (owner request). Only the score boards have one —
+    // a career total isn't a single hand. Comes straight out of the stored
+    // result, so nothing extra is recorded.
+    finalHand: Array.isArray(row.final_hand) ? row.final_hand : null,
   }));
 
   if (friendsOnly) {

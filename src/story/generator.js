@@ -1,6 +1,7 @@
 import { hashSeed, createRng, shuffle, rankLabel, suitGlyph } from '../core/deck.js';
 import { evaluateHand, handStrengthIndex } from '../core/hand-evaluator.js';
 import { FRAGMENTS } from './templates.js';
+import { gameDayFor } from '../core/game-day.js';
 
 // Every function that reads a fragment pool takes `fragments` as its LAST
 // argument, defaulting to the built-in FRAGMENTS. That's how the admin-editable
@@ -27,8 +28,10 @@ const DAILY_POOL_SIZE = 16;
 // UTC calendar day, matching dailySeed()'s convention in deck.js — captions
 // rotate once per real day, in lockstep with the actual daily puzzle, the
 // same for every player that day.
+// Game day (§11l), so the caption vocabulary rotates in lockstep with the hand
+// and the modifier rather than at midnight UTC.
 function isoDay(date) {
-  return date.toISOString().slice(0, 10);
+  return gameDayFor(date);
 }
 
 // Deterministically picks up to DAILY_POOL_SIZE distinct options from

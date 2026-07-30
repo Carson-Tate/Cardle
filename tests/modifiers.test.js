@@ -14,10 +14,22 @@ describe('getDailyModifier', () => {
     assert.deepEqual(a, b);
   });
 
-  test('is the same regardless of time-of-day, only the calendar date matters', () => {
+  // The intent here is "the modifier depends on which DAY it is, not the time
+  // within that day". Both samples must therefore sit inside one GAME day
+  // (DESIGN.md §11l) — the day now rolls at 7pm New York, which in summer is
+  // 23:00 UTC, so the old 23:00 sample was actually the next day's modifier.
+  test('is the same regardless of time-of-day within one game day', () => {
     const morning = getDailyModifier(new Date('2026-08-10T01:00:00Z'));
-    const night = getDailyModifier(new Date('2026-08-10T23:00:00Z'));
-    assert.deepEqual(morning, night);
+    const evening = getDailyModifier(new Date('2026-08-10T22:59:00Z'));
+    assert.deepEqual(morning, evening);
+  });
+
+  test('changes at the 7pm reset, in step with the new hand', () => {
+    const before = getDailyModifier(new Date('2026-08-10T22:59:00Z'));
+    const after = getDailyModifier(new Date('2026-08-10T23:00:00Z'));
+    assert.notDeepEqual(before, after, 'a new game day means a new modifier');
+    const laterSameGameDay = getDailyModifier(new Date('2026-08-11T05:00:00Z'));
+    assert.deepEqual(after, laterSameGameDay, 'and it does not change again at midnight UTC');
   });
 
   test('every day has some active modifier (no "vanilla" day)', () => {

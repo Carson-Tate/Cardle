@@ -14,6 +14,7 @@ import { handStrengthIndex, HAND_RANKS } from './hand-evaluator.js';
 import { PERSONALITIES } from './personality.js';
 import { ACHIEVEMENTS, evaluateAchievements } from './achievements.js';
 import { xpForRun, levelProgress } from './progression.js';
+import { gameDayFor } from './game-day.js';
 
 // Milliseconds in a day, for streak detection over `play_date` values.
 const MS_PER_DAY = 86_400_000;
@@ -182,7 +183,9 @@ function deriveStreaks(entries, today) {
     if (run > longest) longest = run;
   }
 
-  const todayNumber = utcDayNumber(today ?? new Date().toISOString().slice(0, 10));
+  // Defaults to the current GAME day (§11l), so a streak isn't declared lapsed
+  // during the hours where the UTC date has rolled but the game day hasn't.
+  const todayNumber = utcDayNumber(today ?? gameDayFor(new Date()));
   const lastDay = days[days.length - 1];
   const lapsed = todayNumber === null || todayNumber - lastDay > 1;
   return { current: lapsed ? 0 : run, longest };

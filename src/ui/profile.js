@@ -10,12 +10,18 @@
 // how routing works.
 
 import { getSession, signOut, getProfile } from '../state/auth.js';
-import { fetchPlayHistory, deleteOwnAccount, saveEquippedCosmetics, fetchProfileByUsername } from '../state/profile.js';
+import {
+  fetchPlayHistory,
+  deleteOwnAccount,
+  saveEquippedCosmetics,
+  fetchProfileByUsername,
+  updateUsername,
+} from '../state/profile.js';
 import { loadGameConfig } from '../state/game-config.js';
 import { derivePlayerStats, splitAchievements } from '../core/player-stats.js';
 import { resolveCosmetics, resolveEquipped, canEquip, DEFAULT_PAINT_ID } from '../core/cosmetics.js';
 import { nameplateHtml, announceProfileUpdate } from './nameplate.js';
-import { rankLabel, suitGlyph } from '../core/deck.js';
+import { miniCardHtml } from './mini-card.js';
 import { PERSONALITIES } from '../core/personality.js';
 import { HAND_RANKS } from '../core/hand-evaluator.js';
 import { gradeForScore } from '../core/score-grade.js';
@@ -137,7 +143,9 @@ export async function initProfile(root, { username: viewingUsername = null } = {
   }
 
   const stats = derivePlayerStats(history);
-  const username = profile?.username ?? session.user.email ?? 'Player';
+  // `let`, not `const`: renaming updates this in place so the page can re-render
+  // under the new name without a reload.
+  let username = profile?.username ?? session.user.email ?? 'Player';
   let shownHands = HANDS_PER_PAGE;
 
   // Equipped cosmetics, held as ids so the pickers and the live nameplate
@@ -165,12 +173,19 @@ export async function initProfile(root, { username: viewingUsername = null } = {
 
   // The shape nameplateHtml expects, rebuilt from the current selection so the
   // header preview updates the instant a picker changes.
+  //
+  // `admin_unlocks` has to be carried through. It isn't decorative: a grant-only
+  // custom cosmetic is deliberately dropped by resolveEquipped() unless the row
+  // proves the player holds the grant (§11h). Omitting it here is exactly the
+  // bug the owner hit — an admin-granted title equipped fine and then rendered
+  // as nothing, on the very page you equip it from.
   function equippedRow() {
     return {
       username,
       equipped_badge: equipped.badge,
       equipped_title: equipped.title,
       equipped_paint: equipped.paint,
+      admin_unlocks: profile?.admin_unlocks ?? [],
     };
   }
 
@@ -221,6 +236,7 @@ export async function initProfile(root, { username: viewingUsername = null } = {
             ? `<section class="profile-section profile-danger">
           <h3 class="profile-section-title">Account</h3>
           <div class="profile-account-actions">
+            <button type="button" class="profile-rename-btn" id="profile-rename">Change Name</button>
             <button type="button" class="profile-signout-btn" id="profile-signout">Sign Out</button>
             <button type="button" class="profile-delete-btn" id="profile-delete">Delete Account</button>
           </div>
@@ -252,6 +268,7 @@ export async function initProfile(root, { username: viewingUsername = null } = {
       }
     });
 
+    root.querySelector('#profile-rename')?.addEventListener('click', confirmRename);
     root.querySelector('#profile-delete')?.addEventListener('click', confirmDelete);
     if (canEdit) wireCustomizePickers();
   }
@@ -356,6 +373,72 @@ export async function initProfile(root, { username: viewingUsername = null } = {
           .join('')}
       </div>
     `;
+  }
+
+  // Changing your username (owner request: "i also would like the option to
+  // change my name").
+  //
+  // Deliberately NOT a destructive-style confirm like delete: renaming is
+  // reversible, so it just needs a field and a save. It does two things worth
+  // noting:
+  //
+  //  - It re-renders in place and announces the change, rather than reloading.
+  //    Every surface that shows your name reads it from the same row, so the
+  //    profile heading, the delete-confirmation prompt and the site header all
+  //    need to agree afterwards — PROFILE_UPDATED_EVENT is the existing channel
+  //    for exactly that (see nameplate.js).
+  //  - The name is validated client-side for immediate feedback, but the
+  //    database's unique index is what actually decides "taken" — state/profile.js
+  //    turns that into a message shown here verbatim.
+  function confirmRename() {
+    openModal({
+      title: 'Change Name',
+      render: (body, close) => {
+        body.innerHTML = `
+          <p>Pick a new username. 3-20 characters: letters, numbers and underscores.</p>
+          <form class="login-form" id="rename-form">
+            <input type="text" id="rename-input" autocomplete="off" maxlength="20"
+              value="${escapeHtml(username)}" required />
+            <button type="submit" class="profile-rename-btn" id="rename-submit">Save Name</button>
+          </form>
+          <p class="login-status" id="rename-status" hidden></p>
+        `;
+        const input = body.querySelector('#rename-input');
+        const submit = body.querySelector('#rename-submit');
+        const status = body.querySelector('#rename-status');
+        input.focus();
+        input.select();
+
+        const fail = (message) => {
+          status.hidden = false;
+          status.textContent = message;
+          submit.disabled = false;
+          input.disabled = false;
+        };
+
+        body.querySelector('#rename-form').addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const next = input.value.trim();
+          // Saying "that's already your name" beats a silent no-op that looks
+          // like the save failed.
+          if (next === username) return fail('That is already your name.');
+          submit.disabled = true;
+          input.disabled = true;
+          status.hidden = true;
+          try {
+            const saved = await updateUsername(userId, next);
+            username = saved;
+            if (profile) profile.username = saved;
+            // Keeps the site header's nameplate in step without a reload.
+            announceProfileUpdate({ ...(profile ?? {}), username: saved });
+            close();
+            render();
+          } catch (error) {
+            fail(error.message ?? String(error));
+          }
+        });
+      },
+    });
   }
 
   // Deleting an account is irreversible and takes every stored run with it, so
@@ -487,20 +570,6 @@ function handRowHtml({ playDate, result }) {
       </div>
     </li>
   `;
-}
-
-// A read-only miniature of a card. Rarity gets a ring so a run that pulled
-// something rare is visible at a glance in the history list.
-function miniCardHtml(card) {
-  if (!card || typeof card !== 'object') return '';
-  const red = card.suit === 'H' || card.suit === 'D';
-  const rarity = card.rarity ? ` history-card--${escapeHtml(card.rarity)}` : '';
-  if (card.rarity === 'joker') {
-    return `<span class="history-card history-card--wild${rarity}" title="Wild">🃏</span>`;
-  }
-  return `<span class="history-card${red ? ' history-card--red' : ''}${rarity}">${escapeHtml(
-    rankLabel(card.rank),
-  )}${escapeHtml(suitGlyph(card.suit) ?? '')}</span>`;
 }
 
 function achievementsHtml(stats) {

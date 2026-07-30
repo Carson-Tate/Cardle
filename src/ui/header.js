@@ -11,6 +11,7 @@ import { getSession, onAuthStateChange, signInWithMagicLink, getProfile, createP
 import { sendFriendRequest, getPendingRequests, getSentRequests, getFriends, acceptFriendRequest, removeFriendship } from '../state/friends.js';
 import { isSupabaseConfigured } from '../state/supabase-client.js';
 import { isCurrentUserAdmin } from '../state/admin.js';
+import { loadGameConfig } from '../state/game-config.js';
 
 // Escapes text destined for an innerHTML template. Every value interpolated
 // below that did NOT originate in this file gets run through this — usernames
@@ -57,6 +58,22 @@ export function initHeader(root) {
   // A placeholder of the same size also stops the header jumping when the real
   // nameplate lands.
   let sessionResolved = false;
+
+  // Admin-authored cosmetics live in the server config, not in the built-in
+  // registries, so a nameplate cannot resolve one without this. It is fetched
+  // once (loadGameConfig caches per page load) and the header re-renders when it
+  // arrives — the header must paint immediately, so it cannot await this first.
+  // Owner bug report: a granted title "doesnt show on my name".
+  let customCosmetics = null;
+
+  loadGameConfig()
+    .then((config) => {
+      customCosmetics = config?.customCosmetics ?? null;
+      renderAuthSlot();
+    })
+    // loadGameConfig already resolves to defaults rather than rejecting, so this
+    // only guards against an unexpected throw; built-in cosmetics still render.
+    .catch(() => {});
 
   // Which user id (if any) currently has a username-prompt modal open —
   // owner bug report: "when someone successfully logs in for the first
@@ -132,7 +149,9 @@ export function initHeader(root) {
     // Felt" would crowd it -- see ui/nameplate.js.
     const label = currentProfile?.username ?? '…';
     authSlot.innerHTML = `<button type="button" class="header-user-btn">${
-      currentProfile ? nameplateHtml(currentProfile, { variant: 'compact', fallbackName: label }) : `👤 ${escapeHtml(label)}`
+      currentProfile
+        ? nameplateHtml(currentProfile, { variant: 'compact', fallbackName: label, custom: customCosmetics })
+        : `👤 ${escapeHtml(label)}`
     }</button>`;
     // Owner request: clicking your own username goes to the profile page,
     // which is now where signing out and deleting the account live — so this
@@ -191,7 +210,10 @@ export function initHeader(root) {
   // cosmetic — see nameplate.js's PROFILE_UPDATED_EVENT comment.
   window.addEventListener(PROFILE_UPDATED_EVENT, (event) => {
     if (!event.detail) return;
-    currentProfile = event.detail;
+    // MERGED, not replaced. Callers announce a partial row — the cosmetics
+    // preview sends just the nameplate fields — so assigning it wholesale would
+    // drop everything else the header holds about the player.
+    currentProfile = { ...currentProfile, ...event.detail };
     renderAuthSlot();
   });
 
@@ -325,7 +347,7 @@ export function initHeader(root) {
                  .map(
                    (r) => `
                  <li class="friends-list-item">
-                   <span>${r.requesterUsername ? `<a class="friends-profile-link" href="/?profile=${encodeURIComponent(r.requesterUsername)}">${r.requesterProfile ? nameplateHtml(r.requesterProfile) : escapeHtml(r.requesterUsername)}</a>` : 'Unknown'}</span>
+                   <span>${r.requesterUsername ? `<a class="friends-profile-link" href="/?profile=${encodeURIComponent(r.requesterUsername)}">${r.requesterProfile ? nameplateHtml(r.requesterProfile, { custom: customCosmetics }) : escapeHtml(r.requesterUsername)}</a>` : 'Unknown'}</span>
                    <button type="button" class="friend-accept-btn" data-id="${r.id}">Accept</button>
                    <button type="button" class="friend-decline-btn" data-id="${r.id}">Decline</button>
                  </li>`,
@@ -342,7 +364,7 @@ export function initHeader(root) {
                  .map(
                    (r) => `
                  <li class="friends-list-item">
-                   <span>${r.addresseeUsername ? `<a class="friends-profile-link" href="/?profile=${encodeURIComponent(r.addresseeUsername)}">${r.addresseeProfile ? nameplateHtml(r.addresseeProfile) : escapeHtml(r.addresseeUsername)}</a>` : 'Unknown'}</span>
+                   <span>${r.addresseeUsername ? `<a class="friends-profile-link" href="/?profile=${encodeURIComponent(r.addresseeUsername)}">${r.addresseeProfile ? nameplateHtml(r.addresseeProfile, { custom: customCosmetics }) : escapeHtml(r.addresseeUsername)}</a>` : 'Unknown'}</span>
                    <span class="friends-pending-tag">Pending</span>
                    <button type="button" class="friend-cancel-btn" data-id="${escapeHtml(r.id)}">Cancel</button>
                  </li>`,
@@ -360,7 +382,7 @@ export function initHeader(root) {
                 .map(
                   (f) => `
                 <li class="friends-list-item">
-                  <span>${f.friendUsername ? `<a class="friends-profile-link" href="/?profile=${encodeURIComponent(f.friendUsername)}">${f.friendProfile ? nameplateHtml(f.friendProfile) : escapeHtml(f.friendUsername)}</a>` : 'Unknown'}</span>
+                  <span>${f.friendUsername ? `<a class="friends-profile-link" href="/?profile=${encodeURIComponent(f.friendUsername)}">${f.friendProfile ? nameplateHtml(f.friendProfile, { custom: customCosmetics }) : escapeHtml(f.friendUsername)}</a>` : 'Unknown'}</span>
                   <button type="button" class="friend-remove-btn" data-id="${f.id}">Remove</button>
                 </li>`,
                 )

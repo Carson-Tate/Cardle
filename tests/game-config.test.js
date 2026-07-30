@@ -416,6 +416,33 @@ describe('availability modes', () => {
     assert.equal(resolveEquipped(row, custom).paint.id, 'paint_default');
   });
 
+  // The bug the owner hit (§11m): the cosmetic and the grant were both correct,
+  // but the row handed to resolveEquipped had been rebuilt without
+  // `admin_unlocks`, so the grant check saw nothing and the title rendered as
+  // nothing. Pinned here because the failure is silent and looks like the
+  // cosmetic itself is broken.
+  test('a row REBUILT without admin_unlocks loses a granted cosmetic (the §11m trap)', () => {
+    const custom = title('grant');
+    const granted = { username: 'car', equipped_title: 'title_owner', admin_unlocks: ['title_owner'] };
+    assert.equal(resolveEquipped(granted, custom).title?.id, 'title_owner', 'with the grant list it renders');
+
+    // Exactly the same player, via a row that forgot the column.
+    const { admin_unlocks, ...withoutGrantList } = granted;
+    assert.equal(
+      resolveEquipped(withoutGrantList, custom).title,
+      null,
+      'without it the cosmetic silently disappears — hence state/profile.js NAMEPLATE_COLUMNS',
+    );
+  });
+
+  test('a granted cosmetic still needs the custom registry to resolve', () => {
+    const granted = { username: 'car', equipped_title: 'title_owner', admin_unlocks: ['title_owner'] };
+    // The second half of the same bug: header.js was passing no `custom` at all,
+    // so an admin-authored title was not in the registry to be found.
+    assert.equal(resolveEquipped(granted, null).title, null, 'no registry, nothing to resolve');
+    assert.equal(resolveEquipped(granted, title('grant')).title?.id, 'title_owner');
+  });
+
   test('built-in cosmetics are never hidden and ignore availability', () => {
     const resolved = resolveCosmetics({ level: 1, achievementsUnlocked: [] });
     for (const kind of ['badges', 'titles', 'paints']) {

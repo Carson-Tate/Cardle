@@ -21,9 +21,18 @@ import {
   adminDeletePlayer,
 } from '../state/admin.js';
 import { derivePlayerStats } from '../core/player-stats.js';
-import { resolveCosmetics, resolveEquipped, BADGES, TITLES, NAME_PAINTS, DEFAULT_PAINT_ID } from '../core/cosmetics.js';
+import { resolveCosmetics, resolveEquipped, DEFAULT_PAINT_ID } from '../core/cosmetics.js';
 import { nameplateHtml } from './nameplate.js';
-import { getDailyModifier } from '../core/modifiers.js';
+import { getDailyModifier, MODIFIERS } from '../core/modifiers.js';
+import {
+  CONFIG_KEYS,
+  validateModifierOverrides,
+  validateWordBank,
+  validateCustomCosmetics,
+  wordBankSlots,
+  modifierOverrideFor,
+} from '../core/game-config.js';
+import { loadGameConfig, adminSetConfig, adminClearConfig } from '../state/game-config.js';
 import { dayNumber } from '../state/persistence.js';
 import { openModal } from './modal.js';
 
@@ -68,9 +77,52 @@ export async function initAdmin(root) {
   let selected = null; // { profile, history, claimedDays, stats }
   let searchTerm = '';
   let notice = null;
+  let gameConfig = null;
 
-  await Promise.all([loadOverview(), runSearch('')]);
+  await Promise.all([loadOverview(), runSearch(''), loadConfig()]);
   render();
+
+  async function loadConfig() {
+    try {
+      // The VALIDATED config, deliberately -- not the raw stored rows. The
+      // editors must show what the game is actually honouring, so a stored value
+      // that failed validation appears as the default it fell back to rather
+      // than as text the game is silently ignoring.
+      gameConfig = await loadGameConfig({ force: true });
+    } catch (error) {
+      notice = { kind: 'error', text: `Couldn't load game config: ${error.message ?? error}` };
+    }
+  }
+
+  // Saves a config key after validating it here first, so an invalid value is
+  // refused before it can reach a table every player's client reads.
+  async function saveConfig(key, value, validate, successMessage) {
+    const { errors } = validate(value);
+    if (errors.length > 0) {
+      notice = { kind: 'error', text: errors.join(' · ') };
+      render();
+      return;
+    }
+    try {
+      await adminSetConfig(key, value);
+      await loadConfig();
+      notice = { kind: 'ok', text: successMessage };
+    } catch (error) {
+      notice = { kind: 'error', text: `${error.message ?? error}` };
+    }
+    render();
+  }
+
+  async function clearConfig(key, successMessage) {
+    try {
+      await adminClearConfig(key);
+      await loadConfig();
+      notice = { kind: 'ok', text: successMessage };
+    } catch (error) {
+      notice = { kind: 'error', text: `${error.message ?? error}` };
+    }
+    render();
+  }
 
   async function loadOverview() {
     try {
@@ -131,6 +183,8 @@ export async function initAdmin(root) {
         ${notice ? `<p class="admin-notice admin-notice--${notice.kind}">${escapeHtml(notice.text)}</p>` : ''}
         ${overviewHtml()}
         ${modifierHtml()}
+        ${wordBankHtml()}
+        ${customCosmeticsHtml()}
         ${searchHtml()}
         ${selected ? playerHtml() : ''}
       </div>
@@ -168,36 +222,189 @@ export async function initAdmin(root) {
     )}</span></div>`;
   }
 
-  // Read-only for now: the modifier is a pure function of the date
-  // (core/modifiers.js) with no server-side config to override, so showing the
-  // schedule is honest while "change it" is not yet possible. Overriding it is
-  // pass 2 — see §11f.
+  // Editable now that `game_config` exists (§11g). Each of the next 14 days
+  // shows its computed modifier and lets an admin pin a different one; the
+  // override is stored per ISO date, so it applies to that specific day rather
+  // than shifting the whole rotation.
   function modifierHtml() {
+    const overrides = gameConfig?.modifierOverrides ?? {};
     const days = [];
-    for (let offset = 0; offset < 7; offset++) {
+    for (let offset = 0; offset < 14; offset++) {
       const date = new Date(Date.now() + offset * 86_400_000);
-      const modifier = getDailyModifier(date);
-      days.push({ date, modifier, offset });
+      const iso = date.toISOString().slice(0, 10);
+      const overrideId = modifierOverrideFor(overrides, date);
+      days.push({ date, iso, offset, overrideId, effective: getDailyModifier(date, overrideId) });
     }
+    const overrideCount = Object.keys(overrides).length;
+
     return `
       <section class="profile-section">
-        <h3 class="profile-section-title">Daily Modifier Schedule</h3>
+        <h3 class="profile-section-title">
+          Daily Modifier Schedule ${overrideCount > 0 ? `<span class="profile-count">${overrideCount} overridden</span>` : ''}
+        </h3>
         <ul class="admin-schedule">
           ${days
             .map(
               (d) => `
-            <li class="admin-schedule-row${d.offset === 0 ? ' admin-schedule-row--today' : ''}">
-              <span class="admin-schedule-day">${d.offset === 0 ? 'Today' : d.offset === 1 ? 'Tomorrow' : `+${d.offset}d`}
-                <small>Cardle #${dayNumber(d.date)}</small></span>
-              <span class="admin-schedule-mod">${escapeHtml(d.modifier.emoji)} ${escapeHtml(d.modifier.label)}</span>
+            <li class="admin-schedule-row${d.offset === 0 ? ' admin-schedule-row--today' : ''}${
+                d.overrideId ? ' admin-schedule-row--overridden' : ''
+              }">
+              <span class="admin-schedule-day">
+                ${d.offset === 0 ? 'Today' : d.offset === 1 ? 'Tomorrow' : `+${d.offset}d`}
+                <small>${escapeHtml(d.iso)} · Cardle #${dayNumber(d.date)}</small>
+              </span>
+              <span class="admin-schedule-mod">
+                <select data-modifier-day="${escapeHtml(d.iso)}">
+                  <option value=""${d.overrideId ? '' : ' selected'}>— rotation —</option>
+                  ${MODIFIERS.map(
+                    (m) =>
+                      `<option value="${escapeHtml(m.id)}"${m.id === d.overrideId ? ' selected' : ''}>${escapeHtml(
+                        `${m.emoji} ${m.label}`,
+                      )}</option>`,
+                  ).join('')}
+                </select>
+                <small>${escapeHtml(`${d.effective.emoji} ${d.effective.label}`)}${d.overrideId ? ' (pinned)' : ''}</small>
+              </span>
             </li>`,
             )
             .join('')}
         </ul>
+        <div class="admin-search">
+          <button type="button" class="admin-action-btn" id="admin-save-modifiers">Save Schedule</button>
+          <button type="button" class="admin-action-btn" id="admin-clear-modifiers">Clear All Overrides</button>
+        </div>
         <p class="admin-hint">
-          Read-only. The modifier is currently computed from the date with no
-          server-side override, so there is nothing to edit yet — making it
-          changeable (and editing the poem word bank) is the next pass.
+          A pinned day replaces the rotation for that date only. Players pick up
+          the change on their next page load, and it is applied before any hand
+          is dealt — but a player who already locked in today keeps the hand they
+          played.
+        </p>
+      </section>
+    `;
+  }
+
+  // The poem word bank (§6c). Edited as one phrase per line, which matches how
+  // the fragments read and avoids inventing a JSON editor for what is really
+  // just six lists of short strings. Saving is PARTIAL: a slot left identical to
+  // its built-in default is not stored, so future built-in additions still reach
+  // players for the slots the admin never touched.
+  function wordBankHtml() {
+    const stored = gameConfig?.wordBank ?? {};
+    const slots = wordBankSlots();
+    const storedFor = (slot) => {
+      if (slot === 'ending.good') return stored.ending?.good;
+      if (slot === 'ending.bad') return stored.ending?.bad;
+      return stored[slot];
+    };
+    const overriddenCount = slots.filter((s) => storedFor(s.slot)).length;
+
+    return `
+      <section class="profile-section">
+        <h3 class="profile-section-title">
+          Poem Word Bank ${overriddenCount > 0 ? `<span class="profile-count">${overriddenCount} customised</span>` : ''}
+        </h3>
+        <div class="admin-wordbank">
+          ${slots
+            .map((slot) => {
+              const current = storedFor(slot.slot) ?? slot.defaults;
+              const isOverridden = Boolean(storedFor(slot.slot));
+              return `
+              <label class="admin-wordbank-field">
+                <span class="stat-tile-label">
+                  ${escapeHtml(slot.label)}
+                  ${isOverridden ? '<em class="admin-wordbank-flag">customised</em>' : ''}
+                </span>
+                <textarea data-wordbank="${escapeHtml(slot.slot)}" rows="6"
+                  spellcheck="false">${escapeHtml(current.join('\n'))}</textarea>
+              </label>`;
+            })
+            .join('')}
+        </div>
+        <div class="admin-search">
+          <button type="button" class="admin-action-btn" id="admin-save-wordbank">Save Word Bank</button>
+          <button type="button" class="admin-action-btn" id="admin-reset-wordbank">Reset to Built-ins</button>
+        </div>
+        <p class="admin-hint">
+          One phrase per line. Phrases must not contain a period — the caption is
+          assembled as a single sentence, so an internal period would break it.
+          Blank lines and duplicates are dropped automatically.
+        </p>
+      </section>
+    `;
+  }
+
+  // Authoring brand-new cosmetics. Titles and paints unlock by level like the
+  // built-ins; a custom BADGE has no achievement behind it, so it can only be
+  // handed out with an admin grant — stated in the hint rather than showing an
+  // unreachable requirement.
+  function customCosmeticsHtml() {
+    const custom = gameConfig?.customCosmetics ?? { badges: [], titles: [], paints: [] };
+    const rows = [
+      ...custom.badges.map((b) => ({ kind: 'badge', ...b })),
+      ...custom.titles.map((t) => ({ kind: 'title', ...t })),
+      ...custom.paints.map((p) => ({ kind: 'paint', ...p })),
+    ];
+    return `
+      <section class="profile-section">
+        <h3 class="profile-section-title">
+          Custom Cosmetics ${rows.length > 0 ? `<span class="profile-count">${rows.length}</span>` : ''}
+        </h3>
+        ${
+          rows.length === 0
+            ? '<p class="profile-empty-note">None yet.</p>'
+            : `<ul class="admin-results">
+                ${rows
+                  .map(
+                    (r) => `
+                  <li class="admin-result-row">
+                    <span class="admin-tag">${escapeHtml(r.kind.toUpperCase())}</span>
+                    <span class="admin-result-name">
+                      ${r.kind === 'paint' ? `<span style="color: ${escapeHtml(r.color)}">${escapeHtml(r.label)}</span>` : escapeHtml(`${r.emoji ?? ''} ${r.label}`)}
+                      <small>${escapeHtml(r.id)}${r.kind === 'badge' ? ' · grant only' : ` · level ${r.level}`}</small>
+                    </span>
+                    <button type="button" class="admin-select-btn" data-remove-cosmetic="${escapeHtml(r.id)}">Remove</button>
+                  </li>`,
+                  )
+                  .join('')}
+              </ul>`
+        }
+        <h4 class="profile-subheading">Add one</h4>
+        <div class="admin-equip-grid">
+          <label class="admin-equip-field">
+            <span class="stat-tile-label">Kind</span>
+            <select id="new-cosmetic-kind">
+              <option value="title">Title</option>
+              <option value="paint">Name Paint</option>
+              <option value="badge">Badge</option>
+            </select>
+          </label>
+          <label class="admin-equip-field">
+            <span class="stat-tile-label">Id</span>
+            <input type="text" id="new-cosmetic-id" placeholder="title_beta" autocomplete="off" />
+          </label>
+          <label class="admin-equip-field">
+            <span class="stat-tile-label">Label</span>
+            <input type="text" id="new-cosmetic-label" placeholder="Beta Tester" autocomplete="off" />
+          </label>
+          <label class="admin-equip-field">
+            <span class="stat-tile-label">Level (title/paint)</span>
+            <input type="number" id="new-cosmetic-level" min="1" value="1" />
+          </label>
+          <label class="admin-equip-field">
+            <span class="stat-tile-label">Colour (paint)</span>
+            <input type="color" id="new-cosmetic-color" value="#c0392b" />
+          </label>
+          <label class="admin-equip-field">
+            <span class="stat-tile-label">Emoji (badge)</span>
+            <input type="text" id="new-cosmetic-emoji" placeholder="🏅" autocomplete="off" />
+          </label>
+        </div>
+        <button type="button" class="admin-action-btn" id="admin-add-cosmetic">Add Cosmetic</button>
+        <p class="admin-hint">
+          Custom paints are a solid colour only — gradients and animation need real
+          CSS, which cannot be authored safely at runtime, so those stay code-only.
+          A custom badge has no achievement behind it, so hand it out with a grant
+          in the player panel below.
         </p>
       </section>
     `;
@@ -219,7 +426,7 @@ export async function initAdmin(root) {
                   .map(
                     (p) => `
                   <li class="admin-result-row">
-                    <span class="admin-result-name">${nameplateHtml(p)}</span>
+                    <span class="admin-result-name">${nameplateHtml(p, { custom: gameConfig?.customCosmetics ?? null })}</span>
                     ${p.is_admin ? '<span class="admin-tag">ADMIN</span>' : ''}
                     <button type="button" class="admin-select-btn" data-id="${escapeHtml(p.id)}">Manage</button>
                   </li>`,
@@ -234,18 +441,20 @@ export async function initAdmin(root) {
   function playerHtml() {
     const { profile, stats, claimedDays } = selected;
     if (!profile) return '';
-    const equipped = resolveEquipped(profile);
+    const custom = gameConfig?.customCosmetics ?? null;
+    const equipped = resolveEquipped(profile, custom);
     const granted = new Set(profile.admin_unlocks ?? []);
     const cosmetics = resolveCosmetics({
       level: stats.level,
       achievementsUnlocked: stats.achievementsUnlocked,
       adminUnlocks: profile.admin_unlocks ?? [],
+      custom,
     });
 
     return `
       <section class="profile-section admin-player">
         <h3 class="profile-section-title">Managing ${escapeHtml(profile.username ?? profile.id)}</h3>
-        <div class="customize-preview">${nameplateHtml(profile)}</div>
+        <div class="customize-preview">${nameplateHtml(profile, { custom })}</div>
 
         <div class="stat-grid">
           ${tile('Level', stats.level)}
@@ -258,9 +467,9 @@ export async function initAdmin(root) {
 
         <h4 class="profile-subheading">Equipped</h4>
         <div class="admin-equip-grid">
-          ${equipSelect('Badge', 'badge', BADGES, equipped.badge?.id ?? '')}
-          ${equipSelect('Title', 'title', TITLES, equipped.title?.id ?? '')}
-          ${equipSelect('Paint', 'paint', NAME_PAINTS, equipped.paint?.id ?? DEFAULT_PAINT_ID)}
+          ${equipSelect('Badge', 'badge', cosmetics.badges, equipped.badge?.id ?? '')}
+          ${equipSelect('Title', 'title', cosmetics.titles, equipped.title?.id ?? '')}
+          ${equipSelect('Paint', 'paint', cosmetics.paints, equipped.paint?.id ?? DEFAULT_PAINT_ID)}
         </div>
         <button type="button" class="admin-action-btn" id="admin-save-equipped">Save Equipped</button>
 
@@ -376,6 +585,76 @@ export async function initAdmin(root) {
     });
 
     root.querySelector('#admin-delete-player')?.addEventListener('click', () => confirmDeletePlayer());
+
+    root.querySelector('#admin-save-modifiers')?.addEventListener('click', () => {
+      const overrides = {};
+      root.querySelectorAll('[data-modifier-day]').forEach((select) => {
+        if (select.value) overrides[select.dataset.modifierDay] = select.value;
+      });
+      saveConfig(CONFIG_KEYS.MODIFIER_OVERRIDES, overrides, validateModifierOverrides, 'Modifier schedule saved.');
+    });
+
+    root.querySelector('#admin-clear-modifiers')?.addEventListener('click', () => {
+      clearConfig(CONFIG_KEYS.MODIFIER_OVERRIDES, 'All modifier overrides cleared.');
+    });
+
+    root.querySelector('#admin-save-wordbank')?.addEventListener('click', () => {
+      const bank = {};
+      root.querySelectorAll('[data-wordbank]').forEach((area) => {
+        const slot = area.dataset.wordbank;
+        const lines = area.value.split('\n').map((l) => l.trim()).filter(Boolean);
+        if (lines.length === 0) return;
+        // Only store a slot that actually differs from its built-in default, so
+        // untouched slots keep receiving future built-in additions.
+        const builtIn = wordBankSlots().find((s) => s.slot === slot)?.defaults ?? [];
+        if (lines.length === builtIn.length && lines.every((l, i) => l === builtIn[i])) return;
+        if (slot === 'ending.good' || slot === 'ending.bad') {
+          bank.ending = bank.ending ?? {};
+          bank.ending[slot === 'ending.good' ? 'good' : 'bad'] = lines;
+        } else {
+          bank[slot] = lines;
+        }
+      });
+      saveConfig(CONFIG_KEYS.WORD_BANK, bank, validateWordBank, 'Word bank saved.');
+    });
+
+    root.querySelector('#admin-reset-wordbank')?.addEventListener('click', () => {
+      clearConfig(CONFIG_KEYS.WORD_BANK, 'Word bank reset to built-ins.');
+    });
+
+    root.querySelector('#admin-add-cosmetic')?.addEventListener('click', () => {
+      const kind = root.querySelector('#new-cosmetic-kind').value;
+      const id = root.querySelector('#new-cosmetic-id').value.trim();
+      const label = root.querySelector('#new-cosmetic-label').value.trim();
+      const level = Number(root.querySelector('#new-cosmetic-level').value);
+      const color = root.querySelector('#new-cosmetic-color').value;
+      const emoji = root.querySelector('#new-cosmetic-emoji').value.trim();
+
+      const current = gameConfig?.customCosmetics ?? { badges: [], titles: [], paints: [] };
+      const next = {
+        badges: [...current.badges],
+        titles: [...current.titles],
+        paints: [...current.paints],
+      };
+      if (kind === 'badge') next.badges.push({ id, label, emoji });
+      else if (kind === 'title') next.titles.push({ id, label, level });
+      else next.paints.push({ id, label, level, color });
+
+      saveConfig(CONFIG_KEYS.CUSTOM_COSMETICS, next, validateCustomCosmetics, `Added ${kind} "${label}".`);
+    });
+
+    root.querySelectorAll('[data-remove-cosmetic]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.removeCosmetic;
+        const current = gameConfig?.customCosmetics ?? { badges: [], titles: [], paints: [] };
+        const next = {
+          badges: current.badges.filter((c) => c.id !== id),
+          titles: current.titles.filter((c) => c.id !== id),
+          paints: current.paints.filter((c) => c.id !== id),
+        };
+        saveConfig(CONFIG_KEYS.CUSTOM_COSMETICS, next, validateCustomCosmetics, `Removed "${id}".`);
+      });
+    });
   }
 
   function confirmDeletePlayer() {

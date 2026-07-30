@@ -63,11 +63,33 @@ export const NAME_PAINTS = [
   { id: 'paint_jackpot', label: 'Jackpot', level: 25 },
 ];
 
-const BADGE_BY_ID = new Map(BADGES.map((b) => [b.id, b]));
-const TITLE_BY_ID = new Map(TITLES.map((t) => [t.id, t]));
-const PAINT_BY_ID = new Map(NAME_PAINTS.map((p) => [p.id, p]));
-
 export const DEFAULT_PAINT_ID = 'paint_default';
+
+// Admin-authored cosmetics (DESIGN.md §11g) are APPENDED to the built-ins
+// rather than replacing them, so a custom title can never shadow or remove a
+// real one. `custom` is passed in by the caller (which fetched it from
+// game_config and validated it via core/game-config.js) — this module still
+// never touches the network.
+//
+// A custom paint carries a plain hex `color` instead of a CSS class, because a
+// class cannot be authored at runtime. That's why validateCustomCosmetics()
+// enforces a strict 6-digit hex: it's applied as an inline `color`, and a
+// nameplate renders in OTHER players' browsers, so anything looser would be a
+// CSS-injection vector.
+function withCustom(base, customList) {
+  if (!Array.isArray(customList) || customList.length === 0) return base;
+  const existing = new Set(base.map((entry) => entry.id));
+  return [...base, ...customList.filter((entry) => entry && !existing.has(entry.id))];
+}
+
+/** The effective registries for a given custom-cosmetics config. */
+export function effectiveRegistries(custom = null) {
+  return {
+    badges: withCustom(BADGES, custom?.badges),
+    titles: withCustom(TITLES, custom?.titles),
+    paints: withCustom(NAME_PAINTS, custom?.paints),
+  };
+}
 
 /**
  * Splits every cosmetic into unlocked/locked for a given player, with a
@@ -83,10 +105,11 @@ export const DEFAULT_PAINT_ID = 'paint_default';
  *
  * @param {{level?: number, achievementsUnlocked?: string[], adminUnlocks?: string[]}} player
  */
-export function resolveCosmetics({ level = 1, achievementsUnlocked = [], adminUnlocks = [] } = {}) {
+export function resolveCosmetics({ level = 1, achievementsUnlocked = [], adminUnlocks = [], custom = null } = {}) {
   const earned = new Set(achievementsUnlocked ?? []);
   const granted = new Set(adminUnlocks ?? []);
   const safeLevel = Number.isFinite(level) ? level : 1;
+  const { badges, titles, paints } = effectiveRegistries(custom);
 
   const mark = (entry, earnedNormally, requirementText) => ({
     ...entry,
@@ -96,9 +119,18 @@ export function resolveCosmetics({ level = 1, achievementsUnlocked = [], adminUn
   });
 
   return {
-    badges: BADGES.map((badge) => mark(badge, earned.has(badge.achievementId), `Achievement: ${badge.label}`)),
-    titles: TITLES.map((title) => mark(title, safeLevel >= title.level, `Reach level ${title.level}`)),
-    paints: NAME_PAINTS.map((paint) =>
+    // A custom badge has no achievement behind it, so it can only ever arrive
+    // via an admin grant — said plainly rather than showing an unreachable
+    // requirement.
+    badges: badges.map((badge) =>
+      mark(
+        badge,
+        Boolean(badge.achievementId) && earned.has(badge.achievementId),
+        badge.grantOnly ? 'Granted by an admin only' : `Achievement: ${badge.label}`,
+      ),
+    ),
+    titles: titles.map((title) => mark(title, safeLevel >= title.level, `Reach level ${title.level}`)),
+    paints: paints.map((paint) =>
       mark(paint, safeLevel >= paint.level, paint.level <= 1 ? 'Available from the start' : `Reach level ${paint.level}`),
     ),
   };
@@ -120,11 +152,15 @@ export function resolveCosmeticsForXp(totalXp, achievementsUnlocked) {
  * registry above simply doesn't render. See §11e on why unlock ENFORCEMENT is
  * client-side while id VALIDITY is enforced here and in the schema.
  */
-export function resolveEquipped(profileRow) {
-  const badge = BADGE_BY_ID.get(profileRow?.equipped_badge) ?? null;
-  const title = TITLE_BY_ID.get(profileRow?.equipped_title) ?? null;
-  const paint = PAINT_BY_ID.get(profileRow?.equipped_paint) ?? PAINT_BY_ID.get(DEFAULT_PAINT_ID);
-  return { badge, title, paint };
+export function resolveEquipped(profileRow, custom = null) {
+  const { badges, titles, paints } = effectiveRegistries(custom);
+  const find = (list, id) => list.find((entry) => entry.id === id) ?? null;
+  const paint = find(paints, profileRow?.equipped_paint) ?? find(paints, DEFAULT_PAINT_ID);
+  return {
+    badge: find(badges, profileRow?.equipped_badge),
+    title: find(titles, profileRow?.equipped_title),
+    paint,
+  };
 }
 
 /**

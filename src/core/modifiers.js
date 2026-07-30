@@ -212,8 +212,22 @@ function resolveModifier(modifier, random) {
 
 // The single entry point for real daily play: today's (or `date`'s) active
 // modifier, fully resolved and seeded from the calendar date.
-export function getDailyModifier(date = new Date()) {
-  const modifier = modifierForDay(daysSinceEpoch(date));
+//
+// `overrideId` (DESIGN.md §11g) lets the admin page pin a specific modifier to a
+// specific day via server-side config. It stays an optional ARGUMENT rather than
+// this module reading config itself, because src/core/ never touches the network
+// — the caller fetches config and passes the answer in, so this function remains
+// pure and the whole rotation stays unit-testable without a database.
+//
+// An unknown id is ignored rather than throwing: config is read by every
+// player's client on boot, so a stale or mistyped override must degrade to the
+// normal rotation instead of breaking everyone's game.
+export function getDailyModifier(date = new Date(), overrideId = null) {
+  const overridden = overrideId ? MODIFIERS.find((m) => m.id === overrideId) : null;
+  const modifier = overridden ?? modifierForDay(daysSinceEpoch(date));
+  // Still seeded from the date, so an overridden Suit Bonus / Locked Card gets a
+  // stable bonus suit / locked index for that day rather than a new one on every
+  // page load.
   const random = modifierRng(date, modifier.id);
   return resolveModifier(modifier, random);
 }

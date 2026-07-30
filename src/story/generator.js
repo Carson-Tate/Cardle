@@ -2,6 +2,13 @@ import { hashSeed, createRng, shuffle, rankLabel, suitGlyph } from '../core/deck
 import { evaluateHand, handStrengthIndex } from '../core/hand-evaluator.js';
 import { FRAGMENTS } from './templates.js';
 
+// Every function that reads a fragment pool takes `fragments` as its LAST
+// argument, defaulting to the built-in FRAGMENTS. That's how the admin-editable
+// word bank (DESIGN.md §11g) reaches this module without src/story/ or
+// src/core/ ever touching the network: the caller merges config over the
+// built-ins (core/game-config.js's mergeWordBank) and passes the result down.
+// Positional and last so every existing call site keeps working unchanged.
+
 // Two Pair or better counts as a genuine win for captioning purposes — the
 // one slot ("ending") that reacts to the actual hand, per owner request
 // ("loosely tied" rather than fully decoupled). Every other slot ignores
@@ -55,16 +62,16 @@ export function getPoolKeys(originalHand, finalHand, discardIndices) {
 // The available options for each of the 6 slots for this exact run, on this
 // exact day. Only `ending` varies with the hand; every slot (`ending`
 // included) also rotates its visible options daily via `dailySubset()`.
-export function getStoryOptions(originalHand, finalHand, discardIndices, date = new Date()) {
+export function getStoryOptions(originalHand, finalHand, discardIndices, date = new Date(), fragments = FRAGMENTS) {
   const finalHandResult = evaluateHand(finalHand);
   const endingKey = endingKeyFor(finalHandResult);
   return {
-    opening: dailySubset(FRAGMENTS.opening, 'opening', date),
-    action: dailySubset(FRAGMENTS.action, 'action', date),
-    object: dailySubset(FRAGMENTS.object, 'object', date),
-    connector: dailySubset(FRAGMENTS.connector, 'connector', date),
-    ending: dailySubset(FRAGMENTS.ending[endingKey], `ending-${endingKey}`, date),
-    emoji: dailySubset(FRAGMENTS.emoji, 'emoji', date),
+    opening: dailySubset(fragments.opening, 'opening', date),
+    action: dailySubset(fragments.action, 'action', date),
+    object: dailySubset(fragments.object, 'object', date),
+    connector: dailySubset(fragments.connector, 'connector', date),
+    ending: dailySubset(fragments.ending[endingKey], `ending-${endingKey}`, date),
+    emoji: dailySubset(fragments.emoji, 'emoji', date),
   };
 }
 
@@ -86,8 +93,8 @@ const SLOT_ORDER = ['opening', 'action', 'object', 'connector', 'ending', 'emoji
  * can still freely change any dropdown during the current view; those
  * edits just live only in the DOM.
  */
-export function getDefaultSelections(originalHand, finalHand, discardIndices, date = new Date()) {
-  const options = getStoryOptions(originalHand, finalHand, discardIndices, date);
+export function getDefaultSelections(originalHand, finalHand, discardIndices, date = new Date(), fragments = FRAGMENTS) {
+  const options = getStoryOptions(originalHand, finalHand, discardIndices, date, fragments);
   const rng = createRng(storySeed(originalHand, finalHand));
   const selections = {};
   for (const slot of SLOT_ORDER) {
@@ -106,8 +113,8 @@ export function getDefaultSelections(originalHand, finalHand, discardIndices, da
  * (linking word) Ending (closing clause) Emoji (trailing flourish) — e.g.
  * "today i trusted the river like it owed me money 💀".
  */
-export function buildStoryTextFromSelections(originalHand, finalHand, discardIndices, selections, date = new Date()) {
-  const options = getStoryOptions(originalHand, finalHand, discardIndices, date);
+export function buildStoryTextFromSelections(originalHand, finalHand, discardIndices, selections, date = new Date(), fragments = FRAGMENTS) {
+  const options = getStoryOptions(originalHand, finalHand, discardIndices, date, fragments);
   const pick = (slot) => {
     const pool = options[slot];
     const index = selections?.[slot];
@@ -119,9 +126,9 @@ export function buildStoryTextFromSelections(originalHand, finalHand, discardInd
 
 // Convenience wrapper for callers that don't care about custom selection
 // (e.g. quick tests) — uses the deterministic default for every slot.
-export function buildStoryText(originalHand, finalHand, discardIndices, date = new Date()) {
-  const selections = getDefaultSelections(originalHand, finalHand, discardIndices, date);
-  return buildStoryTextFromSelections(originalHand, finalHand, discardIndices, selections, date);
+export function buildStoryText(originalHand, finalHand, discardIndices, date = new Date(), fragments = FRAGMENTS) {
+  const selections = getDefaultSelections(originalHand, finalHand, discardIndices, date, fragments);
+  return buildStoryTextFromSelections(originalHand, finalHand, discardIndices, selections, date, fragments);
 }
 
 // Wordle-style share grid: one token per final-hand position, suit only
@@ -172,10 +179,10 @@ export function buildShareText(result, finalHandText) {
  * @param {object} [selections] - explicit per-slot choices (see SLOT_ORDER); defaults to getDefaultSelections()
  * @param {Date} [date] - which day's rotated caption pools to use; defaults to now
  */
-export function generateStory(result, selections, date = new Date()) {
+export function generateStory(result, selections, date = new Date(), fragments = FRAGMENTS) {
   const resolvedSelections =
-    selections ?? getDefaultSelections(result.originalHand, result.finalHand, result.discardIndices, date);
-  const text = buildStoryTextFromSelections(result.originalHand, result.finalHand, result.discardIndices, resolvedSelections, date);
+    selections ?? getDefaultSelections(result.originalHand, result.finalHand, result.discardIndices, date, fragments);
+  const text = buildStoryTextFromSelections(result.originalHand, result.finalHand, result.discardIndices, resolvedSelections, date, fragments);
   const emojiGrid = buildEmojiGrid(result.finalHand, result.discardIndices);
   const finalHandText = buildFinalHandText(result.finalHand);
   const shareText = buildShareText(result, finalHandText);

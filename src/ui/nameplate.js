@@ -43,8 +43,8 @@ function escapeHtml(value) {
  *   `compact` omits the title (see the layout note above).
  * @returns {string} HTML
  */
-export function nameplateHtml(profileRow, { variant = 'full', fallbackName = 'Player' } = {}) {
-  const { badge, title, paint } = resolveEquipped(profileRow);
+export function nameplateHtml(profileRow, { variant = 'full', fallbackName = 'Player', custom = null } = {}) {
+  const { badge, title, paint } = resolveEquipped(profileRow, custom);
   const name = profileRow?.username ?? fallbackName;
 
   // Every dynamic value is escaped, and the paint is applied as a class from a
@@ -52,7 +52,13 @@ export function nameplateHtml(profileRow, { variant = 'full', fallbackName = 'Pl
   // markup or CSS. resolveEquipped() has already discarded anything it doesn't
   // recognize, so `paint.id` is always one of ours.
   const badgePart = badge ? `<span class="nameplate-badge" title="${escapeHtml(badge.label)}">${escapeHtml(badge.emoji)}</span>` : '';
-  const namePart = `<span class="nameplate-name paint-${escapeHtml(paint.id)}">${escapeHtml(name)}</span>`;
+  // A built-in paint is a CSS class; an admin-authored one carries a plain hex
+  // colour instead, because a class can't be created at runtime. The hex is
+  // strictly validated upstream (core/game-config.js) precisely because this
+  // becomes an inline style in other players' browsers — anything looser would
+  // be a CSS-injection vector.
+  const paintStyle = paint.custom && paint.color ? ` style="color: ${escapeHtml(paint.color)}"` : '';
+  const namePart = `<span class="nameplate-name paint-${escapeHtml(paint.id)}"${paintStyle}>${escapeHtml(name)}</span>`;
   const titlePart =
     variant === 'full' && title ? `<span class="nameplate-title">${escapeHtml(title.label)}</span>` : '';
 

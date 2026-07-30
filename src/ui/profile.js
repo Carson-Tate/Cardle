@@ -11,6 +11,7 @@
 
 import { getSession, signOut, getProfile } from '../state/auth.js';
 import { fetchPlayHistory, deleteOwnAccount, saveEquippedCosmetics } from '../state/profile.js';
+import { loadGameConfig } from '../state/game-config.js';
 import { derivePlayerStats, splitAchievements } from '../core/player-stats.js';
 import { resolveCosmetics, resolveEquipped, canEquip, DEFAULT_PAINT_ID } from '../core/cosmetics.js';
 import { nameplateHtml, announceProfileUpdate } from './nameplate.js';
@@ -64,9 +65,14 @@ export async function initProfile(root) {
   const userId = session.user.id;
   let profile = null;
   let history = [];
+  let gameConfig = null;
   let loadError = null;
   try {
-    [profile, history] = await Promise.all([getProfile(userId).catch(() => null), fetchPlayHistory(userId)]);
+    [profile, history, gameConfig] = await Promise.all([
+      getProfile(userId).catch(() => null),
+      fetchPlayHistory(userId),
+      loadGameConfig(),
+    ]);
   } catch (error) {
     loadError = error;
   }
@@ -89,7 +95,8 @@ export async function initProfile(root) {
   // Equipped cosmetics, held as ids so the pickers and the live nameplate
   // preview stay in sync without a round trip. Seeded from the stored row and
   // updated optimistically on selection — a failed save reverts and says so.
-  const stored = resolveEquipped(profile);
+  const custom = gameConfig?.customCosmetics ?? null;
+  const stored = resolveEquipped(profile, custom);
   let equipped = {
     badge: stored.badge?.id ?? null,
     title: stored.title?.id ?? null,
@@ -104,6 +111,7 @@ export async function initProfile(root) {
     level: stats.level,
     achievementsUnlocked: stats.achievementsUnlocked,
     adminUnlocks: profile?.admin_unlocks ?? [],
+    custom,
   };
   const cosmetics = resolveCosmetics(playerContext);
 
@@ -127,7 +135,7 @@ export async function initProfile(root) {
 
         <header class="profile-header">
           <div class="profile-identity">
-            <h2 class="profile-username">${nameplateHtml(equippedRow(), { fallbackName: username })}</h2>
+            <h2 class="profile-username">${nameplateHtml(equippedRow(), { fallbackName: username, custom })}</h2>
             <p class="profile-since">${stats.firstPlayDate ? `Playing since ${formatDate(stats.firstPlayDate)}` : 'No hands played yet'}</p>
           </div>
           ${levelBlockHtml(stats)}
@@ -247,7 +255,7 @@ export async function initProfile(root) {
       <section class="profile-section">
         <h3 class="profile-section-title">Customize</h3>
         <p class="customize-preview-label">Preview</p>
-        <div class="customize-preview">${nameplateHtml(equippedRow(), { fallbackName: username })}</div>
+        <div class="customize-preview">${nameplateHtml(equippedRow(), { fallbackName: username, custom })}</div>
         <p class="login-status customize-status" id="customize-status" hidden></p>
 
         ${pickerHtml('Badge', 'badges', cosmetics.badges, equipped.badge, {

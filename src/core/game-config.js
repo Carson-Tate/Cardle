@@ -1,0 +1,257 @@
+// Server-side game config: validation, merging, and defaults (DESIGN.md §11g).
+//
+// Pure on purpose. `src/core/` never touches the network — the config is
+// fetched by `src/state/game-config.js` and PASSED IN to the functions that
+// need it, so everything here stays directly unit-testable and the game's rules
+// remain expressible without a database.
+//
+// Every value is validated twice, in both directions:
+//   * On the way IN, so the admin page refuses to save something broken.
+//   * On the way OUT, so a value that got into the table anyway (an older
+//     shape, a hand-edited row, a future code change) falls back to the
+//     built-in default instead of breaking the game for every player.
+// The second half matters more than the first: this config is read by every
+// client on boot, so one bad row could otherwise take the whole game down.
+
+import { MODIFIERS } from './modifiers.js';
+import { FRAGMENTS, SLOT_META } from '../story/templates.js';
+
+export const CONFIG_KEYS = {
+  MODIFIER_OVERRIDES: 'modifier_overrides',
+  WORD_BANK: 'word_bank',
+  CUSTOM_COSMETICS: 'custom_cosmetics',
+};
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const COSMETIC_ID = /^[A-Za-z0-9_]{1,40}$/;
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+const MODIFIER_IDS = new Set(MODIFIERS.map((m) => m.id));
+// The word bank's flat slots. `ending` is nested (good/bad) and handled
+// separately — it's the one slot that reacts to the hand (§6b).
+const FLAT_SLOTS = ['opening', 'action', 'object', 'connector', 'emoji'];
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNonEmptyStringArray(value) {
+  return Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === 'string' && v.trim().length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Modifier overrides:  { "2026-08-01": "flushFrenzy", ... }
+// ---------------------------------------------------------------------------
+
+/**
+ * @returns {{value: Record<string,string>, errors: string[]}} `value` contains
+ *   only the entries that validated, so one bad date can't discard the rest.
+ */
+export function validateModifierOverrides(raw) {
+  const errors = [];
+  if (raw === null || raw === undefined) return { value: {}, errors };
+  if (!isPlainObject(raw)) return { value: {}, errors: ['modifier overrides must be an object of date → modifier id'] };
+
+  const value = {};
+  for (const [date, id] of Object.entries(raw)) {
+    if (!ISO_DATE.test(date)) {
+      errors.push(`"${date}" is not a YYYY-MM-DD date`);
+      continue;
+    }
+    if (typeof id !== 'string' || !MODIFIER_IDS.has(id)) {
+      errors.push(`"${id}" is not a known modifier id (for ${date})`);
+      continue;
+    }
+    value[date] = id;
+  }
+  return { value, errors };
+}
+
+/** The override id for a given date, or null. Safe against unvalidated input. */
+export function modifierOverrideFor(overrides, date = new Date()) {
+  const { value } = validateModifierOverrides(overrides);
+  const iso = date instanceof Date ? date.toISOString().slice(0, 10) : String(date);
+  return value[iso] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Word bank:  partial override of story/templates.js's FRAGMENTS
+// ---------------------------------------------------------------------------
+
+/**
+ * PARTIAL by design: only the slots present in the stored value override the
+ * built-ins. An admin editing the `emoji` list shouldn't have to re-enter all
+ * six slots, and a slot they never touched should keep getting new built-in
+ * content on future deploys.
+ */
+export function validateWordBank(raw) {
+  const errors = [];
+  if (raw === null || raw === undefined) return { value: {}, errors };
+  if (!isPlainObject(raw)) return { value: {}, errors: ['word bank must be an object keyed by slot'] };
+
+  const value = {};
+  for (const [slot, entries] of Object.entries(raw)) {
+    if (slot === 'ending') {
+      if (!isPlainObject(entries)) {
+        errors.push('ending must be an object with "good" and "bad" lists');
+        continue;
+      }
+      const ending = {};
+      for (const key of ['good', 'bad']) {
+        if (entries[key] === undefined) continue;
+        if (!isNonEmptyStringArray(entries[key])) {
+          errors.push(`ending.${key} must be a non-empty list of phrases`);
+          continue;
+        }
+        ending[key] = dedupeTrimmed(entries[key]);
+      }
+      if (Object.keys(ending).length > 0) value.ending = ending;
+      continue;
+    }
+
+    if (!FLAT_SLOTS.includes(slot)) {
+      errors.push(`"${slot}" is not a story slot`);
+      continue;
+    }
+    if (!isNonEmptyStringArray(entries)) {
+      errors.push(`${slot} must be a non-empty list of phrases`);
+      continue;
+    }
+    // A fragment containing a period would break the one-line sentence the
+    // caption builder assembles (§6c) — the same invariant templates.js's own
+    // tests enforce for the built-in pools.
+    const offending = entries.find((entry) => entry.slice(0, -1).includes('.'));
+    if (offending) errors.push(`${slot}: "${offending}" contains a period, which would break the single-line caption`);
+    value[slot] = dedupeTrimmed(entries);
+  }
+  return { value, errors };
+}
+
+function dedupeTrimmed(list) {
+  const seen = new Set();
+  const out = [];
+  for (const entry of list) {
+    const trimmed = entry.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+/**
+ * The effective fragment pools: built-ins with any validated overrides applied.
+ * Returns `FRAGMENTS` itself when there's nothing to override, so the common
+ * path allocates nothing.
+ */
+export function mergeWordBank(overrides) {
+  const { value } = validateWordBank(overrides);
+  if (Object.keys(value).length === 0) return FRAGMENTS;
+
+  const merged = { ...FRAGMENTS };
+  for (const slot of FLAT_SLOTS) {
+    if (value[slot]) merged[slot] = value[slot];
+  }
+  if (value.ending) merged.ending = { ...FRAGMENTS.ending, ...value.ending };
+  return merged;
+}
+
+/** Slot metadata plus the built-in defaults, for rendering the admin editor. */
+export function wordBankSlots() {
+  return [
+    ...FLAT_SLOTS.map((slot) => ({ slot, label: SLOT_META[slot]?.label ?? slot, defaults: FRAGMENTS[slot] })),
+    { slot: 'ending.good', label: 'Ending (good hand)', defaults: FRAGMENTS.ending.good },
+    { slot: 'ending.bad', label: 'Ending (bad hand)', defaults: FRAGMENTS.ending.bad },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Custom cosmetics:  { badges: [...], titles: [...], paints: [...] }
+// ---------------------------------------------------------------------------
+
+/**
+ * Admin-authored cosmetics, appended to the built-in registries (§11e).
+ *
+ * Custom paints carry a plain `color` hex rather than a CSS class, because a
+ * class can't be authored at runtime — and strictly a 6-digit hex, applied as
+ * `style="color: #xxxxxx"`, so there is no way to smuggle arbitrary CSS into a
+ * nameplate that renders in other players' browsers. Gradients and animation
+ * stay code-only for the same reason: they'd need real CSS.
+ *
+ * Custom badges have no achievement behind them, so they can only ever be
+ * handed out with an admin grant (§11f's `admin_unlocks`). That's recorded on
+ * the entry as `grantOnly` so the UI can say so instead of showing an
+ * unreachable requirement.
+ */
+export function validateCustomCosmetics(raw) {
+  const errors = [];
+  const empty = { badges: [], titles: [], paints: [] };
+  if (raw === null || raw === undefined) return { value: empty, errors };
+  if (!isPlainObject(raw)) return { value: empty, errors: ['custom cosmetics must be an object with badges/titles/paints'] };
+
+  const seen = new Set();
+  const takeId = (entry, kind) => {
+    const id = entry?.id;
+    if (typeof id !== 'string' || !COSMETIC_ID.test(id)) {
+      errors.push(`${kind}: "${id}" is not a valid id (letters, numbers, underscore, 1-40 chars)`);
+      return null;
+    }
+    if (seen.has(id)) {
+      errors.push(`${kind}: duplicate id "${id}"`);
+      return null;
+    }
+    seen.add(id);
+    return id;
+  };
+  const takeLabel = (entry, kind, id) => {
+    if (typeof entry?.label !== 'string' || !entry.label.trim()) {
+      errors.push(`${kind} "${id}": label is required`);
+      return null;
+    }
+    return entry.label.trim();
+  };
+  const takeLevel = (entry, kind, id) => {
+    const level = Number(entry?.level ?? 1);
+    if (!Number.isInteger(level) || level < 1) {
+      errors.push(`${kind} "${id}": level must be a whole number of at least 1`);
+      return null;
+    }
+    return level;
+  };
+
+  const badges = [];
+  for (const entry of Array.isArray(raw.badges) ? raw.badges : []) {
+    const id = takeId(entry, 'badge');
+    if (!id) continue;
+    const label = takeLabel(entry, 'badge', id);
+    if (!label) continue;
+    const emoji = typeof entry.emoji === 'string' && entry.emoji.trim() ? entry.emoji.trim() : '⭐';
+    badges.push({ id, label, emoji, custom: true, grantOnly: true });
+  }
+
+  const titles = [];
+  for (const entry of Array.isArray(raw.titles) ? raw.titles : []) {
+    const id = takeId(entry, 'title');
+    if (!id) continue;
+    const label = takeLabel(entry, 'title', id);
+    const level = takeLevel(entry, 'title', id);
+    if (!label || level === null) continue;
+    titles.push({ id, label, level, custom: true });
+  }
+
+  const paints = [];
+  for (const entry of Array.isArray(raw.paints) ? raw.paints : []) {
+    const id = takeId(entry, 'paint');
+    if (!id) continue;
+    const label = takeLabel(entry, 'paint', id);
+    const level = takeLevel(entry, 'paint', id);
+    if (!label || level === null) continue;
+    if (typeof entry.color !== 'string' || !HEX_COLOR.test(entry.color)) {
+      errors.push(`paint "${id}": color must be a 6-digit hex like #c0392b`);
+      continue;
+    }
+    paints.push({ id, label, level, color: entry.color.toLowerCase(), custom: true });
+  }
+
+  return { value: { badges, titles, paints }, errors };
+}

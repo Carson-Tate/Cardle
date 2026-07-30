@@ -233,3 +233,79 @@ grant execute on function public.is_admin() to authenticated;
 create policy "Admins can view all daily plays"
   on public.daily_plays for select
   using (public.is_admin());
+
+-- ---------------------------------------------------------------------------
+-- game_config (DESIGN.md §11g)
+-- ---------------------------------------------------------------------------
+-- Server-side config the admin page edits and every client reads at boot: the
+-- daily-modifier overrides, the poem word bank, and admin-authored cosmetics.
+-- Full rationale in supabase/migrations/005-game-config.sql — in short: these
+-- used to be client-side constants, so they were unchangeable without a deploy.
+--
+-- Key/value jsonb because the three settings have completely different shapes
+-- and more will follow, so adding one should need no migration. Postgres can't
+-- meaningfully validate the contents, so validation lives in
+-- src/core/game-config.js and runs on the way IN *and* on the way OUT — a bad
+-- row falls back to the built-in default rather than breaking every client.
+--
+-- Note there is deliberately NO write policy: with RLS on and no
+-- insert/update/delete policy, a direct REST write is refused even for an
+-- admin. The only authorized path is admin_set_config()/admin_clear_config()
+-- below, which re-check is_admin().
+
+create table public.game_config (
+  key text primary key check (key ~ '^[a-z0-9_]{1,40}$'),
+  value jsonb not null,
+  updated_at timestamptz not null default now(),
+  updated_by uuid references auth.users (id) on delete set null
+);
+
+alter table public.game_config enable row level security;
+
+-- Everyone reads it: a config only admins could see would not actually change
+-- anyone's game. Nothing here is private — it is the rules of the game.
+create policy "Game config is readable by everyone"
+  on public.game_config for select
+  using (true);
+
+create or replace function public.admin_set_config(config_key text, config_value jsonb)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'admin_set_config() requires an admin account';
+  end if;
+
+  if config_key !~ '^[a-z0-9_]{1,40}$' then
+    raise exception 'config key must match ^[a-z0-9_]{1,40}$';
+  end if;
+
+  insert into public.game_config (key, value, updated_at, updated_by)
+       values (config_key, config_value, now(), auth.uid())
+  on conflict (key)
+    do update set value = excluded.value, updated_at = now(), updated_by = excluded.updated_by;
+end $$;
+
+-- Removing a key restores the built-in default, which is meaningfully different
+-- from storing an empty value.
+create or replace function public.admin_clear_config(config_key text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'admin_clear_config() requires an admin account';
+  end if;
+
+  delete from public.game_config where key = config_key;
+end $$;
+
+revoke all on function public.admin_set_config(text, jsonb) from public, anon;
+revoke all on function public.admin_clear_config(text) from public, anon;
+grant execute on function public.admin_set_config(text, jsonb) to authenticated;
+grant execute on function public.admin_clear_config(text) to authenticated;

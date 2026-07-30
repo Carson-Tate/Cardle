@@ -2373,3 +2373,93 @@ header h1 {
   cursor: default;
   border-style: dashed;
 }
+
+/* --- Admin config editors (DESIGN.md §11g) ------------------------------- */
+
+/* A day whose modifier is pinned rather than following the rotation. */
+.admin-schedule-row--overridden {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.admin-schedule-mod {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.admin-schedule-mod select {
+  font-family: inherit;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.35rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  max-width: 100%;
+}
+
+.admin-schedule-mod small {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.admin-wordbank {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.7rem;
+}
+
+.admin-wordbank-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.admin-wordbank-flag {
+  margin-left: 0.35rem;
+  font-style: normal;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Monospace so one phrase per line stays visually obvious, and resize:vertical
+   because these pools can be long. */
+.admin-wordbank-field textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+  min-height: 6rem;
+}
+
+.admin-equip-field input {
+  font-family: inherit;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.admin-equip-field input[type='color'] {
+  padding: 0.15rem;
+  height: 2rem;
+  cursor: pointer;
+}
+
+.admin-result-name small {
+  display: block;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}

@@ -8,6 +8,8 @@ import { classifyPersonality, PERSONALITIES } from '../core/personality.js';
 import { evaluateAchievements, ACHIEVEMENTS } from '../core/achievements.js';
 import { getTodayResult, saveTodayResult, getOrCreateTodaySeed, dayNumber } from '../state/persistence.js';
 import { resolveRunConfig } from '../state/test-mode.js';
+import { loadGameConfig } from '../state/game-config.js';
+import { modifierOverrideFor } from '../core/game-config.js';
 import { recordRun, markAchievementsUnlocked } from '../state/stats.js';
 import { getSession } from '../state/auth.js';
 import { claimTodaySeed, saveTodayResultForUser } from '../state/daily-play.js';
@@ -134,6 +136,35 @@ export function initBoard(root) {
   // admin panel below overrides it via startHand's `forceModifier`.
   applyModifier(getDailyModifier(today));
 
+  // Server-side config (§11g): an admin can pin a specific modifier to a
+  // specific day, and can edit the poem word bank. Started here but awaited
+  // before the first deal (see awaitGameConfig) rather than blocking init —
+  // the day label and the computed modifier paint immediately, so a slow or
+  // failed config read never leaves the page blank. loadGameConfig() resolves
+  // to built-in defaults rather than rejecting, so there's nothing to catch.
+  let gameConfig = null;
+  const gameConfigPromise = loadGameConfig().then((config) => {
+    gameConfig = config;
+    // Re-apply only if the day is actually overridden, so the common path
+    // doesn't repaint the banner for no reason.
+    const overrideId = modifierOverrideFor(config.modifierOverrides, today);
+    if (overrideId) applyModifier(getDailyModifier(today, overrideId));
+    return config;
+  });
+
+  // Every path that deals a hand awaits this first, so an override is always in
+  // force before cards are dealt — a hand dealt under the wrong discard cap
+  // would be unrecoverable for that player's day.
+  async function awaitGameConfig() {
+    await gameConfigPromise;
+  }
+
+  // The effective story fragment pools — built-ins merged with any admin word
+  // bank. Read at render time so it reflects whatever config resolved to.
+  function storyFragments() {
+    return gameConfig?.fragments;
+  }
+
   if (config.isTestMode) {
     renderAdminPanel(root, (options) => startHand(options));
     renderTestBanner(root, config);
@@ -182,8 +213,19 @@ export function initBoard(root) {
     drawBtn.hidden = false;
     drawBtn.addEventListener(
       'click',
-      () => {
+      async () => {
+        // Config is awaited HERE rather than before revealing the button.
+        // Gating the button itself on the fetch measurably delayed it (~117ms
+        // to ~960ms on a real connection) for no benefit: what actually has to
+        // be true is that any modifier override is in force before CARDS ARE
+        // DEALT, since a hand dealt under the wrong discard cap can't be undone
+        // for that player's day. Waiting on the click keeps the page feeling
+        // instant while preserving that guarantee — and by the time anyone
+        // reads the page and clicks, the fetch has almost always resolved.
+        drawBtn.disabled = true;
+        await awaitGameConfig();
         drawBtn.hidden = true;
+        drawBtn.disabled = false;
         startHand(dealOptions);
       },
       { once: true },
@@ -612,7 +654,7 @@ export function initBoard(root) {
       }
     }
 
-    await revealScore(resultPanel, result);
+    await revealScore(resultPanel, result, storyFragments());
   }
 
   // Flips each discarded card over to reveal its replacement, cascading
@@ -649,7 +691,7 @@ export function initBoard(root) {
     // No count-up animation on this path (it's a reload of an already-
     // finished run) — collapse immediately rather than waiting for anything.
     setupBreakdownCollapse(resultPanel.querySelector('.score-breakdown'));
-    renderStoryBlock(resultPanel.querySelector('#story-block'), result);
+    renderStoryBlock(resultPanel.querySelector('#story-block'), result, storyFragments());
   }
 }
 
@@ -946,7 +988,7 @@ function setupBreakdownCollapse(container) {
   });
 }
 
-async function revealScore(resultPanel, result) {
+async function revealScore(resultPanel, result, fragments) {
   const { score, decisionRating: rating, meters, personalityId, newlyUnlocked } = result;
   resultPanel.hidden = false;
   resultPanel.innerHTML = `
@@ -1037,7 +1079,7 @@ async function revealScore(resultPanel, result) {
 
   await delay(300);
   const storyBlock = resultPanel.querySelector('#story-block');
-  renderStoryBlock(storyBlock, result);
+  renderStoryBlock(storyBlock, result, fragments);
   storyBlock.hidden = false;
 
   if (newlyUnlocked.length > 0) {
@@ -1132,9 +1174,9 @@ async function copyToClipboard(text) {
 // view; those edits just aren't persisted, so a fresh day starts from a
 // fresh (effectively random-looking, hand-seeded) selection again rather
 // than reusing yesterday's pick.
-function resolveStorySelections(originalHand, finalHand, discardIndices) {
-  const selections = getDefaultSelections(originalHand, finalHand, discardIndices);
-  const options = getStoryOptions(originalHand, finalHand, discardIndices);
+function resolveStorySelections(originalHand, finalHand, discardIndices, fragments) {
+  const selections = getDefaultSelections(originalHand, finalHand, discardIndices, undefined, fragments);
+  const options = getStoryOptions(originalHand, finalHand, discardIndices, undefined, fragments);
   return { selections, options };
 }
 
@@ -1152,10 +1194,10 @@ function resolveStorySelections(originalHand, finalHand, discardIndices) {
 // independent now: the poem is complete from the moment it renders, so
 // there's never a state where the result can't be copied. Editing collapses
 // back to the same default state on Submit, so the button pair stays stable.
-function renderStoryBlock(container, result) {
+function renderStoryBlock(container, result, fragments) {
   const { originalHand, finalHand, discardIndices } = result;
-  const { selections, options } = resolveStorySelections(originalHand, finalHand, discardIndices);
-  let story = generateStory(result, selections);
+  const { selections, options } = resolveStorySelections(originalHand, finalHand, discardIndices, fragments);
+  let story = generateStory(result, selections, undefined, fragments);
 
   // The editor sits ABOVE the button row on purpose, so Copy Result is the
   // last thing in the block in BOTH states — "always have a copy result
@@ -1203,7 +1245,7 @@ function renderStoryBlock(container, result) {
       const slot = select.dataset.slot;
       const index = Number(select.value);
       selections[slot] = index;
-      story = generateStory(result, selections);
+      story = generateStory(result, selections, undefined, fragments);
       storyTextEl.textContent = story.text;
     });
   });

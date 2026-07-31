@@ -11,8 +11,11 @@ import {
   XP_PER_BONUS,
   XP_PER_ACHIEVEMENT,
   XP_PER_LEVEL_STEP,
+  XP_PER_SCORE_GRADE,
+  MAX_SCORE_GRADE_RANK,
 } from '../src/core/progression.js';
-import { handStrengthIndex } from '../src/core/hand-evaluator.js';
+import { handStrengthIndex, scoreForHandId } from '../src/core/hand-evaluator.js';
+import { SCORE_GRADES_ASCENDING, gradeForScore, gradeRank } from '../src/core/score-grade.js';
 
 const run = (overrides = {}) => ({
   score: { handResult: { id: 'HIGH_CARD' }, total: 0, extraBonuses: [] },
@@ -151,5 +154,63 @@ describe('levelProgress', () => {
     assert.ok(runsToReach(2) <= 2, `level 2 took ${runsToReach(2)} runs, expected to feel immediate`);
     assert.ok(runsToReach(10) > 20 && runsToReach(10) < 90, `level 10 took ${runsToReach(10)} runs`);
     assert.ok(runsToReach(20) > 120, `level 20 took ${runsToReach(20)} runs, expected a long-term goal`);
+  });
+});
+
+// Owner: "increase the xp gained for the more points you get." Routed through
+// the score-grade ladder rather than raw points, so the spread stays bounded.
+describe('xpForRun scales with the score grade', () => {
+  const at = (total) => ({
+    score: { handResult: { id: 'HIGH_CARD' }, total, extraBonuses: [] },
+    decisionRating: 0,
+    newlyUnlocked: [],
+  });
+
+  test('each step up the ladder is worth exactly one XP_PER_SCORE_GRADE', () => {
+    for (const grade of SCORE_GRADES_ASCENDING) {
+      const expected = XP_BASE_PER_RUN + gradeRank(grade.id) * XP_PER_SCORE_GRADE;
+      assert.equal(xpForRun(at(grade.min)), expected, grade.id);
+    }
+  });
+
+  test('a bigger score never earns less XP', () => {
+    const totals = [0, 200, 613, 2726, 21600, 58700, 351000, 6080000, 54800000];
+    let previous = -Infinity;
+    for (const total of totals) {
+      const xp = xpForRun(at(total));
+      assert.ok(xp >= previous, `${total} earned ${xp}, less than the score below it`);
+      previous = xp;
+    }
+  });
+
+  // The bound that lets this coexist with the module's opening rationale.
+  test('the spread stays bounded — points span 274,000x, XP does not', () => {
+    const busted = xpForRun(at(0));
+    // The TOP tier's own threshold, not a Royal Flush: ??? deliberately needs a
+    // Royal Flush AND a multiplier on top of it (score-grade.js), so a bare
+    // Royal only reaches Impossible. Reading the ladder rather than assuming
+    // keeps this true if the thresholds are ever retuned.
+    const topGrade = SCORE_GRADES_ASCENDING[SCORE_GRADES_ASCENDING.length - 1];
+    const best = xpForRun(at(topGrade.min));
+    assert.equal(gradeRank(topGrade.id), MAX_SCORE_GRADE_RANK);
+    assert.equal(best - busted, MAX_SCORE_GRADE_RANK * XP_PER_SCORE_GRADE);
+    assert.ok(best / busted < 12, `best/worst was ${best / busted}`);
+
+    // And a bare Royal Flush lands one tier below that, which is the point of
+    // the ??? tier existing at all.
+    const royal = xpForRun(at(scoreForHandId('ROYAL_FLUSH')));
+    assert.equal(royal - busted, (MAX_SCORE_GRADE_RANK - 1) * XP_PER_SCORE_GRADE);
+  });
+
+  test('the grade term matches the grade the player was shown', () => {
+    const total = 5000;
+    const shown = gradeForScore(total);
+    assert.equal(xpForRun(at(total)), XP_BASE_PER_RUN + gradeRank(shown.id) * XP_PER_SCORE_GRADE);
+  });
+
+  test('a result with no stored total degrades to the lowest grade, not a throw', () => {
+    assert.equal(xpForRun({ score: { handResult: { id: 'HIGH_CARD' } } }), XP_BASE_PER_RUN);
+    assert.equal(xpForRun({ score: { total: NaN } }), XP_BASE_PER_RUN);
+    assert.equal(xpForRun({ score: { total: 'lots' } }), XP_BASE_PER_RUN);
   });
 });

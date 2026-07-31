@@ -508,6 +508,89 @@ header h1 {
   animation: score-spark-fly var(--spark-duration, 550ms) cubic-bezier(0.3, 0.1, 0.4, 1) forwards;
 }
 
+/* The flying "+N XP" pill (DESIGN.md §11t). Fixed-position and above
+   everything, like .score-spark above — it travels between two elements that
+   are in completely different parts of the document, so it cannot live in
+   either one's flow.
+   `translate(-50%, -50%)` in every keyframe below keeps it centred on the point
+   it was positioned at, which is what lets the flight offsets be computed from
+   box centres. */
+.xp-gain {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 999;
+  pointer-events: none;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 800;
+  white-space: nowrap;
+  color: #ffffff;
+  /* GREEN (owner: "pop up like green"), and specifically `--accent` — the same
+     colour as the XP bar it is about to fly into, so the pill visibly belongs to
+     its destination. `--selected` (amber) is the card-selection colour and would
+     have read as "this is picked", which is a different idea entirely. */
+  background: var(--accent);
+  box-shadow: 0 3px 14px color-mix(in srgb, var(--accent) 55%, transparent);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+}
+
+.xp-gain--pop {
+  animation: xp-pop 380ms cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
+}
+
+.xp-gain--fly {
+  animation: xp-fly var(--fly-duration, 780ms) cubic-bezier(0.5, 0, 0.5, 1) forwards;
+}
+
+.xp-gain--fade {
+  animation: xp-fade 300ms ease forwards;
+}
+
+@keyframes xp-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -20%) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes xp-fly {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  70% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--fly-x)), calc(-50% + var(--fly-y))) scale(0.45);
+  }
+}
+
+@keyframes xp-fade {
+  to {
+    opacity: 0;
+    transform: translate(-50%, -90%) scale(0.9);
+  }
+}
+
+/* Motion here is the whole point, but a full flight across the viewport is
+   exactly what reduced-motion asks to avoid. The pill still appears and is
+   readable — it just does not travel. */
+@media (prefers-reduced-motion: reduce) {
+  .xp-gain--fly {
+    animation: xp-fade 400ms ease forwards;
+  }
+}
+
 .card__back-pattern {
   position: absolute;
   inset: 6px;
@@ -1431,24 +1514,160 @@ header h1 {
   padding-bottom: calc(var(--descender-nudge) * 1.6);
 }
 
-/* On narrow screens the button labels are trimmed to their icons — the emoji
-   carry the meaning, and a header that wraps to three lines is worse than a
-   compact one. Done with CSS rather than JS so it responds to rotation and
-   resize without any listener. */
-@media (max-width: 460px) {
+/* --- The player's own nameplate, with its XP bar (DESIGN.md §11t) ---------
+   Name on top, level bar under it, both right-aligned so the bar grows away
+   from the screen edge and the name stays where it has always been. Overrides
+   `#site-header button`'s centring, and wins on specificity ((1,1,0) beats
+   that rule's (1,0,1)) — a bare `.header-user-btn` would silently lose, which
+   this file has been caught by before. */
+#site-header .header-user-btn {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  line-height: 1.1;
+}
+
+.header-xp {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  /* The bar is a readout, not a second button: clicks belong to the nameplate
+     button wrapping it. */
+  pointer-events: none;
+}
+
+.header-xp-level {
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.header-xp-track {
+  display: block;
+  width: 3.5rem;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.header-xp-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  /* Animated so the fill visibly moves when a run's XP lands (§11t's flight),
+     rather than snapping to its new width. */
+  transition: width 700ms ease-out;
+}
+
+/* The arriving-XP flash: the bar pulses once as the number reaches it, which is
+   what ties the flying pill to the thing it was flying at. */
+.header-xp--gained .header-xp-fill {
+  animation: xp-arrive 700ms ease-out;
+}
+
+@keyframes xp-arrive {
+  0% {
+    filter: brightness(1);
+  }
+  35% {
+    filter: brightness(1.9);
+  }
+  100% {
+    filter: brightness(1);
+  }
+}
+
+/* --- Mobile: nav collapses into a hamburger (owner request) ---------------
+   The nameplate and its XP bar deliberately stay OUT of the menu: the bar
+   should be glanceable, and the XP-gain animation needs a visible target to
+   fly into.
+   Hidden above the breakpoint with (1,1,0) specificity so it beats
+   `#site-header button { display: inline-flex }` — and it is the media query
+   that owns visibility, not a `hidden` attribute, so the menu reappears on
+   resize with no listener involved. */
+#site-header .header-menu-btn {
+  display: none;
+  /* JUST THE LINES (owner request). Every other control in this bar is a
+     bordered pill, and without an explicit reset this button fell back to the
+     UA's default — a grey bordered box, which is the "big white square". The
+     glyph carries the affordance on its own, so the box is removed entirely and
+     the lines take the login button's green.
+     Padding stays for the TAP TARGET: the visible mark is small, but the
+     touchable area still needs to be finger-sized. */
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 1.5rem;
+  line-height: 1;
+  padding: 0.2rem 0.35rem;
+  cursor: pointer;
+  /* The ☰ glyph is not letter-spaced text — the inherited tracking from
+     `#site-header button` adds dead width to its right and pushes it off
+     centre, the same trap the lone "?" on the help button hit. */
+  letter-spacing: 0;
+}
+
+#site-header .header-menu-btn:hover {
+  color: color-mix(in srgb, var(--accent) 75%, var(--text));
+}
+
+@media (max-width: 560px) {
   #site-header {
     padding: 0.6rem 0.75rem;
     gap: 0.5rem;
+    /* The dropdown anchors to the bar itself. */
+    position: sticky;
   }
 
-  .header-leaderboard-label,
-  .header-admin-label {
+  #site-header .header-menu-btn {
+    display: inline-flex;
+  }
+
+  /* The same buttons as the desktop row, restacked. Not a second copy: a
+     duplicate set would need every `hidden` rule applied twice, and getting
+     that wrong is how the Admin button once showed to everyone (§11n). */
+  .header-nav {
     display: none;
+    position: absolute;
+    top: 100%;
+    right: 0.75rem;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+    min-width: 11rem;
+    padding: 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 10px 28px color-mix(in srgb, #000000 22%, transparent);
   }
 
-  .header-friends-btn,
-  .header-admin-btn {
-    padding: 0.4rem 0.6rem;
+  .header-nav.header-nav--open {
+    display: flex;
+  }
+
+  /* Full labels inside the menu — the reason they were trimmed to bare emoji
+     was horizontal space in the bar, which the dropdown does not have. */
+  .header-nav .header-friends-btn,
+  .header-nav .header-admin-btn {
+    justify-content: flex-start;
+    width: 100%;
+    padding: 0.5rem 0.7rem;
+  }
+
+  .header-xp-track {
+    width: 2.75rem;
+  }
+}
+
+/* Below this even the wordmark and the name compete, so the nameplate loses its
+   bar rather than the header wrapping to two lines. */
+@media (max-width: 340px) {
+  .header-xp {
+    display: none;
   }
 }
 

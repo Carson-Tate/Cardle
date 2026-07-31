@@ -39,6 +39,59 @@ export async function fetchPlayHistory(userId, { limit = HISTORY_LIMIT } = {}) {
   return (data ?? []).map((row) => ({ playDate: row.play_date, result: row.result }));
 }
 
+// Shared, per-page-load cache of the signed-in player's own history.
+//
+// The header's XP bar and the profile page both need lifetime XP, and XP is
+// DERIVED from every stored run (progression.js) rather than kept as a running
+// total — the same "derived, not accumulated" rule as the rest of the career
+// stats, which is what stops a level ever drifting out of step with the runs
+// behind it. The cost of that is a real fetch, and without this both surfaces
+// would pay it separately on the profile page.
+//
+// Keyed by user id so it can never serve one account's history to another, and
+// caching the PROMISE rather than the result so two callers racing on load share
+// one request instead of firing two.
+let ownHistory = null;
+
+/**
+ * `fetchPlayHistory` for the signed-in player, fetched at most once per page
+ * load. Use `fetchPlayHistory` directly for anyone else's profile.
+ */
+export function loadOwnHistory(userId, options) {
+  if (ownHistory?.userId === userId) return ownHistory.promise;
+  // Cleared on failure so a transient error doesn't disable the XP bar for the
+  // rest of the session — the same reasoning as supabase-client.js's client
+  // promise.
+  const promise = fetchPlayHistory(userId, options).catch((error) => {
+    if (ownHistory?.promise === promise) ownHistory = null;
+    throw error;
+  });
+  ownHistory = { userId, promise };
+  return promise;
+}
+
+/** Drops the cache — call after writing a new run, which changes lifetime XP. */
+export function invalidateOwnHistory() {
+  ownHistory = null;
+}
+
+/**
+ * Fired on `window` when the signed-in player's lifetime XP has changed — i.e.
+ * a run was just scored and saved. The header listens and refreshes its bar.
+ *
+ * An event rather than a direct call, for the same reason as
+ * `PROFILE_UPDATED_EVENT` (ui/nameplate.js): board.js and header.js are
+ * siblings wired up separately by main.js, and neither should have to import
+ * the other just to say "something you display has changed".
+ */
+export const XP_UPDATED_EVENT = 'cardle:xp-updated';
+
+/** Announces that a run was saved, so any XP display can catch up. */
+export function announceXpUpdate() {
+  invalidateOwnHistory();
+  window.dispatchEvent(new CustomEvent(XP_UPDATED_EVENT));
+}
+
 /**
  * Every column `ui/nameplate.js` needs to render a player correctly — shared so
  * the several places that fetch "a profile to draw a name with" cannot drift

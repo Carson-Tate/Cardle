@@ -110,6 +110,104 @@ function flipSwap(el, buildNewEl, duration) {
 }
 
 /**
+ * Pops a green "+N XP" beside `fromEl`, holds it, then flies it into `toEl`
+ * (owner request: XP should "pop up like green next to the total points right
+ * after all the animations are done and flow into the name on the top right").
+ *
+ * Deliberately NOT reusing flySparks: that fires a burst of anonymous dots to
+ * show WHERE points came from, while this is one legible number the player is
+ * meant to read before it moves. Same underlying idea — a fixed-position element
+ * animated between two live `getBoundingClientRect()`s, so it lands correctly
+ * regardless of scroll position or layout.
+ *
+ * Resolves once the pill has landed, so the caller can flash the target as it
+ * arrives. A missing target resolves immediately rather than throwing: the XP
+ * bar is absent for a signed-out player, and a missing decoration must never
+ * break the end of a run.
+ *
+ * @param {HTMLElement} fromEl - what it pops out beside (the score total)
+ * @param {HTMLElement|null} toEl - what it flies into (the header nameplate)
+ * @param {number} amount - XP earned
+ * @param {{popMs?: number, holdMs?: number, flyMs?: number}} [timing]
+ * @returns {Promise<void>}
+ */
+/**
+ * The rectangle a block element's TEXT actually occupies, rather than the box
+ * the element reserves. For centred text in a full-width block the two differ by
+ * the whole panel width, which is the difference between "beside the number" and
+ * "off at the edge of the card".
+ *
+ * Falls back to the element box when the element has no text to measure.
+ */
+function textInkRect(el) {
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const rect = range.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) return rect;
+  } catch {
+    // Range can throw on a detached node; the element box is a fine fallback.
+  }
+  return el.getBoundingClientRect();
+}
+
+export function flyXpGain(fromEl, toEl, amount, { popMs = 380, holdMs = 620, flyMs = 780 } = {}) {
+  if (!fromEl || !Number.isFinite(amount) || amount <= 0) return Promise.resolve();
+
+  const pill = document.createElement('div');
+  pill.className = 'xp-gain';
+  pill.textContent = `+${Math.round(amount).toLocaleString()} XP`;
+  // aria-hidden: the same number is already announced in the result panel, and a
+  // decoration that flies across the screen should not be read out twice.
+  pill.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(pill);
+
+  // The INK, not the element box. `.score-total` is a block, so its box spans
+  // the whole result panel and "just right of it" would put the pill out at the
+  // panel edge, nowhere near the centred digits the player is looking at. A
+  // Range over the text contents measures the digits themselves.
+  const from = textInkRect(fromEl);
+  // `.xp-gain` is translated by -50% in both axes so the flight offsets can be
+  // computed between box CENTRES — which means `left` here is the pill's centre,
+  // not its left edge, and half its width has to be added to clear the digits.
+  const pillWidth = pill.getBoundingClientRect().width;
+  const gap = 12;
+  const wanted = from.right + gap + pillWidth / 2;
+  // Clamped so a wide number on a narrow screen cannot push it off-screen.
+  const maxCentre = window.innerWidth - pillWidth / 2 - 8;
+  pill.style.left = `${Math.min(wanted, maxCentre)}px`;
+  pill.style.top = `${from.top + from.height / 2}px`;
+
+  return new Promise((resolve) => {
+    const finish = () => {
+      pill.remove();
+      resolve();
+    };
+
+    pill.classList.add('xp-gain--pop');
+    setTimeout(() => {
+      if (!toEl) {
+        // Nowhere to fly to (signed out, or the bar has not loaded): fade the
+        // pill where it is rather than sending it to the top-left corner, which
+        // is where an un-measured target would put it.
+        pill.classList.add('xp-gain--fade');
+        setTimeout(finish, 300);
+        return;
+      }
+      // Measured NOW, not before the hold: the header is sticky and the page may
+      // have been scrolled while the pill was on screen.
+      const to = toEl.getBoundingClientRect();
+      const pillRect = pill.getBoundingClientRect();
+      pill.style.setProperty('--fly-x', `${to.left + to.width / 2 - (pillRect.left + pillRect.width / 2)}px`);
+      pill.style.setProperty('--fly-y', `${to.top + to.height / 2 - (pillRect.top + pillRect.height / 2)}px`);
+      pill.style.setProperty('--fly-duration', `${flyMs}ms`);
+      pill.classList.add('xp-gain--fly');
+      setTimeout(finish, flyMs);
+    }, popMs + holdMs);
+  });
+}
+
+/**
  * Just the FIRST half of flipReplaceCard: turns a face-up card over to its
  * face-down back and stops there. Split out so board.js can run the whole
  * discard batch's turn-over as one pass and only then start revealing (owner

@@ -12,6 +12,7 @@
 import { getSession, signOut, getProfile } from '../state/auth.js';
 import {
   fetchPlayHistory,
+  loadOwnHistory,
   deleteOwnAccount,
   saveEquippedCosmetics,
   fetchProfileByUsername,
@@ -130,7 +131,10 @@ export async function initProfile(root, { username: viewingUsername = null } = {
   try {
     [profile, history, gameConfig, friendship] = await Promise.all([
       viewedProfile ? Promise.resolve(viewedProfile) : getProfile(userId).catch(() => null),
-      fetchPlayHistory(userId),
+      // The header already loads YOUR history for its XP bar, so reuse that one
+      // fetch rather than pulling the same few hundred rows twice on this page.
+      // Someone else's profile has no cache to share and goes direct.
+      canEdit ? loadOwnHistory(userId) : fetchPlayHistory(userId),
       loadGameConfig(),
       // Tolerates failure: a friendship lookup that errors should cost the
       // button, not the whole profile page.

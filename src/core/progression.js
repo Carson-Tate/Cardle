@@ -9,8 +9,15 @@
 // ahead of everyone and make an ordinary day feel like it earned nothing.
 // Levels should reward showing up and playing well, which is what the terms
 // below actually measure.
+//
+// SCORE DOES COUNT NOW (owner: "increase the xp gained for the more points you
+// get"), but through the score-grade LADDER rather than the raw total — see
+// XP_PER_SCORE_GRADE. That keeps the paragraph above true: the ladder is nine
+// bounded tiers, so the best possible run out-earns the worst by a fixed
+// multiple instead of by five orders of magnitude.
 
 import { handStrengthIndex, HAND_RANKS } from './hand-evaluator.js';
+import { gradeForScore, gradeRank, SCORE_GRADES } from './score-grade.js';
 
 // Every run earns the base, just for playing the day — a daily game's
 // progression should never stall on bad luck.
@@ -27,6 +34,21 @@ export const XP_PER_DECISION_RATING = 100;
 // it did something, even when the hand itself was modest.
 export const XP_PER_BONUS = 10;
 export const XP_PER_ACHIEVEMENT = 50;
+// Per step up the nine-tier score ladder (score-grade.js): Busted earns nothing
+// extra, ??? earns eight steps' worth. Anchored to that ladder rather than to
+// the points themselves for the reason at the top of this file, and because it
+// is the ladder the player was just shown on the result panel — so the XP they
+// see awarded lines up with the grade they were given, instead of being a
+// separate opaque number.
+//
+// Sized on the owner's pick of "strong": at 100 a run's score becomes the
+// largest single term, roughly tripling a great day against a bad one
+// (~250 XP busted vs ~950 at the top) where hand strength alone spans 275.
+export const XP_PER_SCORE_GRADE = 100;
+
+// Highest tier index, so the maximum contribution is derivable rather than
+// restated. Used by the tests and by anything sizing a progress display.
+export const MAX_SCORE_GRADE_RANK = SCORE_GRADES.length - 1;
 
 // Cumulative XP needed to REACH a level grows by this much more each level:
 // level 2 costs 300, level 3 a further 600, level 4 a further 900. That's a
@@ -67,12 +89,19 @@ export function xpForRun(result) {
   const bonusCount = Array.isArray(result.score?.extraBonuses) ? result.score.extraBonuses.length : 0;
   const achievementCount = Array.isArray(result.newlyUnlocked) ? result.newlyUnlocked.length : 0;
 
+  // Read defensively like every other term: a row written before scores were
+  // stored, or a corrupted one, grades as Busted and simply earns nothing here
+  // rather than throwing and taking out the whole profile.
+  const total = Number.isFinite(result.score?.total) ? result.score.total : 0;
+  const scoreGrade = gradeRank(gradeForScore(total).id);
+
   return Math.round(
     XP_BASE_PER_RUN +
       strength * XP_PER_HAND_STRENGTH +
       rating * XP_PER_DECISION_RATING +
       bonusCount * XP_PER_BONUS +
-      achievementCount * XP_PER_ACHIEVEMENT,
+      achievementCount * XP_PER_ACHIEVEMENT +
+      scoreGrade * XP_PER_SCORE_GRADE,
   );
 }
 

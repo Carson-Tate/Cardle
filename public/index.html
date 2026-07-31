@@ -23,13 +23,27 @@
            the RIGHTMOST slot (owner request). The auth slot is last so your name
            always sits at the far edge whether or not the Friends and Admin
            buttons are showing — with it in the middle, the position of your own
-           name shifted depending on whether you were an admin. -->
-      <button type="button" id="header-leaderboard-btn" class="header-friends-btn" aria-label="Leaderboards">🏆<span class="header-leaderboard-label"> Leaderboards</span></button>
-      <button type="button" id="header-friends-btn" class="header-friends-btn" hidden>Friends</button>
-      <!-- Shown only for admins. This is presentation, not access control —
-           the database authorizes every admin action (DESIGN.md §11f). -->
-      <button type="button" id="header-admin-btn" class="header-admin-btn" aria-label="Admin" hidden>🛠️<span class="header-admin-label"> Admin</span></button>
+           name shifted depending on whether you were an admin.
+
+           On narrow screens `.header-nav` collapses into the hamburger below
+           (owner request) while the auth slot stays put, so the XP bar remains
+           glanceable and the XP-gain animation keeps a visible target to fly
+           into. The SAME buttons serve both layouts — a second copy inside the
+           menu would need every `hidden` rule applied twice, and the Admin
+           button being wrongly visible is a mistake this project has already
+           made once (§11n). -->
+      <div class="header-nav" id="header-nav">
+        <button type="button" id="header-leaderboard-btn" class="header-friends-btn" aria-label="Leaderboards">🏆<span class="header-leaderboard-label"> Leaderboards</span></button>
+        <button type="button" id="header-friends-btn" class="header-friends-btn" hidden>Friends</button>
+        <!-- Shown only for admins. This is presentation, not access control —
+             the database authorizes every admin action (DESIGN.md §11f). -->
+        <button type="button" id="header-admin-btn" class="header-admin-btn" aria-label="Admin" hidden>🛠️<span class="header-admin-label"> Admin</span></button>
+      </div>
       <div id="header-auth-slot"></div>
+      <!-- Rendered at every width but only DISPLAYED under the mobile
+           breakpoint, so there is no markup swap at the boundary. -->
+      <button type="button" id="header-menu-btn" class="header-menu-btn" aria-label="Menu"
+              aria-expanded="false" aria-controls="header-nav">☰</button>
     </div>
   </header>
   <div id="app">

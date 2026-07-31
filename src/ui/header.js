@@ -10,6 +10,8 @@ import { nameplateHtml, PROFILE_UPDATED_EVENT } from './nameplate.js';
 import { getSession, onAuthStateChange, signInWithMagicLink, getProfile, createProfile } from '../state/auth.js';
 import { sendFriendRequest, getPendingRequests, getSentRequests, getFriends, acceptFriendRequest, removeFriendship, searchProfiles } from '../state/friends.js';
 import { isSupabaseConfigured } from '../state/supabase-client.js';
+import { loadOwnHistory, invalidateOwnHistory, XP_UPDATED_EVENT } from '../state/profile.js';
+import { derivePlayerStats } from '../core/player-stats.js';
 import { isCurrentUserAdmin } from '../state/admin.js';
 import { loadGameConfig } from '../state/game-config.js';
 
@@ -50,6 +52,8 @@ export function initHeader(root, { signInError = null } = {}) {
   const friendsBtn = root.querySelector('#header-friends-btn');
   const adminBtn = root.querySelector('#header-admin-btn');
   const leaderboardBtn = root.querySelector('#header-leaderboard-btn');
+  const menuBtn = root.querySelector('#header-menu-btn');
+  const headerNav = root.querySelector('#header-nav');
 
   // Mirrors whatever onAuthStateChange last reported — read by the friends
   // button and the auth slot's own click handler, so they always act on the
@@ -72,6 +76,36 @@ export function initHeader(root, { signInError = null } = {}) {
   // arrives — the header must paint immediately, so it cannot await this first.
   // Owner bug report: a granted title "doesnt show on my name".
   let customCosmetics = null;
+
+  // Lifetime XP for the bar beside the name. Null until the history it is
+  // DERIVED from arrives (progression.js recomputes XP from every stored run
+  // rather than keeping a running total), so the header paints immediately and
+  // the bar appears when it can — a slow or failed read costs the bar, never
+  // the name or the nav.
+  let levelStats = null;
+
+  async function refreshXp() {
+    if (!currentSession) {
+      levelStats = null;
+      return;
+    }
+    try {
+      const history = await loadOwnHistory(currentSession.user.id);
+      levelStats = derivePlayerStats(history);
+    } catch {
+      levelStats = null; // accounts still work; the bar just stays hidden
+    }
+    renderAuthSlot();
+  }
+
+  // Called by the board once a run has been scored and saved, so the bar catches
+  // up without a reload. Exposed on `window` rather than imported because
+  // board.js and header.js are siblings that deliberately know nothing about
+  // each other — the same reasoning as nameplate.js's PROFILE_UPDATED_EVENT.
+  window.addEventListener(XP_UPDATED_EVENT, () => {
+    invalidateOwnHistory();
+    refreshXp();
+  });
 
   loadGameConfig()
     .then((config) => {
@@ -155,11 +189,14 @@ export function initHeader(root, { signInError = null } = {}) {
     // top bar rather than a nameplate, and a full phrase like "Legend of the
     // Felt" would crowd it -- see ui/nameplate.js.
     const label = currentProfile?.username ?? '…';
-    authSlot.innerHTML = `<button type="button" class="header-user-btn">${
-      currentProfile
-        ? nameplateHtml(currentProfile, { variant: 'compact', fallbackName: label, custom: customCosmetics })
-        : `👤 ${escapeHtml(label)}`
-    }</button>`;
+    authSlot.innerHTML = `<button type="button" class="header-user-btn">
+      <span class="header-user-name">${
+        currentProfile
+          ? nameplateHtml(currentProfile, { variant: 'compact', fallbackName: label, custom: customCosmetics })
+          : `👤 ${escapeHtml(label)}`
+      }</span>
+      ${levelStats ? xpBarHtml(levelStats) : ''}
+    </button>`;
     // Owner request: clicking your own username goes to the profile page,
     // which is now where signing out and deleting the account live — so this
     // replaces the small sign-out-only modal that used to open here.
@@ -214,12 +251,14 @@ export function initHeader(root, { signInError = null } = {}) {
     currentSession = session;
     sessionResolved = true;
     refreshProfile();
+    refreshXp();
   });
 
   onAuthStateChange((session) => {
     currentSession = session;
     sessionResolved = true;
     refreshProfile();
+    refreshXp();
   });
 
   // Keeps the header's nameplate in step when the profile page changes a
@@ -231,6 +270,58 @@ export function initHeader(root, { signInError = null } = {}) {
     // drop everything else the header holds about the player.
     currentProfile = { ...currentProfile, ...event.detail };
     renderAuthSlot();
+  });
+
+  // The level bar under the name. Rendered only once lifetime XP is known, so
+  // the header never shows a bar at 0% that is about to jump.
+  function xpBarHtml(stats) {
+    const pct = Math.round((stats.levelProgress ?? 0) * 100);
+    const into = Math.round(stats.xpIntoLevel ?? 0);
+    const band = Math.round(stats.xpForNextLevel ?? 0);
+    return `<span class="header-xp" id="header-xp"
+      title="Level ${stats.level} — ${into.toLocaleString()} / ${band.toLocaleString()} XP to level ${stats.level + 1}">
+      <span class="header-xp-level">Lv ${stats.level}</span>
+      <span class="header-xp-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"
+            aria-label="Level ${stats.level}, ${pct}% to the next level">
+        <span class="header-xp-fill" style="width: ${pct}%"></span>
+      </span>
+    </span>`;
+  }
+
+  // --- Mobile menu --------------------------------------------------------
+  // The hamburger shows only under the CSS breakpoint; above it the nav is a
+  // plain row and this state is inert. `hidden` is not used to collapse the nav
+  // because it must reappear on resize without JS having to notice — the media
+  // query owns visibility, and this class only opens the dropdown.
+  let menuOpen = false;
+
+  function setMenuOpen(open) {
+    menuOpen = open;
+    headerNav.classList.toggle('header-nav--open', open);
+    menuBtn.setAttribute('aria-expanded', String(open));
+  }
+
+  menuBtn?.addEventListener('click', (event) => {
+    event.stopPropagation(); // else the document handler below closes it immediately
+    setMenuOpen(!menuOpen);
+  });
+
+  // Any tap outside closes it, which is what a dropdown is expected to do and
+  // the only way out on a touch device with no Escape key.
+  document.addEventListener('click', (event) => {
+    if (!menuOpen) return;
+    if (headerNav.contains(event.target) || menuBtn.contains(event.target)) return;
+    setMenuOpen(false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && menuOpen) setMenuOpen(false);
+  });
+
+  // Navigating away from a menu item should not leave the menu open behind the
+  // new page's paint.
+  headerNav.addEventListener('click', (event) => {
+    if (event.target.closest('button')) setMenuOpen(false);
   });
 
   function openHelpModal() {

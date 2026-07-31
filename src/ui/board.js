@@ -11,6 +11,8 @@ import { resolveRunConfig } from '../state/test-mode.js';
 import { loadGameConfig } from '../state/game-config.js';
 import { modifierOverrideFor } from '../core/game-config.js';
 import { recordRun, markAchievementsUnlocked } from '../state/stats.js';
+import { xpForRun } from '../core/progression.js';
+import { announceXpUpdate } from '../state/profile.js';
 import { getSession } from '../state/auth.js';
 import { claimTodaySeed, saveTodayResultForUser } from '../state/daily-play.js';
 import { generateStory, getStoryOptions, getDefaultSelections } from '../story/generator.js';
@@ -20,7 +22,7 @@ import { getDailyModifier, buildModifierById, modifierScoringMultiplier, MODIFIE
 import { gradeForScore } from '../core/score-grade.js';
 import { formatCountdown, msUntilNextReset } from '../core/game-day.js';
 import { createCardElement } from './card-view.js';
-import { delay, animateCountUp, flipCardToBack, flipReplaceCard, flySparks } from './animations.js';
+import { delay, animateCountUp, flipCardToBack, flipReplaceCard, flySparks, flyXpGain } from './animations.js';
 
 const DEFAULT_MAX_DISCARDS = 3; // overridden per day by a discardLimit-type modifier (DESIGN.md §4)
 
@@ -1229,6 +1231,41 @@ async function revealScore(resultPanel, result, fragments, shareBtn = null) {
     const achievementsEl = resultPanel.querySelector('#achievements-toast');
     achievementsEl.innerHTML = achievementsHtml(newlyUnlocked);
     achievementsEl.hidden = false;
+  }
+
+  // LAST, after every other reveal has finished (owner: "right after all the
+  // animations are done"). Deliberately below the achievements branch, since
+  // those add XP of their own — showing the number before they land would show
+  // a figure that does not match what was earned.
+  await delay(500);
+  await revealXpGain(result);
+}
+
+// Pops the run's XP beside the total, flies it into the header nameplate, then
+// tells the header to recompute. Awaited by the caller so a redeal cannot start
+// mid-flight, but every failure path is swallowed: this is the last decoration
+// of a run that is already saved and scored, and it must never be the thing that
+// throws.
+async function revealXpGain(result) {
+  try {
+    const gained = xpForRun(result);
+    if (gained <= 0) return;
+    const totalEl = document.querySelector('#result .score-total');
+    // The nameplate, not the bar: the bar is absent until lifetime XP loads,
+    // and the name is the target the owner asked for.
+    const target = document.querySelector('#header-auth-slot .header-user-name') ?? document.querySelector('#header-auth-slot');
+    await flyXpGain(totalEl, target, gained);
+
+    // Only now does the bar move, so the fill visibly responds to the number
+    // that just arrived rather than having crept up while it was in flight.
+    announceXpUpdate();
+    const xpEl = document.querySelector('#header-xp');
+    if (xpEl) {
+      xpEl.classList.add('header-xp--gained');
+      setTimeout(() => xpEl.classList.remove('header-xp--gained'), 800);
+    }
+  } catch (error) {
+    console.warn('XP animation skipped:', error);
   }
 }
 

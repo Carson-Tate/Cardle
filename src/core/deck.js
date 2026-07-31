@@ -54,16 +54,22 @@ export function hashSeed(str) {
   return hash >>> 0;
 }
 
-// A deterministic seed for a calendar day — every OTHER date-keyed daily
-// rotation (the modifier, the story-caption pools) derives its own seed the
-// same way. The player's own hand deal does NOT use this: each player gets
-// their own randomly-generated hand (owner request — previously everyone
-// got dealt the exact same cards), so that seed comes from
-// persistence.js's getOrCreateTodaySeed() instead. Kept here as a stable,
-// reproducible seed source for anything that genuinely should be identical
-// for every player on a given day.
+// A deterministic seed for a UTC calendar day.
+//
+// ⚠️ THIS IS NOT THE GAME DAY, and nothing in the shipped game calls it. The
+// modifier rotation and the caption pools both moved to `gameDayFor()` (§11l),
+// which rolls at 19:00 New York rather than midnight UTC — this comment used to
+// claim they derived their seeds "the same way" as this function, and that is
+// how a UTC/game-day mismatch got copied into the modifier override lookup and
+// silently un-pinned a scheduled modifier (§11q).
+//
+// Kept because the tests use it as a stable, dependency-free seed source, and
+// because "identical for every player on a given UTC day" is still a coherent
+// thing to want. If you need "the same for everyone playing TODAY'S hand", use
+// `gameDayFor()` — not this. The player's own deal uses neither: each player
+// gets their own random hand via persistence.js's getOrCreateTodaySeed().
 export function dailySeed(date = new Date()) {
-  const isoDate = date.toISOString().slice(0, 10); // YYYY-MM-DD, UTC day
+  const isoDate = date.toISOString().slice(0, 10); // YYYY-MM-DD, UTC day — see above
   return hashSeed(`cardle-${isoDate}`);
 }
 

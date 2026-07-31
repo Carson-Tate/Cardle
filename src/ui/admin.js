@@ -35,7 +35,7 @@ import {
 import { loadGameConfig, adminSetConfig, adminClearConfig } from '../state/game-config.js';
 import { dayNumber } from '../state/persistence.js';
 import { openModal } from './modal.js';
-import { gameDayFor } from '../core/game-day.js';
+import { gameDayFor, addGameDays, instantWithinGameDay } from '../core/game-day.js';
 
 function escapeHtml(value) {
   return String(value)
@@ -232,10 +232,19 @@ export async function initAdmin(root) {
   function modifierHtml() {
     const overrides = gameConfig?.modifierOverrides ?? {};
     const days = [];
+    // Stepped as GAME days (§11l), which is what a pin is keyed on. Two bugs
+    // lived in the previous `new Date(Date.now() + offset * 86_400_000)` plus
+    // `toISOString()`: the row labelled "Today" was keyed to the UTC date, which
+    // disagrees with the live game day for an hour each evening during EDT — so
+    // a pin saved in that window was filed under the wrong day and never applied
+    // (the owner's "it resets"). And adding fixed 24h blocks drifts across a DST
+    // change, which could list a day twice or skip one entirely.
+    const todayGameDay = gameDayFor(new Date());
     for (let offset = 0; offset < 14; offset++) {
-      const date = new Date(Date.now() + offset * 86_400_000);
-      const iso = date.toISOString().slice(0, 10);
-      const overrideId = modifierOverrideFor(overrides, date);
+      const iso = addGameDays(todayGameDay, offset);
+      // getDailyModifier and dayNumber take an instant, not a label.
+      const date = instantWithinGameDay(iso);
+      const overrideId = modifierOverrideFor(overrides, iso);
       days.push({ date, iso, offset, overrideId, effective: getDailyModifier(date, overrideId) });
     }
     const overrideCount = Object.keys(overrides).length;

@@ -14,6 +14,7 @@
 // client on boot, so one bad row could otherwise take the whole game down.
 
 import { MODIFIERS } from './modifiers.js';
+import { gameDayFor } from './game-day.js';
 import { FRAGMENTS, SLOT_META } from '../story/templates.js';
 
 export const CONFIG_KEYS = {
@@ -82,11 +83,26 @@ export function validateModifierOverrides(raw) {
   return { value, errors };
 }
 
-/** The override id for a given date, or null. Safe against unvalidated input. */
+/**
+ * The override id for a given day, or null. Safe against unvalidated input.
+ *
+ * KEYED ON THE GAME DAY (§11l), not the UTC calendar date. This used to call
+ * `toISOString().slice(0,10)`, which disagrees with the rest of the app for one
+ * hour a day during EDT: the game day rolls at 19:00 New York, the UTC date at
+ * 20:00. Owner bug report — "when i switch the modifier of today i think it
+ * resets". Two things went wrong in that window. A pin kept applying for an hour
+ * after its day had ended, leaking yesterday's modifier onto the new hand; and a
+ * pin made during that hour was filed under the previous date, so it silently
+ * stopped applying to the day it was meant for. It looked like a deploy had
+ * cleared it, because a deploy is what prompts the reload where you notice.
+ *
+ * @param {object} overrides - the stored map, trusted or not
+ * @param {Date|string} [date] - an instant, or a YYYY-MM-DD game day directly
+ */
 export function modifierOverrideFor(overrides, date = new Date()) {
   const { value } = validateModifierOverrides(overrides);
-  const iso = date instanceof Date ? date.toISOString().slice(0, 10) : String(date);
-  return value[iso] ?? null;
+  const day = date instanceof Date ? gameDayFor(date) : String(date);
+  return value[day] ?? null;
 }
 
 // ---------------------------------------------------------------------------

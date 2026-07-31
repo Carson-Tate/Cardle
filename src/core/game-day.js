@@ -69,6 +69,42 @@ export function gameDayFor(date = new Date()) {
 }
 
 /**
+ * `offset` game days after (or before) a YYYY-MM-DD game day.
+ *
+ * Pure date arithmetic on the LABEL, deliberately — stepping a schedule by
+ * adding 86,400,000ms to a real instant is wrong twice a year, because a DST
+ * shift moves the New York wall clock by an hour and can carry an instant across
+ * the 19:00 boundary. That would make a day appear twice, or vanish, in the
+ * admin's schedule. A date string has no timezone and no DST, so incrementing it
+ * cannot drift.
+ *
+ * @param {string} isoDay - YYYY-MM-DD
+ * @param {number} offset - days to add (may be negative)
+ * @returns {string} YYYY-MM-DD
+ */
+export function addGameDays(isoDay, offset) {
+  const base = new Date(`${isoDay}T00:00:00Z`);
+  base.setUTCDate(base.getUTCDate() + offset);
+  return isoFrom(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate());
+}
+
+/**
+ * A representative instant inside a given game day, for the several APIs that
+ * take a `Date` rather than a day label (getDailyModifier, gameDayNumber).
+ *
+ * Noon UTC is 07:00 or 08:00 in New York depending on DST — always after
+ * midnight and always well before the 19:00 reset — so `gameDayFor()` maps it
+ * back to exactly `isoDay`, every day of the year. Midnight UTC would NOT: in
+ * summer that is 20:00 the previous evening, already past the reset.
+ *
+ * @param {string} isoDay - YYYY-MM-DD
+ * @returns {Date}
+ */
+export function instantWithinGameDay(isoDay) {
+  return new Date(`${isoDay}T12:00:00Z`);
+}
+
+/**
  * The UTC instant of a given New York wall-clock time.
  *
  * Iterates because the UTC offset depends on the instant we're solving for —

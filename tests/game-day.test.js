@@ -8,6 +8,8 @@ import {
   resetCountdown,
   formatCountdown,
   gameDayNumber,
+  addGameDays,
+  instantWithinGameDay,
 } from '../src/core/game-day.js';
 
 const at = (iso) => new Date(iso);
@@ -177,5 +179,50 @@ describe('gameDayNumber', () => {
     const after = gameDayNumber(at('2026-07-30T23:00:00Z'));
     assert.equal(after, before + 1, 'the number should tick over with the reset');
     assert.equal(gameDayNumber(at('2026-07-31T00:30:00Z')), after, 'and not again at midnight UTC');
+  });
+});
+
+// Stepping and sampling game days, which the admin's 14-day modifier schedule
+// depends on. Both exist because the obvious implementations are wrong twice a
+// year: adding 86,400,000ms drifts across a DST change, and midnight UTC lands
+// on the WRONG game day all summer (20:00 the previous evening, past the reset).
+describe('addGameDays / instantWithinGameDay', () => {
+  test('steps forward and backward on the label', () => {
+    assert.equal(addGameDays('2026-08-01', 1), '2026-08-02');
+    assert.equal(addGameDays('2026-08-01', 0), '2026-08-01');
+    assert.equal(addGameDays('2026-08-01', -1), '2026-07-31');
+    assert.equal(addGameDays('2026-08-31', 1), '2026-09-01', 'month boundary');
+    assert.equal(addGameDays('2026-12-31', 1), '2027-01-01', 'year boundary');
+    assert.equal(addGameDays('2028-02-28', 1), '2028-02-29', 'leap day');
+  });
+
+  test('crosses both DST transitions without repeating or skipping a day', () => {
+    // US DST in 2026: forward Mar 8, back Nov 1.
+    assert.equal(addGameDays('2026-03-07', 1), '2026-03-08');
+    assert.equal(addGameDays('2026-03-08', 1), '2026-03-09');
+    assert.equal(addGameDays('2026-10-31', 1), '2026-11-01');
+    assert.equal(addGameDays('2026-11-01', 1), '2026-11-02');
+  });
+
+  test('instantWithinGameDay round-trips through gameDayFor, every day of a year', () => {
+    // The property the admin schedule relies on: the instant chosen to represent
+    // a day must map back to that same day, in EST and EDT alike.
+    let day = '2026-01-01';
+    for (let i = 0; i < 365; i++) {
+      assert.equal(gameDayFor(instantWithinGameDay(day)), day, `round-trip failed on ${day}`);
+      day = addGameDays(day, 1);
+    }
+  });
+
+  test('a 14-day schedule built from these is 14 distinct consecutive days', () => {
+    // Exactly what ui/admin.js builds, started on the spring-forward day.
+    const days = [];
+    let cursor = '2026-03-07';
+    for (let offset = 0; offset < 14; offset++) {
+      days.push(cursor);
+      cursor = addGameDays(cursor, 1);
+    }
+    assert.equal(new Set(days).size, 14, 'no day appears twice');
+    assert.equal(days[13], '2026-03-20');
   });
 });

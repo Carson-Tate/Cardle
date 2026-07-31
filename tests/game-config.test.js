@@ -10,6 +10,7 @@ import {
   validateCustomCosmetics,
 } from '../src/core/game-config.js';
 import { MODIFIERS, getDailyModifier } from '../src/core/modifiers.js';
+import { gameDayFor } from '../src/core/game-day.js';
 import { FRAGMENTS } from '../src/story/templates.js';
 import { buildStoryText } from '../src/story/generator.js';
 import { resolveCosmetics, resolveEquipped, effectiveRegistries, NAME_PAINTS } from '../src/core/cosmetics.js';
@@ -61,6 +62,31 @@ describe('validateModifierOverrides', () => {
     assert.equal(modifierOverrideFor(overrides, new Date('2026-08-02T12:00:00Z')), null);
     assert.equal(modifierOverrideFor('garbage', new Date('2026-08-01T12:00:00Z')), null);
     assert.equal(modifierOverrideFor(null, new Date('2026-08-01T12:00:00Z')), null);
+  });
+
+  // THE PINNED MODIFIER "RESETTING" (owner bug report). The rotation is keyed on
+  // the GAME day, which rolls at 19:00 New York, but the override lookup used to
+  // key on `toISOString().slice(0,10)` — the UTC calendar date, which rolls at
+  // 20:00 during EDT. That one-hour disagreement did two visible things: an
+  // override kept applying for an hour after its day had ended, and then stopped
+  // applying to the day it was actually pinned to.
+  //
+  // 23:30 UTC on Aug 1 is 19:30 EDT — past the reset, so this instant belongs to
+  // game day Aug 2. The UTC date still reads Aug 1.
+  test('modifierOverrideFor keys on the GAME day, not the UTC date', () => {
+    const justAfterReset = new Date('2026-08-01T23:30:00Z'); // 19:30 EDT -> game day Aug 2
+    assert.equal(gameDayFor(justAfterReset), '2026-08-02');
+
+    // Yesterday's pin must NOT leak into the new game day.
+    assert.equal(modifierOverrideFor({ '2026-08-01': 'highRoller' }, justAfterReset), null);
+    // And the pin for the day that is actually live must be found.
+    assert.equal(modifierOverrideFor({ '2026-08-02': 'highRoller' }, justAfterReset), 'highRoller');
+  });
+
+  test('modifierOverrideFor accepts a game-day string as well as a Date', () => {
+    const overrides = { '2026-08-01': 'highRoller' };
+    assert.equal(modifierOverrideFor(overrides, '2026-08-01'), 'highRoller');
+    assert.equal(modifierOverrideFor(overrides, '2026-08-02'), null);
   });
 });
 

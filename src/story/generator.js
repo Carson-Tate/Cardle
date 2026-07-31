@@ -25,11 +25,11 @@ function endingKeyFor(finalHandResult) {
 // entirely, nothing to rotate.
 const DAILY_POOL_SIZE = 16;
 
-// UTC calendar day, matching dailySeed()'s convention in deck.js — captions
-// rotate once per real day, in lockstep with the actual daily puzzle, the
-// same for every player that day.
 // Game day (§11l), so the caption vocabulary rotates in lockstep with the hand
-// and the modifier rather than at midnight UTC.
+// and the modifier rather than at midnight UTC — the same for every player on a
+// given day's puzzle. (This deliberately does NOT follow deck.js's dailySeed(),
+// which is still UTC-based; an out-of-date comment here claiming it did is part
+// of how the modifier-override bug in §11q came about.)
 function isoDay(date) {
   return gameDayFor(date);
 }

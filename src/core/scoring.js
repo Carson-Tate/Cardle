@@ -1,6 +1,13 @@
 import { evaluateHand, handStrengthIndex, contributingIndices, longestConsecutiveRunIndices } from './hand-evaluator.js';
 import { evaluateBonuses } from './bonus-registry.js';
-import { RARITY_BY_ID, pointsForRarity, multiplierForRarity } from './rarity.js';
+import {
+  RARITY_BY_ID,
+  LEGACY_JOKER_RARITY,
+  WILD_POINTS,
+  isWild,
+  pointsForRarity,
+  multiplierForRarity,
+} from './rarity.js';
 
 const ACE = 14;
 const FACE_RANKS = new Set([11, 12, 13]); // Jack, Queen, King (Ace excluded — scored separately)
@@ -159,17 +166,42 @@ export function cardValueBonus(cards) {
 // *modest*, unconditional reward for simply holding a rare card — see
 // handSynergyBonus in scoreRun() below for the much larger payoff that
 // requires the card to genuinely be part of a scoring combination.
+// One card can now produce TWO rows — wildness and rarity are independent
+// (§3x), so a Bronze Wild is genuinely both and is paid for both. `share`
+// scales the payout for the discarded-card variant below.
+function rarityRowsFor(card, index, share = 1) {
+  const rows = [];
+
+  // The wild's own flat bonus. Skipped for a LEGACY stored wild
+  // (`rarity: 'joker'`), whose payout already comes through the rarity row
+  // below — paying both would silently inflate old hands if they were ever
+  // re-scored.
+  if (card.wild === true) {
+    const points = Math.round(WILD_POINTS * share);
+    rows.push({ card, index, rarity: 'wild', jokerTier: null, emoji: '🃏', label: 'Wild', points });
+  }
+
+  const tier = card.rarity ? RARITY_BY_ID[card.rarity] ?? LEGACY_JOKER_RARITY : null;
+  if (tier) {
+    const points = Math.round(pointsForRarity(card.rarity, card.rank, card.jokerTier) * share);
+    const jokerFlavor = card.rarity === 'joker' ? (RARITY_BY_ID[card.jokerTier] ?? RARITY_BY_ID.bronze) : null;
+    // A NEW wild that also rolled a tier reads as "Bronze Wild" too, which is
+    // what it is — the legacy path arrives at the same label by a different
+    // route.
+    const label = jokerFlavor ? `${jokerFlavor.label} Wild` : card.wild === true ? `${tier.label} Wild` : tier.label;
+    rows.push({ card, index, rarity: tier.id, jokerTier: card.jokerTier ?? null, emoji: tier.emoji, label, points });
+  }
+  return rows;
+}
+
 export function rarityBonus(cards) {
   const items = [];
   let total = 0;
   cards.forEach((card, index) => {
-    const tier = card.rarity ? RARITY_BY_ID[card.rarity] : null;
-    if (!tier) return;
-    const points = pointsForRarity(card.rarity, card.rank, card.jokerTier);
-    const jokerFlavor = card.rarity === 'joker' ? (RARITY_BY_ID[card.jokerTier] ?? RARITY_BY_ID.bronze) : null;
-    const label = jokerFlavor ? `${jokerFlavor.label} Wild` : tier.label;
-    items.push({ card, index, rarity: tier.id, jokerTier: card.jokerTier ?? null, emoji: tier.emoji, label, points });
-    total += points;
+    for (const row of rarityRowsFor(card, index)) {
+      items.push(row);
+      total += row.points;
+    }
   });
   return { items, total };
 }
@@ -191,14 +223,10 @@ export function discardedRarityBonus(discardedCards) {
   const items = [];
   let total = 0;
   discardedCards.forEach((card, index) => {
-    const tier = card.rarity ? RARITY_BY_ID[card.rarity] : null;
-    if (!tier) return;
-    const fullPoints = pointsForRarity(card.rarity, card.rank, card.jokerTier);
-    const points = Math.round(fullPoints * DISCARD_RARITY_SHARE);
-    const jokerFlavor = card.rarity === 'joker' ? (RARITY_BY_ID[card.jokerTier] ?? RARITY_BY_ID.bronze) : null;
-    const label = jokerFlavor ? `${jokerFlavor.label} Wild` : tier.label;
-    items.push({ card, index, rarity: tier.id, jokerTier: card.jokerTier ?? null, emoji: tier.emoji, label, points });
-    total += points;
+    for (const row of rarityRowsFor(card, index, DISCARD_RARITY_SHARE)) {
+      items.push(row);
+      total += row.points;
+    }
   });
   return { items, total };
 }
@@ -250,7 +278,7 @@ export function rarityMultiplier(cards) {
 export function logicalCardsFor(finalHand, finalHandResult) {
   if (!finalHandResult.hasWildJoker) return finalHand;
   return finalHand.map((card) =>
-    card.rarity === 'joker'
+    isWild(card)
       ? { rank: finalHandResult.wildSubstitution.rank, suit: finalHandResult.wildSubstitution.suit }
       : card,
   );

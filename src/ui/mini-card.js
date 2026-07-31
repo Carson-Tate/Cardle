@@ -6,6 +6,7 @@
 // drifts — one gains a rarity ring or a Wild case and the other doesn't.
 
 import { rankLabel, suitGlyph } from '../core/deck.js';
+import { isWild } from '../core/rarity.js';
 
 function escapeHtml(value) {
   return String(value)
@@ -24,8 +25,13 @@ export function miniCardHtml(card) {
   if (!card || typeof card !== 'object') return '';
   // Rarity gets a coloured ring so a run that pulled something rare is visible
   // at a glance without opening it.
-  const rarity = card.rarity ? ` history-card--${escapeHtml(card.rarity)}` : '';
-  if (card.rarity === 'joker') {
+  // Wildness is independent of rarity now (§3x): a wild still shows the jester,
+  // and keeps its tier ring if it rolled one. Legacy stored cards carry
+  // `rarity: 'joker'` instead, and this is the surface that renders them most —
+  // the profile's hand history and the leaderboard's mini hands.
+  const ringTier = card.rarity && card.rarity !== 'joker' ? card.rarity : card.jokerTier ?? null;
+  const rarity = ringTier ? ` history-card--${escapeHtml(ringTier)}` : '';
+  if (isWild(card)) {
     return `<span class="history-card history-card--wild${rarity}" title="Wild">🃏</span>`;
   }
   const red = card.suit === 'H' || card.suit === 'D';

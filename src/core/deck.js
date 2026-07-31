@@ -1,6 +1,10 @@
-// Card representation: { rank: 2-14 (14 = Ace), suit: 'S'|'H'|'D'|'C', rarity: null | 'bronze' | 'silver' | 'gold' | 'joker' }
+// Card representation: { rank: 2-14 (14 = Ace), suit: 'S'|'H'|'D'|'C',
+//   rarity: null | 'bronze' | 'silver' | 'gold' | 'diamond', wild: boolean }
+// `wild` is INDEPENDENT of `rarity` (rarity.js) — a wild can be plain or any
+// tier. Older stored cards instead carry `rarity: 'joker'` with a `jokerTier`;
+// read wildness through `isWild()` so both shapes work.
 
-import { RARITIES, TOTAL_SPECIAL_CHANCE, jokerTierForRoll } from './rarity.js';
+import { RARITIES, TOTAL_SPECIAL_CHANCE, WILD_CHANCE } from './rarity.js';
 
 export const SUITS = ['S', 'H', 'D', 'C'];
 export const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
@@ -132,6 +136,9 @@ export function rarityForRoll(roll, luckMultiplier = 1) {
 // sequencing a given seed produces never depends on which cards happened to
 // land rare — only *which* rarity/tier a card gets does.
 //
+// `luckMultiplier` also scales the wild chance, so the admin panel's luck
+// slider previews wilds as readily as it previews rare tiers.
+//
 // `luckMultiplier` (default 1, i.e. no effect) is forwarded straight to
 // rarityForRoll()'s own proportional scaling — see that function's comment
 // for why the roll itself is no longer shrunk before the lookup (that
@@ -143,10 +150,13 @@ export function dealHand(seed, count = 5, { luckMultiplier = 1 } = {}) {
   const rng = createRng(seed);
   const shuffled = shuffle(createDeck(), rng);
   const withRarity = shuffled.map((card) => {
+    // STILL EXACTLY TWO rng() CALLS PER CARD, always both consumed. The second
+    // used to pick a joker's sub-tier and now decides wildness, but keeping the
+    // count identical means a given seed deals the same ranks and suits as it
+    // always did — only what those cards rolled has changed.
     const rarity = rarityForRoll(rng(), luckMultiplier);
-    const jokerTierRoll = rng();
-    const jokerTier = rarity === 'joker' ? jokerTierForRoll(jokerTierRoll) : null;
-    return { ...card, rarity, jokerTier };
+    const wild = rng() < Math.min(WILD_CHANCE * luckMultiplier, 1);
+    return { ...card, rarity, wild };
   });
   return {
     hand: withRarity.slice(0, count),

@@ -64,18 +64,66 @@ export const RARITIES = [
   // silently mismatch any already-saved result (localStorage, or a signed-in
   // player's `daily_plays` row, §11c) that recorded `rarity: 'joker'` before
   // this label existed.
-  { id: 'joker', emoji: '🃏', label: 'Wild', chance: 0.002 },
   { id: 'diamond', emoji: '💎', label: 'Diamond', chance: 0.001, basePoints: 850, perRankPoints: 70, multiplier: 15 },
 ];
 
+// ── WILD IS NO LONGER A RARITY TIER ────────────────────────────────────────
+// Owner: "i want wilds to be normal cards that appear, not just rare cards, but
+// i also still want it to have less of a chance of showing than a normal card by
+// a little. it can still spawn with rarities tho."
+//
+// So wildness became its own axis. A card now rolls `wild` INDEPENDENTLY of
+// `rarity`, which means a Wild can be plain, or Bronze, or Diamond — combinations
+// the old model could not express, because being wild WAS the rarity.
+//
+// The frequency is the owner's pick of "like a 53rd card in the deck": an
+// ordinary card is 1/52 = 1.92%, so 1.8% is a shade under it. That works out to
+// a Wild in roughly one hand in eleven, against one in a hundred before.
+export const WILD_CHANCE = 0.018;
+
+// Every Wild pays this flat, whatever it rolled for rarity (owner's pick over
+// "no bonus"). Flat rather than rank-scaled for the reason the old joker tier
+// was: a wild's underlying rank is an implementation detail of the substitution
+// search, not something the player experiences. Sized at roughly what a Bronze
+// pays, which is what the choice described.
+//
+// Deliberately NO multiplier of its own. Wilds are ~9x more common than they
+// were, and their real payoff is completing a hand they had no business
+// completing — stacking a whole-score multiplier on top of that as well would
+// make them the dominant scoring force rather than a lucky break. A wild that
+// ALSO rolls Bronze/Gold/etc still gets that tier's multiplier, because that is
+// the rarity paying out, not the wildness.
+export const WILD_POINTS = 200;
+
+// The legacy 'joker' rarity, kept out of RARITIES so nothing can roll it again,
+// but still resolvable by id.
+//
+// STORED RESULTS PREDATE THIS SPLIT. Every hand already saved — in localStorage
+// and in `daily_plays` — has its wild recorded as `rarity: 'joker'` with a
+// `jokerTier`, and those rows are still read back: the profile's hand history
+// renders them, and the leaderboard RE-EVALUATES them to name the hand (§11n).
+// Drop this and every historical wild silently stops being wild, quietly
+// downgrading old hands on the boards.
+export const LEGACY_JOKER_RARITY = { id: 'joker', emoji: '🃏', label: 'Wild', chance: 0 };
+
+/**
+ * Whether a card plays as wild — the ONE definition, used by the evaluator, the
+ * scorer and both card renderers.
+ *
+ * Accepts both shapes on purpose: the new `wild` flag, and the old
+ * `rarity: 'joker'` that every stored hand still uses.
+ */
+export function isWild(card) {
+  return Boolean(card) && (card.wild === true || card.rarity === 'joker');
+}
+
 export const RARITY_BY_ID = Object.fromEntries(RARITIES.map((tier) => [tier.id, tier]));
 
-// Bronze/Silver/Gold/Diamond, in the order a Joker's nested roll walks them
-// — everything in RARITIES except the 'joker' gateway entry itself. Adding
-// a new non-joker tier here automatically becomes a Joker flavor too, same
-// as the owner's "same rarities as the normal cards" request already
-// established for Bronze/Silver/Gold.
-const JOKER_SUB_TIERS = RARITIES.filter((tier) => tier.id !== 'joker');
+// LEGACY. A wild used to roll a nested "which tier am I" sub-roll, because being
+// wild occupied the rarity slot itself. Wilds now roll rarity directly like any
+// other card, so nothing produces a jokerTier any more — this survives only to
+// keep already-stored results scoring the way they did when they were played.
+const JOKER_SUB_TIERS = RARITIES;
 const JOKER_SUB_TIER_WEIGHT_TOTAL = JOKER_SUB_TIERS.reduce((sum, tier) => sum + tier.chance, 0);
 
 // Combined odds of landing on any special tier at all, for reference/tests.
@@ -101,6 +149,7 @@ export function jokerTierForRoll(roll) {
 // flat, regardless of rank — jokerTier selects which non-joker tier's
 // basePoints applies. See scoring.js rarityBonus().
 export function pointsForRarity(rarityId, rank, jokerTier = null) {
+  // Legacy stored wilds only — nothing rolls this id any more.
   if (rarityId === 'joker') {
     const tier = RARITY_BY_ID[jokerTier] ?? RARITY_BY_ID.bronze;
     return tier.basePoints;
@@ -113,6 +162,7 @@ export function pointsForRarity(rarityId, rank, jokerTier = null) {
 // The multiplicative factor a single rare card contributes (scoring.js's
 // rarityMultiplier() stacks these across every rare card in the hand).
 export function multiplierForRarity(rarityId, jokerTier = null) {
+  // Legacy stored wilds only — see pointsForRarity.
   if (rarityId === 'joker') {
     const tier = RARITY_BY_ID[jokerTier] ?? RARITY_BY_ID.bronze;
     return tier.multiplier;

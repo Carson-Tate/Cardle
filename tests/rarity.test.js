@@ -1,6 +1,15 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { RARITIES, RARITY_BY_ID, TOTAL_SPECIAL_CHANCE, pointsForRarity, multiplierForRarity, jokerTierForRoll } from '../src/core/rarity.js';
+import {
+  RARITIES,
+  RARITY_BY_ID,
+  TOTAL_SPECIAL_CHANCE,
+  WILD_CHANCE,
+  isWild,
+  pointsForRarity,
+  multiplierForRarity,
+  jokerTierForRoll,
+} from '../src/core/rarity.js';
 
 describe('pointsForRarity', () => {
   test('computes basePoints + perRankPoints * rank for each non-joker tier', () => {
@@ -122,14 +131,33 @@ describe('RARITIES / RARITY_BY_ID / TOTAL_SPECIAL_CHANCE', () => {
     assert.ok(TOTAL_SPECIAL_CHANCE > 0 && TOTAL_SPECIAL_CHANCE < 1);
   });
 
-  test('joker is rarer than bronze/silver/gold, but diamond (owner request) is rarer still', () => {
-    const joker = RARITY_BY_ID.joker;
+  test('wild is no longer a rarity tier, and diamond is the rarest that remains', () => {
+    // Wild became its own card property (§3x, owner: "i want wilds to be normal
+    // cards that appear, not just rare cards"), so it must not be rollable.
+    assert.equal(RARITIES.find((tier) => tier.id === 'joker'), undefined);
     const diamond = RARITY_BY_ID.diamond;
     for (const tier of RARITIES) {
-      if (tier.id === 'joker' || tier.id === 'diamond') continue;
-      assert.ok(joker.chance < tier.chance);
+      if (tier.id === 'diamond') continue;
+      assert.ok(diamond.chance < tier.chance, `diamond should be rarer than ${tier.id}`);
     }
-    assert.ok(diamond.chance < joker.chance, 'diamond should be the single rarest tier in the game');
+  });
+
+  test('a wild is slightly rarer than an ordinary card, and far commoner than it was', () => {
+    assert.ok(WILD_CHANCE < 1 / 52, 'a wild should be rarer than any one ordinary card');
+    assert.ok(WILD_CHANCE > 0.01, 'but not by much — it is a card, not a rare tier');
+    assert.ok(WILD_CHANCE > 0.002 * 5, 'and much commoner than the old 0.2% joker tier');
+  });
+
+  test('isWild accepts both the new flag and the stored legacy shape', () => {
+    // Every already-saved hand records its wild as `rarity: 'joker'`, and the
+    // leaderboard re-evaluates those rows to name the hand — so the old shape
+    // has to keep reading as wild forever.
+    assert.equal(isWild({ rank: 5, suit: 'S', wild: true }), true);
+    assert.equal(isWild({ rank: 5, suit: 'S', rarity: 'joker', jokerTier: 'gold' }), true);
+    assert.equal(isWild({ rank: 5, suit: 'S', wild: false, rarity: 'gold' }), false);
+    assert.equal(isWild({ rank: 5, suit: 'S' }), false);
+    assert.equal(isWild(null), false);
+    assert.equal(isWild(undefined), false);
   });
 
   test('diamond has an insanely high multiplier relative to gold (owner request)', () => {

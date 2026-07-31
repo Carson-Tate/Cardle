@@ -369,6 +369,30 @@ Verified live via Playwright with both a bare J-Q-K run (J♦ Q♦ K♦ + 2♣ 7
 
 ---
 
+### 3x. Wild Becomes a Card Property, Not a Rarity Tier ✅ built (owner: "i want wilds to be normal cards that appear, not just rare cards, but i also still want it to have less of a chance of showing than a normal card by a little. it can still spawn with rarities tho")
+
+Wild used to BE a rarity — `rarity: 'joker'` at 0.2% per card, sitting in the same ladder as Bronze and Gold, with a nested sub-roll deciding which tier it "counted as" for scoring. That made two unrelated ideas share one slot: a card could be wild, or rare, never both.
+
+Wildness is now its own axis. A card rolls `wild` independently of `rarity`, so a Gold Wild is a real thing — it completes the hand *and* multiplies the score.
+
+**Frequency is the owner's pick of "like a 53rd card in the deck":** 1.8% per card against an ordinary card's 1/52 = 1.92%. That is a Wild in roughly one hand in eleven, against one in a hundred before — a nine-fold increase, which is why the per-wild payoff was reduced to compensate. Every Wild pays a flat bonus (the owner's choice over none), sized at roughly what a Bronze pays. It deliberately carries **no multiplier of its own**: at this frequency, stacking a whole-score multiplier on top of "it completes a hand it had no business completing" would make wilds the dominant scoring force rather than a lucky break. A wild that also rolls a tier still gets that tier's multiplier, because that is the rarity paying out, not the wildness.
+
+**The RNG call count per card is unchanged at two.** The second used to pick a joker's sub-tier and now decides wildness, so a given seed still deals exactly the same ranks and suits it always did — only what those cards rolled has changed. That kept the blast radius to rarity/wildness assertions instead of every seeded hand in the suite.
+
+**Backwards compatibility is not optional here.** Every hand already stored — in localStorage and in `daily_plays` — records its wild as `rarity: 'joker'` with a `jokerTier`, and those rows are still read: the profile renders them, and the leaderboard RE-EVALUATES them to name the hand (§11n). So `isWild()` is the single definition and accepts both shapes; `pointsForRarity`/`multiplierForRarity` still resolve the retired id; and the card renderers still draw a legacy wild with its tier ring. Without that, every historical wild would silently stop being wild and quietly downgrade old hands on the boards.
+
+**Reveal drama needed rethinking too.** Pacing was keyed off the rarity id, and wild was one. A plain Wild is still a moment, so `revealDramaFor()` takes the SLOWER of the card's rarity pacing and the wild pacing — the rarer thing sets the beat — and the glow now fires for a plain wild as well as a rare card.
+
+**The How to Play modal was rewritten around the same split** (owner: "make the how to play instructions better. say something about what the goal is and separate the wild from the rare card"). It now opens with the goal stated plainly, then the steps, then Wild and rare cards as two separate sections. Wild gets a worked example — `9♠ 9♥ 4♦ 🃏` plays as a third nine; four hearts and a Wild finishes the flush — because "it becomes what you need" is abstract until you see it. The old copy listed Wild as the fourth item in "🥉 Bronze, 🥈 Silver, 🥇 Gold, 🃏 Wild", which is exactly the framing that made it read as just another rare tier.
+
+**Verified** with 34 browser assertions and the existing unit suites: a wild completing Three of a Kind where the same hand without it is a Pair, a legacy stored wild still evaluating as wild, a plain wild paying exactly its flat bonus as one row, a Gold Wild paying both as two rows, all five render permutations (ordinary / rare / plain wild / rare wild / legacy wild), and the help text's claims matching what scoring actually does.
+
+**One copy bug caught by writing the test.** The first draft said a Wild "isn't worth points for being wild" — true of the design I had assumed, false of the one the owner picked. There is now an assertion that the modal does not deny the bonus, so the copy cannot drift back out of step with the scorer.
+
+**And one of my own.** The new plain "Show Wild" admin button carried only `data-force-wild`, while the click handler was bound to `[data-force]` — so it rendered perfectly and did nothing. Found by driving the real button rather than trusting that it existed.
+
+---
+
 ## 4. Daily Modifiers
 
 Full target roster, organized by twist type, **plus two new discard-range modifiers per §9.3** (unchanged from the original spec — this is still the long-term goal; §4a below is the first-pass subset actually built):
@@ -1460,3 +1484,11 @@ None of the three touch `dailySeed`/`hashSeed` or persistence — every redeal d
     - **A branded third-party button is a remote image.** Ad blockers stop it by default, so the "support" link would be an empty box for a good share of visitors. A styled text link always renders, and keeps the project's one-external-dependency rule intact.
     - **`target="_blank"` without `rel="noopener"` hands the opened tab a handle back to yours.** Cheap to get right, invisible when wrong.
     - **`margin-top: auto` on the last child of a `100vh` flex column** is what pins a footer to the bottom on short pages without pinning it over content on long ones.
+75. **Wild becomes a card property, not a rarity tier** (§3x).
+    - **Two ideas sharing one field means neither can vary independently.** Wild occupied the rarity slot, so a card could be wild OR rare, never both. Splitting the axis made "Gold Wild" expressible at all.
+    - **Raising a thing's frequency means lowering its per-instance payoff.** Wilds went from ~1 hand in 100 to ~1 in 11, so the multiplier came off and a flat bonus replaced it. Frequency and reward are one decision, not two.
+    - **Keep the RNG call count identical when changing what a roll MEANS.** Two calls per card before and after, so every seed still deals the same ranks and suits — the change stayed contained to what those cards rolled.
+    - **Stored rows outlive the model that wrote them.** Every saved hand records its wild as `rarity: 'joker'`, and the leaderboard re-evaluates those rows to name the hand. One `isWild()` reading both shapes is what stops history silently rewriting itself.
+    - **When a category stops being a category, everything keyed off it needs revisiting** — reveal pacing was a lookup by rarity id, and wild was one of them. It now takes the slower of the two sources.
+    - **Writing the test caught the copy lying.** The help text claimed a wild pays nothing, which was true of the design I assumed and false of the one chosen. Documentation is an assertion; test it like one.
+    - **A new button with a new attribute needs the listener's selector widened.** "Show Wild" had only `data-force-wild` while the handler bound `[data-force]` — it rendered and did nothing.

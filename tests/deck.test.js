@@ -116,25 +116,45 @@ describe('dealHand', () => {
     assert.deepEqual(a.drawPile.map((c) => c.rarity), b.drawPile.map((c) => c.rarity));
   });
 
-  test('every joker-rarity card also has a jokerTier; every other card has a null jokerTier', () => {
-    // Scan a wide range of seeds since jokers are rare (~0.2%/card) — with
-    // 52 cards/seed this reliably turns up several across a few hundred tries.
-    let sawAJoker = false;
-    for (let seed = 0; seed < 300; seed++) {
+  test('wildness is rolled independently of rarity, and both can land on one card', () => {
+    // Wild is no longer a rarity tier (§3x): a card carries `wild` on its own
+    // and may ALSO have rolled bronze/silver/gold/diamond. At ~1.8%/card a few
+    // hundred seeds x 52 cards turns up plenty of both.
+    let sawWild = false;
+    let sawPlainWild = false;
+    let sawWildWithRarity = false;
+    for (let seed = 0; seed < 400; seed++) {
       const { hand, drawPile } = dealHand(seed);
       for (const card of [...hand, ...drawPile]) {
-        if (card.rarity === 'joker') {
-          sawAJoker = true;
-          assert.ok(
-            ['bronze', 'silver', 'gold'].includes(card.jokerTier),
-            `joker card had invalid jokerTier: ${card.jokerTier}`,
-          );
-        } else {
-          assert.equal(card.jokerTier, null);
-        }
+        assert.equal(typeof card.wild, 'boolean', 'every card states whether it is wild');
+        // Nothing rolls the retired tier any more.
+        assert.notEqual(card.rarity, 'joker');
+        if (!card.wild) continue;
+        sawWild = true;
+        if (card.rarity === null) sawPlainWild = true;
+        else sawWildWithRarity = true;
       }
     }
-    assert.ok(sawAJoker, 'expected at least one joker across 300 seeds x 52 cards');
+    assert.ok(sawWild, 'no wild card appeared in 400 seeds');
+    assert.ok(sawPlainWild, 'a wild with no rarity should be the common case');
+    assert.ok(sawWildWithRarity, 'a wild that also rolled a rarity should be possible');
+  });
+
+  test('wilds land close to their stated chance', () => {
+    let wilds = 0;
+    let cards = 0;
+    for (let seed = 0; seed < 400; seed++) {
+      const { hand, drawPile } = dealHand(seed);
+      for (const card of [...hand, ...drawPile]) {
+        cards++;
+        if (card.wild) wilds++;
+      }
+    }
+    const rate = wilds / cards;
+    // Owner's pick: "like a 53rd card in the deck" — a shade under an ordinary
+    // card's 1/52. Loose bounds, since this is a finite sample of a real RNG.
+    assert.ok(rate > 0.01 && rate < 0.03, `wild rate was ${(rate * 100).toFixed(2)}%`);
+    assert.ok(rate < 1 / 52, 'a wild should be slightly rarer than an ordinary card');
   });
 
   test('same seed deals the same joker tiers every time', () => {
@@ -152,16 +172,20 @@ describe('dealHand', () => {
   // Regression, integration-level: owner bug report — "i set the luck slider
   // to 500x and i only get bronze cards, rarely silver gold or diamond."
   test('a high luckMultiplier reaches every rarity tier across enough deals, not just bronze', () => {
-    const counts = { bronze: 0, silver: 0, gold: 0, joker: 0, diamond: 0 };
+    const counts = { bronze: 0, silver: 0, gold: 0, diamond: 0 };
+    let wilds = 0;
     for (let seed = 0; seed < 400; seed++) {
       const { hand, drawPile } = dealHand(seed, 5, { luckMultiplier: 500 });
       for (const card of [...hand, ...drawPile]) {
         if (card.rarity) counts[card.rarity] += 1;
+        if (card.wild) wilds += 1;
       }
     }
-    for (const tier of ['bronze', 'silver', 'gold', 'joker', 'diamond']) {
+    for (const tier of ['bronze', 'silver', 'gold', 'diamond']) {
       assert.ok(counts[tier] > 0, `expected at least one ${tier} across 400 seeds x 52 cards at luck=500, got 0`);
     }
+    // Wildness scales with luck too, so the admin panel can preview it.
+    assert.ok(wilds > 0, 'expected wilds at luck=500');
   });
 });
 
@@ -173,8 +197,10 @@ describe('rarityForRoll', () => {
     assert.equal(rarityForRoll(0.099), 'silver');
     assert.equal(rarityForRoll(0.1), 'gold'); // gold: [0.10, 0.11)
     assert.equal(rarityForRoll(0.109), 'gold');
-    assert.equal(rarityForRoll(0.11), 'joker'); // joker: [0.11, 0.112)
-    assert.equal(rarityForRoll(0.1119), 'joker');
+    // Wild used to occupy [0.11, 0.112) here. It is no longer a tier at all
+    // (§3x), so diamond now follows gold directly.
+    assert.equal(rarityForRoll(0.11), 'diamond'); // diamond: [0.11, 0.111)
+    assert.equal(rarityForRoll(0.1109), 'diamond');
   });
 
   test('returns null (common) above the combined special-tier chance', () => {
@@ -222,11 +248,10 @@ describe('rarityForRoll', () => {
         return RARITIES.map((tier) => scaledTotal * (tier.chance / TOTAL_SPECIAL_CHANCE));
       };
       for (const luckMultiplier of [1, 5, 50, 500]) {
-        const [bronze, silver, gold, joker, diamond] = boundary(luckMultiplier);
+        const [bronze, silver, gold, diamond] = boundary(luckMultiplier);
         assert.ok(bronze > silver, `luck=${luckMultiplier}`);
         assert.ok(silver > gold, `luck=${luckMultiplier}`);
-        assert.ok(gold > joker, `luck=${luckMultiplier}`);
-        assert.ok(joker > diamond, `luck=${luckMultiplier}`);
+        assert.ok(gold > diamond, `luck=${luckMultiplier}`);
       }
     });
 

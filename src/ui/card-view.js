@@ -1,5 +1,5 @@
 import { rankLabel, suitGlyph } from '../core/deck.js';
-import { RARITY_BY_ID } from '../core/rarity.js';
+import { RARITY_BY_ID, isWild } from '../core/rarity.js';
 
 const RED_SUITS = new Set(['H', 'D']);
 
@@ -18,8 +18,14 @@ const RED_SUITS = new Set(['H', 'D']);
 export function createCardElement(card, { faceUp = true, selected = false, locked = false, marked = false, onClick } = {}) {
   const el = document.createElement('button');
   el.type = 'button';
+  // Wildness and rarity are independent now (§3x): a wild shows the jester face
+  // AND, if it also rolled a tier, that tier's ring. `jokerFlavor` is the LEGACY
+  // path only — stored cards recorded their wild as `rarity: 'joker'` with a
+  // `jokerTier`, and the profile's hand history still renders those.
+  const wild = isWild(card);
   const jokerFlavor = card.rarity === 'joker' ? (RARITY_BY_ID[card.jokerTier] ?? RARITY_BY_ID.bronze) : null;
-  const rarityClass = faceUp && card.rarity ? ` card--rarity-${card.rarity}` : '';
+  const ringTier = card.rarity && card.rarity !== 'joker' ? card.rarity : jokerFlavor?.id ?? null;
+  const rarityClass = faceUp && ringTier ? ` card--rarity-${ringTier}` : '';
   const jokerTierClass = faceUp && jokerFlavor ? ` card--joker-tier-${jokerFlavor.id}` : '';
   // Locked Card (Daily Modifiers, DESIGN.md §4) — this slot can't be
   // discarded today, so it's never clickable regardless of `onClick`, and
@@ -40,23 +46,24 @@ export function createCardElement(card, { faceUp = true, selected = false, locke
     markedClass;
 
   if (faceUp) {
-    if (card.rarity === 'joker') {
+    if (wild) {
       el.innerHTML = `
         <span class="card__joker-face">🃏</span>
-        <span class="card__joker-label">${jokerFlavor.label.toUpperCase()} WILD</span>
+        <span class="card__joker-label">${(jokerFlavor ?? (ringTier ? RARITY_BY_ID[ringTier] : null))?.label.toUpperCase() ?? ''} WILD</span>
         ${locked ? '<span class="card__lock-badge">🔒</span>' : ''}
         ${marked ? '<span class="card__held-badge">⭐</span>' : ''}
       `;
+      const wildTierLabel = (jokerFlavor ?? (ringTier ? RARITY_BY_ID[ringTier] : null))?.label;
       el.setAttribute(
         'aria-label',
-        `${jokerFlavor.label} Wild${locked ? ', locked in, cannot be discarded' : selected ? ', marked for discard' : ''}${
+        `${wildTierLabel ? `${wildTierLabel} ` : ''}Wild${locked ? ', locked in, cannot be discarded' : selected ? ', marked for discard' : ''}${
           marked ? ', starred - keep it to multiply your score' : ''
         }`,
       );
     } else {
       const color = RED_SUITS.has(card.suit) ? 'card--red' : 'card--black';
       el.classList.add(color);
-      const badge = card.rarity ? `<span class="card__rarity-badge">${RARITY_BY_ID[card.rarity].emoji}</span>` : '';
+      const badge = ringTier ? `<span class="card__rarity-badge">${RARITY_BY_ID[ringTier].emoji}</span>` : '';
       const lockBadge = locked ? '<span class="card__lock-badge">🔒</span>' : '';
       const heldBadge = marked ? '<span class="card__held-badge">⭐</span>' : '';
       el.innerHTML = `
@@ -67,7 +74,7 @@ export function createCardElement(card, { faceUp = true, selected = false, locke
         ${lockBadge}
         ${heldBadge}
       `;
-      const rarityLabel = card.rarity ? `, ${RARITY_BY_ID[card.rarity].label} rarity` : '';
+      const rarityLabel = ringTier ? `, ${RARITY_BY_ID[ringTier].label} rarity` : '';
       const stateLabel = locked ? ', locked in, cannot be discarded' : selected ? ', marked for discard' : '';
       const heldLabel = marked ? ', starred - keep it to multiply your score' : '';
       el.setAttribute('aria-label', `${rankLabel(card.rank)} of ${suitName(card.suit)}${rarityLabel}${stateLabel}${heldLabel}`);

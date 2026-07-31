@@ -398,14 +398,44 @@ export function initHeader(root, { signInError = null } = {}) {
       title: 'How to Play',
       render: (body) => {
         body.innerHTML = `
+          <p class="help-goal">
+            <strong>The goal:</strong> build the strongest five-card poker hand you can, once a day,
+            and score as many points as possible. Everyone gets one hand — the only thing that
+            separates a good day from a bad one is which cards you throw away.
+          </p>
           <ol class="help-steps">
             <li>You get one hand of 5 cards, once per day.</li>
             <li>Every day has a <strong>Daily Modifier</strong> (shown above your hand) that changes the rules for the day — more or fewer discards, bonus multipliers, or a special twist on the usual flow.</li>
             <li>Click a card to mark it for discard — the <strong>Discard X/Y</strong> button shows how many you've marked.</li>
             <li>Click it to lock in. Marked cards get swapped for new ones, and your final 5-card poker hand is scored — stronger hands score more.</li>
-            <li>Some cards are rare — 🥉 Bronze, 🥈 Silver, 🥇 Gold, 🃏 Wild, 💎 Diamond. If a rare card ends up part of your final winning hand (not just sitting there unused), it multiplies your <strong>entire score</strong> — the rarer the card, the bigger the multiplier.</li>
             <li>That's it for today — come back tomorrow for a new hand.</li>
           </ol>
+
+          <h3 class="help-heading">🃏 Wild cards</h3>
+          <p>
+            A <strong>Wild</strong> is an ordinary card that turns up now and then — slightly rarer
+            than any single normal card, so expect one every handful of days. It pays a small bonus
+            just for showing up, but the real reason you want it is that it
+            <strong>becomes whatever card your hand needs most</strong>.
+          </p>
+          <p>
+            Hold <span class="help-cards">9♠ 9♥ 4♦ 🃏</span> and the Wild plays as a third nine —
+            Three of a Kind. Hold four hearts and a Wild, and it plays as a heart to finish the
+            Flush. You never choose: it's always counted as whichever card scores you the most.
+          </p>
+
+          <h3 class="help-heading">✨ Rare cards</h3>
+          <p>
+            Separately, any card can turn up <strong>rare</strong> — 🥉 Bronze, 🥈 Silver, 🥇 Gold or
+            💎 Diamond. Rare cards pay bonus points just for being in your hand, and if a rare card
+            is genuinely <em>part of your winning hand</em> (not just sitting alongside it), it
+            multiplies your <strong>entire score</strong> — the rarer the card, the bigger the
+            multiplier.
+          </p>
+          <p class="help-note">
+            The two are independent, so a card can be both: a 🥇 Gold Wild completes your hand
+            <em>and</em> multiplies what it's worth.
+          </p>
         `;
       },
     });

@@ -27,7 +27,7 @@ import { getSession } from '../state/auth.js';
 import { claimTodaySeed, saveTodayResultForUser } from '../state/daily-play.js';
 import { generateStory, getStoryOptions, getDefaultSelections } from '../story/generator.js';
 import { SLOT_META } from '../story/templates.js';
-import { RARITIES, TOTAL_SPECIAL_CHANCE, jokerTierForRoll } from '../core/rarity.js';
+import { RARITIES, TOTAL_SPECIAL_CHANCE, WILD_CHANCE, isWild } from '../core/rarity.js';
 import { getDailyModifier, buildModifierById, modifierScoringMultiplier, MODIFIERS } from '../core/modifiers.js';
 import { gradeForScore } from '../core/score-grade.js';
 import { formatCountdown, msUntilNextReset } from '../core/game-day.js';
@@ -85,13 +85,33 @@ const BASE_FLIP_MS = 180;
 // their durations differ. The discard path used to run them in parallel with a
 // fixed 90ms stagger, which meant a slow rare card and a fast common one landed
 // in whatever order their durations happened to produce.
-const FLIP_DURATION_BY_RARITY = { bronze: 350, silver: 500, gold: 700, joker: 1000, diamond: 1200 };
+// Keyed by rarity id. Wild is no longer one of those (§3x), so a wild's pacing
+// comes from wildDramaFor() below rather than from this table.
+const FLIP_DURATION_BY_RARITY = { bronze: 350, silver: 500, gold: 700, diamond: 1200 };
+// A wild is a moment in its own right even with no rarity, so it gets the same
+// dramatic treatment the old 'joker' tier had. A wild that ALSO rolled a tier
+// takes whichever pacing is slower — the rarer thing sets the beat.
+const WILD_FLIP_MS = 1000;
+const WILD_ANTICIPATION_MS = 500;
+const WILD_HOLD_MS = 800;
 // A brief hold before a rare card even starts its flip, so its moment
 // doesn't get lost in the normal cascading reveal.
-const ANTICIPATION_BY_RARITY = { bronze: 150, silver: 250, gold: 350, joker: 500, diamond: 650 };
+const ANTICIPATION_BY_RARITY = { bronze: 150, silver: 250, gold: 350, diamond: 650 };
 // How long the card sits showing its face-down back, mid-flip, before
 // turning to reveal its face — rare tiers linger longer for extra suspense.
-const HOLD_BY_RARITY = { bronze: 300, silver: 400, gold: 550, joker: 800, diamond: 950 };
+const HOLD_BY_RARITY = { bronze: 300, silver: 400, gold: 550, diamond: 950 };
+
+// How dramatically a card reveals, now that "is it special?" has two sources.
+function revealDramaFor(card) {
+  const wild = isWild(card);
+  const duration = Math.max(FLIP_DURATION_BY_RARITY[card.rarity] ?? BASE_FLIP_MS, wild ? WILD_FLIP_MS : 0);
+  const anticipation = Math.max(ANTICIPATION_BY_RARITY[card.rarity] ?? 0, wild ? WILD_ANTICIPATION_MS : 0);
+  const hold = Math.max(HOLD_BY_RARITY[card.rarity] ?? 250, wild ? WILD_HOLD_MS : 0);
+  // The glow marks "something out of the ordinary landed", which a plain wild
+  // now is just as much as a rare card.
+  const dramatic = card.rarity || wild ? 'card--reveal-rare' : null;
+  return { duration, anticipation, hold, dramatic };
+}
 // Timing for the opening deal's card-into-place animation (.card--deal-in,
 // styles.css) — how long each card takes to land, and the stagger between
 // each card starting.
@@ -371,7 +391,7 @@ export function initBoard(root) {
 
   // Deals a fresh hand and animates it in. The real opening deal always
   // calls this with just `seed` (config.seed), so normal daily play is
-  // completely unaffected. `luckMultiplier`/`forceRarity`/`forceJokerTier`
+  // completely unaffected. `luckMultiplier`/`forceRarity`/`forceWild`
   // /`customSlots`/`forceModifier` are only ever passed by the test-mode
   // admin panel below, as a way to preview rare cards (and, for Joker, its
   // nested sub-tier) on demand instead of hunting through ?test= seeds
@@ -384,7 +404,7 @@ export function initBoard(root) {
   // omitting it on a later redeal just leaves whichever modifier is already
   // active, real or forced, rather than silently reverting — the special
   // value `'__today__'` is the explicit reset back to the real day's.
-  function startHand({ seed, luckMultiplier = 1, forceRarity = null, forceJokerTier = null, customSlots = null, forceModifier = null } = {}) {
+  function startHand({ seed, luckMultiplier = 1, forceRarity = null, forceWild = false, customSlots = null, forceModifier = null } = {}) {
     const myToken = ++dealToken;
     if (forceModifier === '__today__') {
       // The explicit reset back to the real day's modifier, so it also clears
@@ -402,16 +422,19 @@ export function initBoard(root) {
     } else {
       const usedSeed = seed ?? freshSeed();
       if (seed === undefined && config.isTestMode) {
-        const forcedLabel = forceRarity === 'joker' && forceJokerTier ? `${forceJokerTier} wild` : forceRarity;
-        const luckNote = forceRarity ? `, forced ${forcedLabel}` : luckMultiplier > 1 ? `, luck ×${luckMultiplier}` : '';
+        const forcedLabel = [forceWild ? 'wild' : null, forceRarity].filter(Boolean).join(' ');
+        const luckNote = forcedLabel ? `, forced ${forcedLabel}` : luckMultiplier > 1 ? `, luck ×${luckMultiplier}` : '';
         dayLabel.textContent = `🧪 Test hand (admin redeal${luckNote})`;
       }
 
       dealt = dealHand(usedSeed, 5, { luckMultiplier });
-      if (forceRarity) {
+      if (forceRarity || forceWild) {
         const index = Math.floor(Math.random() * dealt.hand.length);
-        const jokerTier = forceRarity === 'joker' ? forceJokerTier ?? 'common' : null;
-        dealt.hand[index] = { ...dealt.hand[index], rarity: forceRarity, jokerTier };
+        dealt.hand[index] = {
+          ...dealt.hand[index],
+          ...(forceRarity ? { rarity: forceRarity } : {}),
+          ...(forceWild ? { wild: true } : {}),
+        };
       }
     }
     originalHand = dealt.hand;
@@ -439,12 +462,9 @@ export function initBoard(root) {
     for (let index = startIndex; index < endIndex; index++) {
       if (token !== dealToken) return false;
       const card = cards[index];
-      const anticipation = ANTICIPATION_BY_RARITY[card.rarity] ?? 0;
+      const { duration, anticipation, hold: holdMs, dramatic: dramaticClass } = revealDramaFor(card);
       if (anticipation) await delay(anticipation);
       if (token !== dealToken) return false;
-      const duration = FLIP_DURATION_BY_RARITY[card.rarity] ?? BASE_FLIP_MS;
-      const holdMs = HOLD_BY_RARITY[card.rarity] ?? 250;
-      const dramaticClass = card.rarity ? 'card--reveal-rare' : null;
       // no onClick yet — renderHand() (or the wager prompt) wires up
       // whatever's next once the relevant cards are done flipping
       cardEls[index] = await flipReplaceCard(cardEls[index], card, { duration, holdMs, dramaticClass, disabled: true });
@@ -802,16 +822,14 @@ export function initBoard(root) {
     for (const index of discardIndices) {
       if (token !== dealToken) return;
       const card = finalHand[index];
-      const duration = FLIP_DURATION_BY_RARITY[card.rarity] ?? BASE_FLIP_MS;
-      const holdMs = HOLD_BY_RARITY[card.rarity] ?? 250;
-      const dramaticClass = card.rarity ? 'card--reveal-rare' : null;
+      const { duration, anticipation, hold: holdMs, dramatic: dramaticClass } = revealDramaFor(card);
       cardEls[index] = await flipReplaceCard(cardEls[index], card, {
         duration,
         // Anticipation waits on the face-down back, never on the outgoing card
         // — owner bug report: "the slower animation starts when it flips the
         // card back over to the back". With the turn-over hoisted into pass 1
         // that is now structurally true, not just a parameter choice.
-        anticipationMs: ANTICIPATION_BY_RARITY[card.rarity] ?? 0,
+        anticipationMs: anticipation,
         holdMs,
         dramaticClass,
         disabled: true,
@@ -873,25 +891,23 @@ function renderTestBanner(root, config) {
 // (every card not used in a slot), shuffled with a fresh random seed and
 // given real rarity rolls of its own, so replacements after a discard still
 // show rare cards exactly like a normal deal would. `slotConfigs` is 5
-// `{rank, suit, rarity, jokerTier}` objects straight from the panel's
-// selects; `rarity`/`jokerTier` are used as-is (no rolling) since the whole
-// point of this tool is picking them directly.
+// `{rank, suit, rarity, wild}` objects straight from the panel's selects and
+// checkboxes; both are used as-is (no rolling) since the whole point of this
+// tool is picking them directly.
 function buildCustomHand(slotConfigs) {
   const usedKeys = new Set(slotConfigs.map((slot) => `${slot.rank}${slot.suit}`));
   const rng = createRng(freshSeed());
   const remainingDeck = createDeck().filter((card) => !usedKeys.has(`${card.rank}${card.suit}`));
   const drawPile = shuffle(remainingDeck, rng).map((card) => {
-    const roll = rng();
-    const rarity = rarityForRoll(roll);
-    const jokerTierRoll = rng();
-    const jokerTier = rarity === 'joker' ? jokerTierForRoll(jokerTierRoll) : null;
-    return { ...card, rarity, jokerTier };
+    const rarity = rarityForRoll(rng());
+    const wild = rng() < WILD_CHANCE;
+    return { ...card, rarity, wild };
   });
   const hand = slotConfigs.map((slot) => ({
     rank: slot.rank,
     suit: slot.suit,
     rarity: slot.rarity || null,
-    jokerTier: slot.rarity === 'joker' ? slot.jokerTier || 'bronze' : null,
+    wild: Boolean(slot.wild),
   }));
   return { hand, drawPile };
 }
@@ -902,19 +918,12 @@ function buildCustomHand(slotConfigs) {
 const CUSTOM_SLOT_DEFAULT_RANKS = [14, 13, 12, 11, 10];
 const CUSTOM_SLOT_DEFAULT_SUITS = ['S', 'H', 'D', 'C', 'S'];
 
+// Wild is deliberately absent: it is no longer a tier, so the panel offers it
+// as a separate checkbox per slot and a separate Force button.
 function rarityOptionsHtml() {
   const none = '<option value="">— none —</option>';
-  const jokerTier = RARITIES.find((tier) => tier.id === 'joker');
-  const tiers = RARITIES.filter((tier) => tier.id !== 'joker')
-    .map((tier) => `<option value="${tier.id}">${tier.emoji} ${tier.label}</option>`)
-    .join('');
-  return `${none}${tiers}<option value="joker">${jokerTier.emoji} ${jokerTier.label}</option>`;
-}
-
-function jokerTierOptionsHtml() {
-  return RARITIES.filter((tier) => tier.id !== 'joker')
-    .map((tier) => `<option value="${tier.id}">${tier.emoji} ${tier.label}</option>`)
-    .join('');
+  const tiers = RARITIES.map((tier) => `<option value="${tier.id}">${tier.emoji} ${tier.label}</option>`).join('');
+  return `${none}${tiers}`;
 }
 
 // Test-mode-only "cheater admin" panel (owner request: a way to see what
@@ -948,17 +957,18 @@ function renderAdminPanel(root, onRedeal) {
     </div>
     <div class="admin-panel-actions">
       <button type="button" data-action="redeal">🔁 Redeal with this luck</button>
-      ${RARITIES.filter((tier) => tier.id !== 'joker')
-        .map((tier) => `<button type="button" class="admin-force-btn" data-force="${tier.id}">${tier.emoji} Show ${tier.label}</button>`)
-        .join('')}
+      ${RARITIES.map(
+        (tier) => `<button type="button" class="admin-force-btn" data-force="${tier.id}">${tier.emoji} Show ${tier.label}</button>`,
+      ).join('')}
     </div>
     <div class="admin-panel-actions">
-      ${RARITIES.filter((tier) => tier.id !== 'joker')
-        .map(
-          (tier) =>
-            `<button type="button" class="admin-force-btn" data-force="joker" data-joker-tier="${tier.id}">🃏 ${tier.label} Wild</button>`,
-        )
-        .join('')}
+      <!-- Wild is its own axis now (§3x), so it forces on its own and can be
+           combined with any tier rather than replacing it. -->
+      <button type="button" class="admin-force-btn" data-force-wild="1">🃏 Show Wild</button>
+      ${RARITIES.map(
+        (tier) =>
+          `<button type="button" class="admin-force-btn" data-force="${tier.id}" data-force-wild="1">🃏${tier.emoji} ${tier.label} Wild</button>`,
+      ).join('')}
     </div>
     <div class="admin-panel-subtitle">🧩 Modifier Preview</div>
     <div class="admin-panel-actions">
@@ -999,7 +1009,7 @@ function renderAdminPanel(root, onRedeal) {
             ).join('')}
           </select>
           <select class="admin-slot-rarity">${rarityOptionsHtml()}</select>
-          <select class="admin-slot-joker-tier" hidden>${jokerTierOptionsHtml()}</select>
+          <label class="admin-slot-wild"><input type="checkbox" class="admin-slot-wild-input" /> 🃏</label>
         </div>
       `,
       ).join('')}
@@ -1027,12 +1037,15 @@ function renderAdminPanel(root, onRedeal) {
     onRedeal({ luckMultiplier: Number(luckSlider.value) });
   });
 
-  panel.querySelectorAll('[data-force]').forEach((btn) => {
-    // Force buttons ignore the luck slider on purpose — one guaranteed rare
-    // card of the exact requested tier (and, for Joker, exact sub-tier),
-    // nothing else muddying the preview.
+  // BOTH attributes: the plain "Show Wild" button carries only `data-force-wild`
+  // (it forces no tier), so a `[data-force]`-only selector left it with no click
+  // handler at all — the button rendered and did nothing.
+  panel.querySelectorAll('[data-force], [data-force-wild]').forEach((btn) => {
+    // Force buttons ignore the luck slider on purpose — one guaranteed card of
+    // the exact requested tier and/or wildness, nothing else muddying the
+    // preview.
     btn.addEventListener('click', () => {
-      onRedeal({ forceRarity: btn.dataset.force, forceJokerTier: btn.dataset.jokerTier || null });
+      onRedeal({ forceRarity: btn.dataset.force ?? null, forceWild: btn.dataset.forceWild === '1' });
     });
   });
 
@@ -1043,22 +1056,12 @@ function renderAdminPanel(root, onRedeal) {
 
   wireTestAccountPanel(panel);
 
-  // Each slot's rarity select reveals its own Joker-flavor select only when
-  // "Joker" is picked for that slot — the other 4 slots' pickers are
-  // untouched, since each is independent.
-  panel.querySelectorAll('.admin-slot-rarity').forEach((select) => {
-    select.addEventListener('change', () => {
-      const jokerTierSelect = select.closest('.admin-slot').querySelector('.admin-slot-joker-tier');
-      jokerTierSelect.hidden = select.value !== 'joker';
-    });
-  });
-
   panel.querySelector('[data-action="deal-custom"]').addEventListener('click', () => {
     const slots = [...panel.querySelectorAll('.admin-slot')].map((slotEl) => ({
       rank: Number(slotEl.querySelector('.admin-slot-rank').value),
       suit: slotEl.querySelector('.admin-slot-suit').value,
       rarity: slotEl.querySelector('.admin-slot-rarity').value || null,
-      jokerTier: slotEl.querySelector('.admin-slot-joker-tier').value,
+      wild: slotEl.querySelector('.admin-slot-wild-input').checked,
     }));
     const seenCards = new Set();
     const hasDuplicate = slots.some((slot) => {

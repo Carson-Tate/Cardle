@@ -2,13 +2,14 @@
 // always exactly 5 cards). Returns the poker category and its base score
 // per DESIGN.md §3a.
 //
-// A card with rarity 'joker' (src/core/rarity.js) is wild: evaluateHand()
+// A card that `isWild()` (src/core/rarity.js) is wild: evaluateHand()
 // tries every possible rank/suit in its place and returns whichever
 // substitution scores highest. This is the only rarity tier that affects
 // hand evaluation — bronze/silver/gold are pure bonus points, applied in
 // scoring.js, and never change what poker hand you have.
 
 import { SUITS, RANKS } from './deck.js';
+import { isWild } from './rarity.js';
 
 // Scores are ODDS-PROPORTIONAL (owner request: "a pair gives 200 but a royal
 // flush gives 5000 which is a lot more rare and only gives 25x more points"
@@ -140,7 +141,11 @@ export function evaluateHand(cards) {
 
   const jokerIndices = [];
   for (let i = 0; i < cards.length; i++) {
-    if (cards[i].rarity === 'joker') jokerIndices.push(i);
+    // isWild(), not a rarity check: wildness is now its own card property, and
+    // this same call is what keeps stored hands (which recorded it as
+    // `rarity: 'joker'`) still evaluating as wild when the leaderboard re-reads
+    // them to name the hand.
+    if (isWild(cards[i])) jokerIndices.push(i);
   }
   if (jokerIndices.length > 0) {
     return evaluateHandWithWildJokers(cards, jokerIndices);

@@ -20,8 +20,14 @@
        Deliberately generic rather than describing TODAY's hand: the page is
        re-crawled on its own schedule, so anything day-specific would be stale
        and wrong most of the time. -->
+  <!-- ACCURACY NOTE: do not write "the same cards for everyone" here. Hands are
+       dealt RANDOMLY PER PLAYER (state/persistence.js — the shared date-derived
+       seed was deliberately removed). What IS shared on a given day is the
+       Daily Modifier and the day number, not the deal. An earlier version of
+       this tag claimed otherwise and shipped, so it was wrong in every link
+       preview until someone noticed. -->
   <meta name="description"
-        content="Cardle is a free daily poker puzzle. Everyone gets the same five cards once a day — choose your discards, build the best hand you can, and compare your score with friends." />
+        content="Cardle is a free daily poker puzzle. One five-card hand a day, dealt just for you — choose your discards, build the best hand you can, and see how your score stacks up." />
   <!-- The site is served from /public via a rewrite, so the same content is
        reachable at more than one path. This names the one that counts and stops
        the query-param routes (?profile, ?leaderboard, ?admin) being indexed as
@@ -33,7 +39,7 @@
   <meta property="og:site_name" content="Cardle" />
   <meta property="og:title" content="Cardle — Daily Poker Puzzle" />
   <meta property="og:description"
-        content="One poker hand a day. Same cards for everyone — the only thing that separates a good day from a bad one is which cards you throw away." />
+        content="One poker hand a day, dealt just for you. Pick your discards, chase the best hand you can, and see how your score stacks up." />
   <!-- The favicon doubles as the preview image: it is the only graphic the
        project has, and an unfurled link with no image at all reads as broken.
        SVG is not accepted by every unfurler, so this is a known-imperfect
@@ -42,7 +48,7 @@
   <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content="Cardle — Daily Poker Puzzle" />
   <meta name="twitter:description"
-        content="One poker hand a day. Same cards for everyone — the only thing that separates a good day from a bad one is which cards you throw away." />
+        content="One poker hand a day, dealt just for you. Pick your discards, chase the best hand you can, and see how your score stacks up." />
 
   <!-- Structured data. `VideoGame` + `WebSite` is the honest pair for what this
        is; Google uses it to understand the entity behind the domain rather than
@@ -53,7 +59,7 @@
     "@type": "VideoGame",
     "name": "Cardle",
     "url": "https://cardle.lol/",
-    "description": "A free daily poker puzzle. One five-card hand a day, the same for every player.",
+    "description": "A free daily poker puzzle. One five-card hand a day, dealt fresh for every player.",
     "genre": ["Puzzle", "Card Game"],
     "playMode": "SinglePlayer",
     "applicationCategory": "Game",

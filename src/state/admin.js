@@ -113,3 +113,56 @@ export async function adminDeletePlayer(targetId) {
   const { error } = await client.rpc('admin_delete_player', { target_id: targetId });
   if (error) throw error;
 }
+
+/**
+ * Renames a player in place (§11x).
+ *
+ * The remedy that was missing: until this existed, the only response to an
+ * offensive username already in the table was adminDeletePlayer, which also
+ * destroys that player's entire history — wildly out of proportion to a name.
+ * The blocklist trigger fires on this UPDATE too, so an admin cannot rename
+ * someone INTO a blocked name.
+ */
+export async function adminRenamePlayer(targetId, newUsername) {
+  const client = await requireSupabase();
+  const { data, error } = await client.rpc('admin_rename_player', {
+    target_id: targetId,
+    new_username: newUsername,
+  });
+  if (error) throw error;
+  return data;
+}
+
+// --- The username blocklist (§11x) -----------------------------------------
+// The table itself has NO read policy, so none of these can be replaced by a
+// plain `.from('username_blocklist')` — every one goes through a
+// `security definer` function that checks is_admin() first.
+
+export async function adminListBlockedWords() {
+  const client = await requireSupabase();
+  const { data, error } = await client.rpc('admin_list_blocked_words');
+  if (error) throw error;
+  return data ?? [];
+}
+
+/**
+ * @param {string[]} words - stored normalized (uppercased, letters only), so
+ *   what is typed and what is stored can differ; the editor shows the stored form.
+ * @returns {number} how many were actually new
+ */
+export async function adminAddBlockedWords(words, matchType = 'substring', note = null) {
+  const client = await requireSupabase();
+  const { data, error } = await client.rpc('admin_add_blocked_words', {
+    words,
+    word_match_type: matchType,
+    word_note: note,
+  });
+  if (error) throw error;
+  return data ?? 0;
+}
+
+export async function adminRemoveBlockedWord(wordId) {
+  const client = await requireSupabase();
+  const { error } = await client.rpc('admin_remove_blocked_word', { word_id: wordId });
+  if (error) throw error;
+}

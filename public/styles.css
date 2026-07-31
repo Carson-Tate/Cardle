@@ -1299,6 +1299,42 @@ header h1 {
    A flex row rather than the button trailing the paragraph, so the pair is
    centred as a unit and the button's baseline does not depend on whether the
    hint has wrapped. Wraps on narrow screens so a long hint never squeezes it. */
+/* Blocked-word chips in the admin panel (§11x). A wrapping row of small pills,
+   each with its own remove button — the list is short strings, so a table would
+   be four times the height for no extra information. */
+.admin-blocklist-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.admin-blocklist-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+
+.admin-blocklist-remove {
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.admin-blocklist-remove:hover {
+  color: #c0392b;
+}
+
 /* Unsaved modifier picks in the admin schedule. Warning-coloured so it reads as
    "you still have to press Save", not as a neutral count. */
 .admin-unsaved-count {

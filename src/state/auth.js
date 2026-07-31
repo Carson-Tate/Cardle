@@ -178,6 +178,42 @@ export function isValidUsername(username) {
   return USERNAME_PATTERN.test(username);
 }
 
+// The SQLSTATE the `profiles` blocklist trigger raises
+// (supabase/migrations/012-username-blocklist.sql). A custom code rather than a
+// message match, because error WORDING is a PostgREST/Postgres implementation
+// detail that can change under us — the same reasoning that made createProfile
+// ask the database which unique constraint collided instead of reading the text.
+// This code is ours, raised by our own trigger, so it is stable by construction.
+export const USERNAME_BLOCKED_CODE = 'CRDL1';
+
+/**
+ * Whether a username can actually be claimed — free, well-formed, and not
+ * blocked.
+ *
+ * Deliberately ONE boolean rather than a reason. The word list lives in a table
+ * with no read policy precisely so it cannot be recited, and an endpoint that
+ * distinguished "blocked" from "taken" would let anyone enumerate it a guess at
+ * a time. Whether a name is taken is already public — every leaderboard row is
+ * a username — so collapsing the two leaks nothing new.
+ *
+ * Resolves TRUE when the check itself cannot run (no Supabase, offline, an
+ * unrun migration). This is a pre-flight courtesy for the sign-up form; the
+ * trigger is the actual enforcement, and failing open here only means the
+ * player learns on submit instead of while typing. Failing CLOSED would lock
+ * new sign-ups out entirely the moment the CDN hiccuped.
+ */
+export async function isUsernameAvailable(candidate) {
+  if (!isValidUsername(String(candidate ?? '').trim())) return false;
+  try {
+    const client = await requireSupabase();
+    const { data, error } = await client.rpc('username_available', { candidate });
+    if (error) throw error;
+    return data !== false;
+  } catch {
+    return true;
+  }
+}
+
 /**
  * The stored form of a username: trimmed and UPPERCASED (owner: "i would like to
  * change all names to all caps and all future names to be all caps").
@@ -235,6 +271,15 @@ export async function createProfile(userId, rawUsername) {
     const existing = await getProfile(userId).catch(() => null);
     if (existing) return existing;
     throw new Error(`"${username}" is already taken — try another.`);
+  }
+
+  // Refused by the blocklist trigger. The wording says nothing about WHY, and
+  // that is the point: naming the matched word would confirm what is on a list
+  // deliberately kept unreadable, and would read as the site repeating a slur
+  // back at whoever typed it. "Not available" is also the honest answer for the
+  // player who tripped a false positive and has done nothing wrong.
+  if (error.code === USERNAME_BLOCKED_CODE) {
+    throw new Error(`"${username}" isn't available — please choose another.`);
   }
   throw error;
 }

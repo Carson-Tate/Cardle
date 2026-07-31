@@ -7,7 +7,15 @@
 
 import { openModal } from './modal.js';
 import { nameplateHtml, PROFILE_UPDATED_EVENT } from './nameplate.js';
-import { getSession, onAuthStateChange, signInWithMagicLink, getProfile, createProfile } from '../state/auth.js';
+import {
+  getSession,
+  onAuthStateChange,
+  signInWithMagicLink,
+  getProfile,
+  createProfile,
+  isValidUsername,
+  isUsernameAvailable,
+} from '../state/auth.js';
 import { sendFriendRequest, getPendingRequests, getSentRequests, getFriends, acceptFriendRequest, removeFriendship, searchProfiles } from '../state/friends.js';
 import { isSupabaseConfigured, SupabaseUnavailableError } from '../state/supabase-client.js';
 import { loadOwnHistory, invalidateOwnHistory, XP_UPDATED_EVENT } from '../state/profile.js';
@@ -449,9 +457,16 @@ export function initHeader(root, { signInError = null } = {}) {
       render: (body) => {
         body.innerHTML = `
           <p class="help-goal">
+            <!-- Carries the SAME false premise the meta description did (§11w's
+                 fix): "the only thing that separates a good day from a bad one
+                 is which cards you throw away" was written when every player was
+                 dealt identical cards from a date-derived seed. Hands are random
+                 per player now (state/persistence.js), so the deal separates
+                 days too — and claiming otherwise tells a player who drew badly
+                 that they simply played worse. -->
             <strong>The goal:</strong> build the strongest five-card poker hand you can, once a day,
-            and score as many points as possible. Everyone gets one hand — the only thing that
-            separates a good day from a bad one is which cards you throw away.
+            and score as many points as possible. Your five cards are dealt just for you — what you
+            do with them is the part that's up to you.
           </p>
           <ol class="help-steps">
             <li>You get one hand of 5 cards, once per day.</li>
@@ -563,9 +578,39 @@ export function initHeader(root, { signInError = null } = {}) {
         `;
         const form = body.querySelector('.login-form');
         const status = body.querySelector('.login-status');
+        const input = body.querySelector('.username-input');
+
+        // Live availability, so a name that cannot be used says so while it is
+        // being typed rather than after a submit. Debounced and
+        // sequence-numbered for the same reasons the friend search is (one query
+        // per pause, and a slow early reply can never overwrite a later one).
+        //
+        // Advisory only — `createProfile` still handles the refusal on submit,
+        // because this check can fail open (see isUsernameAvailable) and because
+        // a name can be taken in the seconds between checking and submitting.
+        let debounce = null;
+        let sequence = 0;
+        input.addEventListener('input', () => {
+          clearTimeout(debounce);
+          const typed = input.value.trim();
+          if (!isValidUsername(typed)) {
+            // The format rule is stated in the copy above the field, so an
+            // incomplete name mid-typing gets no scolding.
+            status.hidden = true;
+            return;
+          }
+          debounce = setTimeout(async () => {
+            const mine = ++sequence;
+            const free = await isUsernameAvailable(typed);
+            if (mine !== sequence || input.value.trim() !== typed) return;
+            status.hidden = false;
+            status.textContent = free ? `"${typed.toUpperCase()}" is available.` : `"${typed.toUpperCase()}" isn't available.`;
+          }, 300);
+        });
+
         form.addEventListener('submit', async (event) => {
           event.preventDefault();
-          const username = body.querySelector('.username-input').value.trim();
+          const username = input.value.trim();
           const submitBtn = form.querySelector('button');
           submitBtn.disabled = true;
           try {

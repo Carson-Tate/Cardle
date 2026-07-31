@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidUsername, normalizeUsername, signInWithMagicLink, signOut, getSession, onAuthStateChange, getProfile, createProfile, SupabaseNotConfiguredError } from '../src/state/auth.js';
+import { isValidUsername, normalizeUsername, signInWithMagicLink, signOut, getSession, onAuthStateChange, getProfile, createProfile, isUsernameAvailable, USERNAME_BLOCKED_CODE, SupabaseNotConfiguredError } from '../src/state/auth.js';
 import { isSupabaseConfigured } from '../src/state/supabase-client.js';
 import { updateUsername } from '../src/state/profile.js';
 
@@ -18,6 +18,34 @@ describe('isValidUsername', () => {
     assert.ok(!isValidUsername('has-dash'));
     assert.ok(!isValidUsername('emoji😀'));
     assert.ok(!isValidUsername(''));
+  });
+});
+
+// The username blocklist's CLIENT half (§11x). The matching itself lives in
+// Postgres — deliberately, since `profiles` is reachable straight from the
+// browser and a JavaScript word check is bypassed by one curl — so what is
+// testable here is the contract around it, not the word list.
+describe('isUsernameAvailable', () => {
+  test('rejects a malformed name without asking the server at all', async () => {
+    // No network is reachable in this environment, so a `true` here would prove
+    // the format short-circuit ran before any RPC was attempted.
+    assert.equal(await isUsernameAvailable('ab'), false);
+    assert.equal(await isUsernameAvailable('has space'), false);
+    assert.equal(await isUsernameAvailable(''), false);
+    assert.equal(await isUsernameAvailable(null), false);
+  });
+
+  // FAILING OPEN IS THE POINT. This is a courtesy check for the sign-up form and
+  // the database trigger is the real enforcement, so an unreachable backend must
+  // not be able to refuse every name and lock new players out of signing up.
+  test('fails OPEN when the check cannot run, so sign-up is never blocked by an outage', async () => {
+    assert.equal(await isUsernameAvailable('perfectly_fine'), true);
+  });
+
+  test('exports the trigger SQLSTATE as a constant rather than leaving it inline', () => {
+    // Matched against `error.code` in createProfile. Pinned here because the
+    // value has to agree with migration 012 and nothing else would catch a typo.
+    assert.equal(USERNAME_BLOCKED_CODE, 'CRDL1');
   });
 });
 

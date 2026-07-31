@@ -19,6 +19,10 @@ import {
   adminSetUnlocks,
   adminResetDay,
   adminDeletePlayer,
+  adminRenamePlayer,
+  adminListBlockedWords,
+  adminAddBlockedWords,
+  adminRemoveBlockedWord,
 } from '../state/admin.js';
 import { derivePlayerStats } from '../core/player-stats.js';
 import { resolveCosmetics, resolveEquipped, DEFAULT_PAINT_ID } from '../core/cosmetics.js';
@@ -92,6 +96,13 @@ export async function initAdmin(root) {
   // That is the likeliest shape of the reported bug: the save genuinely
   // succeeded, it just saved something the owner had never chosen.
   let pendingModifierEdits = new Map();
+
+  // Loaded on demand rather than at init: the blocklist is the one panel that is
+  // usually irrelevant, and reading it costs a privileged round trip the other
+  // sections don't need. `blockedWords` stays null until it has actually arrived,
+  // so "not loaded" and "loaded and empty" are distinguishable.
+  let blocklistOpen = false;
+  let blockedWords = null;
 
   await Promise.all([loadOverview(), runSearch(''), loadConfig()]);
   render();
@@ -238,6 +249,7 @@ export async function initAdmin(root) {
         ${notice ? `<p class="admin-notice admin-notice--${notice.kind}">${escapeHtml(notice.text)}</p>` : ''}
         ${overviewHtml()}
         ${modifierHtml()}
+        ${blocklistHtml()}
         ${wordBankHtml()}
         ${customCosmeticsHtml()}
         ${searchHtml()}
@@ -350,6 +362,72 @@ export async function initAdmin(root) {
           is dealt — but a player who already locked in today keeps the hand they
           played.
         </p>
+      </section>
+    `;
+  }
+
+  // The username blocklist (§11x).
+  //
+  // Its whole reason for being an EDITOR rather than a migration: the useful
+  // list is the one that grows in response to what people actually try, and
+  // words added here never enter the public repository. Loaded on demand — it is
+  // the only admin panel that is usually irrelevant, and it needs its own
+  // privileged round trip (the table has no read policy).
+  function blocklistHtml() {
+    if (!blocklistOpen) {
+      return `
+        <section class="profile-section">
+          <h3 class="profile-section-title">Username Blocklist</h3>
+          <p class="admin-hint">
+            Words refused as usernames. Enforced by a database trigger, not by
+            this page — the client check is only there to warn while typing.
+          </p>
+          <button type="button" class="admin-action-btn" id="admin-blocklist-open">Show the list</button>
+        </section>
+      `;
+    }
+    const rows = blockedWords ?? [];
+    const byType = (type) => rows.filter((w) => w.match_type === type);
+    const group = (type, heading, hint) => `
+      <h4 class="profile-subheading">${heading} <span class="profile-count">${byType(type).length}</span></h4>
+      <p class="admin-hint">${hint}</p>
+      <div class="admin-blocklist-words">
+        ${
+          byType(type).length === 0
+            ? '<p class="friends-empty">None.</p>'
+            : byType(type)
+                .map(
+                  (w) => `<span class="admin-blocklist-word">${escapeHtml(w.pattern)}
+                    <button type="button" class="admin-blocklist-remove" data-remove-word="${escapeHtml(w.id)}"
+                            aria-label="Remove ${escapeHtml(w.pattern)}">×</button></span>`,
+                )
+                .join('')
+        }
+      </div>
+    `;
+    return `
+      <section class="profile-section">
+        <h3 class="profile-section-title">Username Blocklist <span class="profile-count">${rows.length}</span></h3>
+        <p class="admin-hint">
+          Matching folds case, leetspeak and padding before comparing, so
+          <code>5L_UR</code> and <code>slur</code> are the same word to it.
+          Entries are stored normalized — letters only.
+        </p>
+        ${group('substring', 'Blocked anywhere', 'For terms no innocent word contains. Catches padding and embedding.')}
+        ${group('exact', 'Blocked as the whole name only', 'For words that appear inside legitimate ones — substring matching here would block CLASSIC for ASS.')}
+        ${group('allow', 'Always allowed', 'Explicit exemptions, checked first and winning outright. The fix for a real false positive.')}
+        <h4 class="profile-subheading">Add words</h4>
+        <p class="admin-hint">One per line, or separated by commas.</p>
+        <textarea id="admin-blocklist-input" rows="3" class="admin-wordbank-input"
+                  placeholder="one word per line"></textarea>
+        <div class="admin-search">
+          <select id="admin-blocklist-type">
+            <option value="substring">Block anywhere</option>
+            <option value="exact">Block as whole name only</option>
+            <option value="allow">Always allow</option>
+          </select>
+          <button type="button" class="admin-action-btn" id="admin-blocklist-add">Add</button>
+        </div>
       </section>
     `;
   }
@@ -594,6 +672,20 @@ export async function initAdmin(root) {
           <button type="submit" class="admin-action-btn">Reset Day</button>
         </form>
 
+        <h4 class="profile-subheading">Rename</h4>
+        <p class="admin-hint">
+          The proportionate response to an offensive name. Before this existed
+          the only option was deleting the account, which also destroyed the
+          player's whole history. The blocklist applies here too, so a rename
+          cannot land on a blocked name either.
+        </p>
+        <form class="admin-search" id="admin-rename-form">
+          <input type="text" id="admin-rename-input" value="${escapeHtml(profile.username)}"
+                 autocomplete="off" autocapitalize="characters" spellcheck="false"
+                 aria-label="New username" />
+          <button type="submit" class="admin-action-btn">Rename</button>
+        </form>
+
         <h4 class="profile-subheading">Danger</h4>
         <button type="button" class="profile-delete-btn" id="admin-delete-player"${profile.is_admin ? ' disabled' : ''}>
           Delete This Account
@@ -673,6 +765,13 @@ export async function initAdmin(root) {
       withNotice(() => adminResetDay(selected.profile.id, date), `Reset ${date ?? 'today'}.`);
     });
 
+    root.querySelector('#admin-rename-form')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const name = root.querySelector('#admin-rename-input').value.trim();
+      if (!name || name.toUpperCase() === selected.profile.username) return;
+      withNotice(() => adminRenamePlayer(selected.profile.id, name), `Renamed to ${name.toUpperCase()}.`);
+    });
+
     root.querySelector('#admin-delete-player')?.addEventListener('click', () => confirmDeletePlayer());
 
     // Records a pick the moment it is made, so it survives any re-render before
@@ -710,6 +809,57 @@ export async function initAdmin(root) {
 
     root.querySelector('#admin-clear-modifiers')?.addEventListener('click', () => {
       clearConfig(CONFIG_KEYS.MODIFIER_OVERRIDES, 'All modifier overrides cleared.');
+    });
+
+    // Deliberately NOT routed through withNotice: that helper re-fetches the
+    // selected player and the overview, which a blocklist edit has no bearing
+    // on, and it overwrites `notice` with a fixed string — losing the "added 2
+    // of 5" count that is the whole point of reporting the result.
+    async function withBlocklist(action, successText) {
+      try {
+        await action();
+        blockedWords = await adminListBlockedWords();
+        notice = { kind: 'ok', text: typeof successText === 'function' ? successText() : successText };
+      } catch (error) {
+        notice = { kind: 'error', text: `${error.message ?? error}` };
+      }
+      render();
+    }
+
+    root.querySelector('#admin-blocklist-open')?.addEventListener('click', () => {
+      blocklistOpen = true;
+      withBlocklist(() => {}, 'Blocklist loaded.');
+    });
+
+    root.querySelector('#admin-blocklist-add')?.addEventListener('click', () => {
+      const raw = root.querySelector('#admin-blocklist-input').value;
+      const matchType = root.querySelector('#admin-blocklist-type').value;
+      // Split on newlines OR commas, so a pasted list works whichever shape it
+      // arrives in.
+      const words = raw
+        .split(/[\n,]/)
+        .map((w) => w.trim())
+        .filter(Boolean);
+      if (words.length === 0) {
+        notice = { kind: 'error', text: 'Nothing to add.' };
+        render();
+        return;
+      }
+      let added = 0;
+      // Reported honestly: the server normalizes and de-duplicates, so
+      // "added 2 of 5" is a real outcome worth seeing rather than an error.
+      withBlocklist(
+        async () => {
+          added = await adminAddBlockedWords(words, matchType);
+        },
+        () => `Added ${added} of ${words.length}.`,
+      );
+    });
+
+    root.querySelectorAll('[data-remove-word]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        withBlocklist(() => adminRemoveBlockedWord(btn.dataset.removeWord), 'Removed.');
+      });
     });
 
     root.querySelector('#admin-save-wordbank')?.addEventListener('click', () => {

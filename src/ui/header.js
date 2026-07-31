@@ -12,6 +12,14 @@ import { sendFriendRequest, getPendingRequests, getSentRequests, getFriends, acc
 import { isSupabaseConfigured } from '../state/supabase-client.js';
 import { loadOwnHistory, invalidateOwnHistory, XP_UPDATED_EVENT } from '../state/profile.js';
 import { derivePlayerStats } from '../core/player-stats.js';
+import { delay } from './animations.js';
+
+// Matches `.header-xp-fill`'s own `transition: width` so each stage of the
+// fill is waited out rather than cut off mid-travel.
+const XP_FILL_MS = 700;
+// How long the level-up flash holds at a full bar before the next level
+// starts — long enough to register as an event, short enough not to stall.
+const XP_LEVEL_FLASH_MS = 900;
 import { isCurrentUserAdmin } from '../state/admin.js';
 import { loadGameConfig } from '../state/game-config.js';
 
@@ -84,18 +92,76 @@ export function initHeader(root, { signInError = null } = {}) {
   // the name or the nav.
   let levelStats = null;
 
-  async function refreshXp() {
+  async function refreshXp({ animate = false } = {}) {
     if (!currentSession) {
       levelStats = null;
       return;
     }
+    let next = null;
     try {
       const history = await loadOwnHistory(currentSession.user.id);
-      levelStats = derivePlayerStats(history);
+      next = derivePlayerStats(history);
     } catch {
       levelStats = null; // accounts still work; the bar just stays hidden
+      return;
     }
+    if (animate && levelStats) {
+      await animateXpTo(next);
+      return;
+    }
+    levelStats = next;
     renderAuthSlot();
+  }
+
+  // Moves the EXISTING bar rather than re-rendering the slot.
+  //
+  // This is the whole reason the bar visibly fills. `renderAuthSlot()` replaces
+  // the auth slot's innerHTML, which destroys the fill element and builds a new
+  // one already at its final width — a CSS transition has nothing to animate
+  // FROM, so the bar simply appeared at its new value. Mutating the element that
+  // is already on screen lets `transition: width` do its job.
+  async function animateXpTo(next) {
+    const xpEl = authSlot.querySelector('#header-xp');
+    const fill = xpEl?.querySelector('.header-xp-fill');
+    const levelEl = xpEl?.querySelector('.header-xp-level');
+    const track = xpEl?.querySelector('.header-xp-track');
+    if (!xpEl || !fill) {
+      // No bar on screen yet (it had not loaded when the run finished) — fall
+      // back to a plain render so the value is at least correct.
+      levelStats = next;
+      renderAuthSlot();
+      return;
+    }
+
+    const from = levelStats;
+    levelStats = next;
+
+    // LEVELLED UP: run the bar to full, hold on a flash, then start the new
+    // level from empty. Snapping straight to the new (lower) percentage would
+    // read as the bar going BACKWARDS, which is the opposite of what happened.
+    // Looped, because a big run can cross more than one level at once.
+    for (let level = (from?.level ?? next.level) + 1; level <= next.level; level++) {
+      fill.style.width = '100%';
+      await delay(XP_FILL_MS);
+      xpEl.classList.add('header-xp--levelup');
+      if (levelEl) levelEl.textContent = `Lv ${level}`;
+      await delay(XP_LEVEL_FLASH_MS);
+      // Reset to empty WITHOUT animating, so the rewind is instant and only the
+      // refill is seen. Forcing layout between the two is what stops the browser
+      // coalescing them into a single no-op.
+      fill.style.transition = 'none';
+      fill.style.width = '0%';
+      void fill.offsetWidth;
+      fill.style.transition = '';
+      xpEl.classList.remove('header-xp--levelup');
+    }
+
+    const pct = Math.round((next.levelProgress ?? 0) * 100);
+    fill.style.width = `${pct}%`;
+    if (levelEl) levelEl.textContent = `Lv ${next.level}`;
+    if (track) track.setAttribute('aria-valuenow', String(pct));
+    xpEl.setAttribute('title', xpTitle(next));
+    await delay(XP_FILL_MS);
   }
 
   // Called by the board once a run has been scored and saved, so the bar catches
@@ -104,7 +170,7 @@ export function initHeader(root, { signInError = null } = {}) {
   // each other — the same reasoning as nameplate.js's PROFILE_UPDATED_EVENT.
   window.addEventListener(XP_UPDATED_EVENT, () => {
     invalidateOwnHistory();
-    refreshXp();
+    refreshXp({ animate: true });
   });
 
   loadGameConfig()
@@ -274,12 +340,15 @@ export function initHeader(root, { signInError = null } = {}) {
 
   // The level bar under the name. Rendered only once lifetime XP is known, so
   // the header never shows a bar at 0% that is about to jump.
-  function xpBarHtml(stats) {
-    const pct = Math.round((stats.levelProgress ?? 0) * 100);
+  function xpTitle(stats) {
     const into = Math.round(stats.xpIntoLevel ?? 0);
     const band = Math.round(stats.xpForNextLevel ?? 0);
-    return `<span class="header-xp" id="header-xp"
-      title="Level ${stats.level} — ${into.toLocaleString()} / ${band.toLocaleString()} XP to level ${stats.level + 1}">
+    return `Level ${stats.level} — ${into.toLocaleString()} / ${band.toLocaleString()} XP to level ${stats.level + 1}`;
+  }
+
+  function xpBarHtml(stats) {
+    const pct = Math.round((stats.levelProgress ?? 0) * 100);
+    return `<span class="header-xp" id="header-xp" title="${escapeHtml(xpTitle(stats))}">
       <span class="header-xp-level">Lv ${stats.level}</span>
       <span class="header-xp-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"
             aria-label="Level ${stats.level}, ${pct}% to the next level">

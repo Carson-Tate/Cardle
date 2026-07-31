@@ -542,8 +542,11 @@ header h1 {
   animation: xp-pop 380ms cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
 }
 
+/* ease-in-out rather than a linear sweep: it pulls away from the score and
+   settles into the bar, which reads as something travelling rather than
+   something being teleported along a line. */
 .xp-gain--fly {
-  animation: xp-fly var(--fly-duration, 780ms) cubic-bezier(0.5, 0, 0.5, 1) forwards;
+  animation: xp-fly var(--fly-duration, 780ms) cubic-bezier(0.45, 0.05, 0.3, 1) forwards;
 }
 
 .xp-gain--fade {
@@ -561,17 +564,22 @@ header h1 {
   }
 }
 
+/* Stays fully opaque for most of the journey and only fades over the last
+   sliver, so the eye follows it the whole way and the fade reads as it merging
+   INTO the bar rather than as it vanishing en route. It also shrinks less than
+   it used to (0.6, not 0.45) — a pill that is already half gone by mid-flight
+   is hard to track. */
 @keyframes xp-fly {
   from {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
   }
-  70% {
+  85% {
     opacity: 1;
   }
   to {
     opacity: 0;
-    transform: translate(calc(-50% + var(--fly-x)), calc(-50% + var(--fly-y))) scale(0.45);
+    transform: translate(calc(-50% + var(--fly-x)), calc(-50% + var(--fly-y))) scale(0.6);
   }
 }
 
@@ -582,12 +590,48 @@ header h1 {
   }
 }
 
-/* Motion here is the whole point, but a full flight across the viewport is
-   exactly what reduced-motion asks to avoid. The pill still appears and is
-   readable — it just does not travel. */
+/* REDUCE, NOT REMOVE.
+   This previously swapped the flight for a fade, so the pill appeared beside the
+   score and then vanished on the spot — which is exactly what the owner
+   reported, and it defeats the point of the feature ("i want it to move up to
+   where the xp bar is"). The travel is the message: it is what connects the
+   number to the bar it feeds.
+   So reduced motion keeps the journey and takes the agitation out of it — no
+   pop-scale on arrival, no shrink, a longer and entirely linear path. That
+   follows the spirit of the preference (avoid sudden, bouncy, fast motion)
+   without deleting the thing being communicated, the same call already made for
+   the XP bar's own fill. */
 @media (prefers-reduced-motion: reduce) {
+  .xp-gain--pop {
+    animation: xp-pop-calm 300ms linear forwards;
+  }
+
   .xp-gain--fly {
-    animation: xp-fade 400ms ease forwards;
+    animation: xp-fly-calm var(--fly-duration, 780ms) linear forwards;
+  }
+}
+
+@keyframes xp-pop-calm {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes xp-fly-calm {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  85% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--fly-x)), calc(-50% + var(--fly-y))) scale(1);
   }
 }
 
@@ -1082,6 +1126,38 @@ header h1 {
   padding-top: 0.6rem;
 }
 
+/* Test-account controls in the test-mode panel (DESIGN.md §11u). */
+.admin-test-account {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.admin-test-account label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.admin-test-account-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.admin-test-account input[type='number'] {
+  width: 7rem;
+  font-family: inherit;
+  padding: 0.3rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
 .admin-slots {
   display: flex;
   flex-direction: column;
@@ -1566,6 +1642,51 @@ header h1 {
    what ties the flying pill to the thing it was flying at. */
 .header-xp--gained .header-xp-fill {
   animation: xp-arrive 700ms ease-out;
+}
+
+/* LEVEL UP. Deliberately louder than the arrival pulse — crossing a level is
+   the rarer event and should not look like an ordinary gain. The whole readout
+   glows and the level number pops, held while the bar sits at 100% before the
+   next level starts from empty (see animateXpTo). */
+.header-xp--levelup .header-xp-fill {
+  background: #ffd75e;
+  box-shadow: 0 0 10px 2px color-mix(in srgb, #ffd75e 85%, transparent);
+}
+
+.header-xp--levelup .header-xp-level {
+  animation: xp-levelup-pop 900ms ease-out;
+  color: var(--accent);
+}
+
+@keyframes xp-levelup-pop {
+  0% {
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.45);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* The level number is inline, and `transform` does nothing on a non-replaced
+   inline box — so the pop above would silently never play without this. */
+.header-xp-level {
+  display: inline-block;
+}
+
+/* The bar's fill is the one thing here that must still MOVE under reduced
+   motion — a progress bar that teleports is not a decoration, it is the
+   feature. The flash and the pop are decoration, so those go. */
+@media (prefers-reduced-motion: reduce) {
+  .header-xp--levelup .header-xp-level {
+    animation: none;
+  }
+
+  .header-xp--gained .header-xp-fill {
+    animation: none;
+  }
 }
 
 @keyframes xp-arrive {

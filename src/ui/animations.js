@@ -151,7 +151,7 @@ function textInkRect(el) {
   return el.getBoundingClientRect();
 }
 
-export function flyXpGain(fromEl, toEl, amount, { popMs = 380, holdMs = 620, flyMs = 780 } = {}) {
+export function flyXpGain(fromEl, toEl, amount, { popMs = 380, holdMs = 620, flyMs = 1000 } = {}) {
   if (!fromEl || !Number.isFinite(amount) || amount <= 0) return Promise.resolve();
 
   const pill = document.createElement('div');

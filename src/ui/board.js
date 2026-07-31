@@ -11,7 +11,17 @@ import { resolveRunConfig } from '../state/test-mode.js';
 import { loadGameConfig } from '../state/game-config.js';
 import { modifierOverrideFor } from '../core/game-config.js';
 import { recordRun, markAchievementsUnlocked } from '../state/stats.js';
-import { xpForRun } from '../core/progression.js';
+import { xpForRun, levelProgress } from '../core/progression.js';
+import {
+  isTestAccountActive,
+  testAccountXp,
+  testAccountActualXp,
+  enableTestAccount,
+  disableTestAccount,
+  xpJustBelowLevel,
+  addTestAccountXp,
+  TEST_ACCOUNT_USERNAME,
+} from '../state/test-account.js';
 import { announceXpUpdate } from '../state/profile.js';
 import { getSession } from '../state/auth.js';
 import { claimTodaySeed, saveTodayResultForUser } from '../state/daily-play.js';
@@ -958,6 +968,22 @@ function renderAdminPanel(root, onRedeal) {
       </select>
       <button type="button" data-action="preview-modifier">🔁 Redeal with this modifier</button>
     </div>
+    <div class="admin-panel-subtitle">🧑‍💻 Test Account</div>
+    <div class="admin-test-account">
+      <label>
+        <input type="checkbox" id="admin-test-account-toggle" />
+        Signed in as a fake local account
+      </label>
+      <div class="admin-test-account-row">
+        <label for="admin-test-account-xp">Lifetime XP</label>
+        <input type="number" id="admin-test-account-xp" min="0" step="100" value="0" />
+        <button type="button" data-action="test-account-apply">Apply &amp; reload</button>
+      </div>
+      <div class="admin-test-account-row">
+        <button type="button" data-action="test-account-nearly">Set to 50 XP short of the next level</button>
+      </div>
+      <p class="admin-hint" id="admin-test-account-note"></p>
+    </div>
     <div class="admin-panel-subtitle">🎛️ Custom Hand Builder</div>
     <div class="admin-slots">
       ${CUSTOM_SLOT_DEFAULT_RANKS.map(
@@ -1014,6 +1040,8 @@ function renderAdminPanel(root, onRedeal) {
   panel.querySelector('[data-action="preview-modifier"]').addEventListener('click', () => {
     onRedeal({ forceModifier: modifierSelect.value });
   });
+
+  wireTestAccountPanel(panel);
 
   // Each slot's rarity select reveals its own Joker-flavor select only when
   // "Joker" is picked for that slot — the other 4 slots' pickers are
@@ -1256,6 +1284,12 @@ async function revealXpGain(result) {
     const target = document.querySelector('#header-auth-slot .header-user-name') ?? document.querySelector('#header-auth-slot');
     await flyXpGain(totalEl, target, gained);
 
+    // Bank the gain into the fake account first, if one is active — test mode
+    // never writes a real result, so without this its synthetic history would
+    // regenerate unchanged and the bar would have nothing to move to. A no-op
+    // in every other case.
+    addTestAccountXp(gained);
+
     // Only now does the bar move, so the fill visibly responds to the number
     // that just arrived rather than having crept up while it was in flight.
     announceXpUpdate();
@@ -1278,6 +1312,56 @@ function meterRowHtml(id) {
       <span class="meter-value" id="meter-value-${id}">0%</span>
     </div>
   `;
+}
+
+// The fake-account controls (state/test-account.js). Test-mode panel only, and
+// the module itself refuses to activate without `?test` in the URL regardless of
+// what this writes.
+//
+// Every change RELOADS. Identity is read once at startup by header.js, board.js
+// and the profile page, so flipping it live would leave half the page believing
+// one thing and half another — and a reload is exactly what a tester expects
+// from "sign in as".
+function wireTestAccountPanel(panel) {
+  const toggle = panel.querySelector('#admin-test-account-toggle');
+  const xpInput = panel.querySelector('#admin-test-account-xp');
+  const note = panel.querySelector('#admin-test-account-note');
+  if (!toggle) return;
+
+  const describe = () => {
+    if (!isTestAccountActive()) {
+      note.textContent = 'Off — playing as whoever is really signed in (or nobody).';
+      return;
+    }
+    const xp = testAccountXp();
+    const progress = levelProgress(testAccountActualXp(xp));
+    note.textContent = `On — ${TEST_ACCOUNT_USERNAME}, ${progress.totalXp.toLocaleString()} XP (level ${progress.level}, ${Math.round(
+      progress.progress * 100,
+    )}% to ${progress.level + 1}).`;
+  };
+
+  toggle.checked = isTestAccountActive();
+  xpInput.value = String(testAccountXp());
+  describe();
+
+  const apply = (xp) => {
+    if (toggle.checked) enableTestAccount(xp);
+    else disableTestAccount();
+    window.location.reload();
+  };
+
+  toggle.addEventListener('change', () => apply(Number(xpInput.value) || 0));
+  panel.querySelector('[data-action="test-account-apply"]').addEventListener('click', () => {
+    toggle.checked = true;
+    apply(Number(xpInput.value) || 0);
+  });
+  panel.querySelector('[data-action="test-account-nearly"]').addEventListener('click', () => {
+    // Parked just short of the NEXT level, so the very next run crosses it and
+    // the level-up flash can actually be seen.
+    const current = levelProgress(testAccountActualXp(testAccountXp())).level;
+    toggle.checked = true;
+    apply(xpJustBelowLevel(current + 1, 50));
+  });
 }
 
 // Sets the fill width directly (CSS transitions the visual bar) while

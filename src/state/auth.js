@@ -6,6 +6,7 @@
 // prompt the first time a new user signs in (see createProfile below).
 
 import { getSupabase, requireSupabase } from './supabase-client.js';
+import { isTestAccountActive, testAccountSession, testAccountProfile } from './test-account.js';
 
 export { SupabaseNotConfiguredError } from './supabase-client.js';
 
@@ -101,6 +102,11 @@ export async function signOut() {
 // "is anyone logged in" (e.g. the header's initial render) can use this
 // without needing to handle the not-configured case as an error.
 export async function getSession() {
+  // Local test account (state/test-account.js) — only ever active with `?test`
+  // in the URL AND a deliberately-set flag, and it never touches Supabase, so
+  // it confers no database access. Checked first so every caller sees a
+  // consistent identity without any of them knowing this exists.
+  if (isTestAccountActive()) return testAccountSession();
   // Also null (rather than a throw) when the Supabase SDK itself can't be
   // reached — a CDN/network failure should read as "nobody is logged in,"
   // which the whole anonymous-play path already handles, not as an error
@@ -119,6 +125,19 @@ export async function getSession() {
 // returns a no-op unsubscribe) when Supabase isn't configured, so header.js
 // can wire this up unconditionally without an extra existence check.
 export function onAuthStateChange(callback) {
+  // Local test account: report it once and never subscribe.
+  //
+  // THIS IS LOAD-BEARING, not symmetry with getSession(). Supabase fires this
+  // immediately on subscribe with INITIAL_SESSION — and since nobody is really
+  // signed in, that value is `null`, which promptly overwrote the fake session
+  // getSession() had just supplied. The header ended up showing "Log In" while
+  // getSession() still cheerfully returned a session, which is exactly what the
+  // owner reported. Delivered in a microtask so callers see the same async
+  // shape the real subscription gives them.
+  if (isTestAccountActive()) {
+    queueMicrotask(() => callback(testAccountSession()));
+    return () => {};
+  }
   // Stays synchronous for callers (header.js wires this up during its own
   // sync init and needs an unsubscribe handle immediately) even though the
   // client is now loaded on demand — the real subscription attaches once it
@@ -146,6 +165,7 @@ export function onAuthStateChange(callback) {
 // means this auth user exists but hasn't picked a username yet (a brand new
 // sign-up), which is the header's cue to prompt for one via createProfile.
 export async function getProfile(userId) {
+  if (isTestAccountActive()) return testAccountProfile();
   const client = await requireSupabase();
   const { data, error } = await client.from('profiles').select('*').eq('id', userId).maybeSingle();
   if (error) throw error;

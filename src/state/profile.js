@@ -10,6 +10,7 @@
 import { requireSupabase } from './supabase-client.js';
 // Reused rather than duplicated: one definition of what a legal username is.
 import { isValidUsername, normalizeUsername } from './auth.js';
+import { isTestAccountActive, testAccountHistory } from './test-account.js';
 
 // How far back the profile reads. One row per day played, so this is a
 // hard bound on both the query and the derived stats: 400 rows covers over a
@@ -24,6 +25,11 @@ export const HISTORY_LIMIT = 400;
  * @returns {Promise<Array<{playDate: string, result: object}>>}
  */
 export async function fetchPlayHistory(userId, { limit = HISTORY_LIMIT } = {}) {
+  // Synthetic history for the local test account, so the XP bar, levels and
+  // level-ups can be exercised without weeks of real daily runs. Built from real
+  // run RESULTS rather than a stated total, so derivePlayerStats does exactly
+  // the work it does in production (see test-account.js).
+  if (isTestAccountActive()) return testAccountHistory().slice(0, limit);
   const client = await requireSupabase();
   const { data, error } = await client
     .from('daily_plays')

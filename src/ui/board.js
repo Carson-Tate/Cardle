@@ -142,7 +142,10 @@ export function initBoard(root) {
   const handRow = root.querySelector('#hand-row');
   const drawBtn = root.querySelector('#draw-btn');
   const discardHint = root.querySelector('#discard-hint');
-  const shareBtn = root.querySelector('#share-btn');
+  // May legitimately be null: an ad blocker running a `:remove()` rule takes the
+  // element out of the DOM entirely rather than just hiding it. Every use below
+  // is null-guarded for that reason.
+  const shareBtn = root.querySelector('#result-copy-btn');
   const lockInBtn = root.querySelector('#lock-in-btn');
   const dayLabel = root.querySelector('#day-label');
   const modifierBanner = root.querySelector('#modifier-banner');
@@ -875,7 +878,11 @@ export function initBoard(root) {
     // finished run) — collapse immediately rather than waiting for anything.
     setupBreakdownCollapse(resultPanel.querySelector('.score-breakdown'));
     renderStoryBlock(resultPanel.querySelector('#story-block'), result, storyFragments(), shareBtn);
-    shareBtn.hidden = false;
+    // Guarded like every other use: an ad blocker that REMOVES the button (as
+    // opposed to hiding it) left this line throwing on null, which aborted the
+    // already-played reload half-rendered — so a blocked button cost the player
+    // their whole result panel, not just the button.
+    if (shareBtn) shareBtn.hidden = false;
   }
 }
 
@@ -1302,6 +1309,20 @@ async function revealScore(resultPanel, result, fragments, shareBtn = null) {
 // throws.
 async function revealXpGain(result) {
   try {
+    // XP IS AN ACCOUNT FEATURE. Anonymous play is deliberately allowed (§9.2)
+    // but nothing about it is persisted, so an XP number shown to a logged-out
+    // player is a promise the game cannot keep — owner: "dont show xp if not
+    // logged in". Worse, the animation's flight target is the header nameplate,
+    // which for a logged-out visitor is the "Log In" button: the gain literally
+    // flew into a control that says the player has no account.
+    //
+    // The test account counts as signed in on purpose. It holds no Supabase
+    // session (state/test-account.js) so the getSession() half is false for it,
+    // and skipping the reveal would leave its whole reason for existing —
+    // watching the bar move — untestable.
+    const signedIn = isTestAccountActive() || Boolean(await getSession().catch(() => null));
+    if (!signedIn) return;
+
     const gained = xpForRun(result);
     if (gained <= 0) return;
     const totalEl = document.querySelector('#result .score-total');
@@ -1776,8 +1797,12 @@ function miniCardStripHtml(logicalHand, rawHand, highlightIndices) {
     .map((card, i) => {
       const color = card.suit === 'H' || card.suit === 'D' ? 'mini-card--red' : 'mini-card--black';
       const highlighted = highlightSet.has(i) ? ' mini-card--highlight' : '';
-      const isWild = rawHand[i]?.rarity === 'joker' ? ' mini-card--wild' : '';
-      return `<span class="mini-card ${color}${highlighted}${isWild}">${rankLabel(card.rank)}${suitGlyph(card.suit)}</span>`;
+      // isWild(), not `rarity === 'joker'` — that is the LEGACY shape only, so
+      // a modern wild (`wild: true`) silently lost its 🃏 marker here while
+      // every other renderer showed one. The local name also shadowed the
+      // imported isWild, which is what let the mismatch hide in plain sight.
+      const wildClass = isWild(rawHand[i]) ? ' mini-card--wild' : '';
+      return `<span class="mini-card ${color}${highlighted}${wildClass}">${rankLabel(card.rank)}${suitGlyph(card.suit)}</span>`;
     })
     .join('');
   return `<div class="mini-card-strip">${chips}</div>`;

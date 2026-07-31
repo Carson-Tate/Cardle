@@ -13,10 +13,52 @@ import {
   rarityMultiplier,
   pityBonus,
   scoreRun,
+  logicalCardsFor,
 } from '../src/core/scoring.js';
 import { evaluateHand } from '../src/core/hand-evaluator.js';
 
 const c = (rank, suit, rarity = null, jokerTier = null) => ({ rank, suit, rarity, jokerTier });
+
+describe('logicalCardsFor', () => {
+  const wild = (rank, suit) => ({ rank, suit, wild: true });
+
+  test('leaves a hand with no wild untouched', () => {
+    const hand = [c(4, 'D'), c(7, 'D')];
+    assert.equal(logicalCardsFor(hand, { hasWildJoker: false }), hand);
+  });
+
+  // The bug: every wild slot was handed the FIRST wild's substitution, so a
+  // two-wild hand rendered as two identical cards that did not add up to the
+  // hand it had just been scored as. `wildSubstitutions` is position-keyed and
+  // exists precisely for this. Rare while WILD_CHANCE was ~1 hand in 100; at
+  // the current ~1 in 11 a two-wild hand turns up every ~120 hands.
+  test('each wild resolves to its OWN substitution, not the first one', () => {
+    const hand = [wild(2, 'D'), c(13, 'S'), wild(6, 'C')];
+    const result = {
+      hasWildJoker: true,
+      wildSubstitution: { rank: 13, suit: 'H' },
+      wildSubstitutions: { 0: { rank: 13, suit: 'H' }, 2: { rank: 13, suit: 'D' } },
+    };
+    assert.deepEqual(logicalCardsFor(hand, result), [
+      { rank: 13, suit: 'H' },
+      c(13, 'S'),
+      { rank: 13, suit: 'D' },
+    ]);
+  });
+
+  // Stored rows written before `wildSubstitutions` existed carry only the
+  // singular field, and this runs over history (profile + leaderboard).
+  test('falls back to the singular substitution for legacy stored rows', () => {
+    const hand = [{ rank: 2, suit: 'D', rarity: 'joker' }, c(13, 'S')];
+    const result = { hasWildJoker: true, wildSubstitution: { rank: 13, suit: 'H' } };
+    assert.deepEqual(logicalCardsFor(hand, result), [{ rank: 13, suit: 'H' }, c(13, 'S')]);
+  });
+
+  test('leaves the card alone rather than throwing when no substitution was recorded', () => {
+    const hand = [wild(2, 'D')];
+    assert.deepEqual(logicalCardsFor(hand, { hasWildJoker: true }), hand);
+  });
+});
 
 describe('flavorBonus', () => {
   test('awards 25 per ace, 10 per face card', () => {

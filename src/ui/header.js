@@ -9,7 +9,7 @@ import { openModal } from './modal.js';
 import { nameplateHtml, PROFILE_UPDATED_EVENT } from './nameplate.js';
 import { getSession, onAuthStateChange, signInWithMagicLink, getProfile, createProfile } from '../state/auth.js';
 import { sendFriendRequest, getPendingRequests, getSentRequests, getFriends, acceptFriendRequest, removeFriendship, searchProfiles } from '../state/friends.js';
-import { isSupabaseConfigured } from '../state/supabase-client.js';
+import { isSupabaseConfigured, SupabaseUnavailableError } from '../state/supabase-client.js';
 import { loadOwnHistory, invalidateOwnHistory, XP_UPDATED_EVENT } from '../state/profile.js';
 import { derivePlayerStats } from '../core/player-stats.js';
 import { delay } from './animations.js';
@@ -48,10 +48,12 @@ function escapeHtml(value) {
 
 /**
  * @param {Document|HTMLElement} root
- * @param {{signInError?: string|null}} [options] - a failed sign-in link,
- *   forwarded by main.js. Surfaced as a pre-opened login modal rather than
- *   swallowed: a dead link otherwise drops the player on an ordinary logged-out
- *   home page, where the only available reading is "it just didn't work".
+ * @param {{signInError?: Error|null}} [options] - the ERROR from a failed
+ *   sign-in link, forwarded by main.js. Surfaced as a pre-opened login modal
+ *   rather than swallowed: a dead link otherwise drops the player on an ordinary
+ *   logged-out home page, where the only available reading is "it just didn't
+ *   work". The error object itself is passed, not a pre-flattened string,
+ *   because what to SAY depends on which failure it was — see signInHint.
  */
 export function initHeader(root, { signInError = null } = {}) {
   const logoBtn = root.querySelector('#header-logo');
@@ -136,32 +138,46 @@ export function initHeader(root, { signInError = null } = {}) {
     const from = levelStats;
     levelStats = next;
 
-    // LEVELLED UP: run the bar to full, hold on a flash, then start the new
-    // level from empty. Snapping straight to the new (lower) percentage would
-    // read as the bar going BACKWARDS, which is the opposite of what happened.
-    // Looped, because a big run can cross more than one level at once.
-    for (let level = (from?.level ?? next.level) + 1; level <= next.level; level++) {
-      fill.style.width = '100%';
-      await delay(XP_FILL_MS);
-      xpEl.classList.add('header-xp--levelup');
-      if (levelEl) levelEl.textContent = `Lv ${level}`;
-      await delay(XP_LEVEL_FLASH_MS);
-      // Reset to empty WITHOUT animating, so the rewind is instant and only the
-      // refill is seen. Forcing layout between the two is what stops the browser
-      // coalescing them into a single no-op.
-      fill.style.transition = 'none';
-      fill.style.width = '0%';
-      void fill.offsetWidth;
-      fill.style.transition = '';
-      xpEl.classList.remove('header-xp--levelup');
-    }
+    // Claim the slot for the duration. Everything below mutates the EXISTING
+    // nodes, so any re-render arriving now is deferred rather than allowed to
+    // swap the element out from under the transition.
+    xpAnimating = true;
+    try {
+      // LEVELLED UP: run the bar to full, hold on a flash, then start the new
+      // level from empty. Snapping straight to the new (lower) percentage would
+      // read as the bar going BACKWARDS, which is the opposite of what happened.
+      // Looped, because a big run can cross more than one level at once.
+      for (let level = (from?.level ?? next.level) + 1; level <= next.level; level++) {
+        fill.style.width = '100%';
+        await delay(XP_FILL_MS);
+        xpEl.classList.add('header-xp--levelup');
+        if (levelEl) levelEl.textContent = `Lv ${level}`;
+        await delay(XP_LEVEL_FLASH_MS);
+        // Reset to empty WITHOUT animating, so the rewind is instant and only
+        // the refill is seen. Forcing layout between the two is what stops the
+        // browser coalescing them into a single no-op.
+        fill.style.transition = 'none';
+        fill.style.width = '0%';
+        void fill.offsetWidth;
+        fill.style.transition = '';
+        xpEl.classList.remove('header-xp--levelup');
+      }
 
-    const pct = Math.round((next.levelProgress ?? 0) * 100);
-    fill.style.width = `${pct}%`;
-    if (levelEl) levelEl.textContent = `Lv ${next.level}`;
-    if (track) track.setAttribute('aria-valuenow', String(pct));
-    xpEl.setAttribute('title', xpTitle(next));
-    await delay(XP_FILL_MS);
+      const pct = Math.round((next.levelProgress ?? 0) * 100);
+      fill.style.width = `${pct}%`;
+      if (levelEl) levelEl.textContent = `Lv ${next.level}`;
+      if (track) track.setAttribute('aria-valuenow', String(pct));
+      xpEl.setAttribute('title', xpTitle(next));
+      await delay(XP_FILL_MS);
+    } finally {
+      // `finally`, so a throw mid-animation can't leave the header permanently
+      // unable to re-render.
+      xpAnimating = false;
+      if (renderDeferred) {
+        renderDeferred = false;
+        renderAuthSlot();
+      }
+    }
   }
 
   // Called by the board once a run has been scored and saved, so the bar catches
@@ -232,7 +248,25 @@ export function initHeader(root, { signInError = null } = {}) {
     adminBtn.hidden = !isAdmin;
   }
 
+  // Whether an XP bar animation currently owns the auth slot's DOM.
+  //
+  // renderAuthSlot() replaces the slot's innerHTML, which DESTROYS the element
+  // animateXpTo is mutating — the new one is a different node, already at its
+  // final width, with nothing to transition from. Any late async callback that
+  // re-renders (loadGameConfig resolving, a PROFILE_UPDATED_EVENT) could
+  // therefore silently turn the fill into a teleport, which is precisely the
+  // bug animateXpTo was written to fix. Deferring instead of dropping means the
+  // re-render still happens, just after the animation has finished with the
+  // node. Caught by levelup-run's "the bar element is never replaced
+  // mid-animation" assertion.
+  let xpAnimating = false;
+  let renderDeferred = false;
+
   function renderAuthSlot() {
+    if (xpAnimating) {
+      renderDeferred = true;
+      return;
+    }
     if (!sessionResolved) {
       // Nothing is known yet — reserve the space, claim nothing.
       authSlot.innerHTML = '<span class="header-auth-pending" aria-hidden="true"></span>';
@@ -298,12 +332,28 @@ export function initHeader(root, { signInError = null } = {}) {
   renderAuthSlot(); // paint the logged-out state immediately; getSession/onAuthStateChange correct it the moment the real session is known
 
   // A sign-in link that failed. Reopens the login form with the reason already
-  // shown, so the next step ("send me another one") is one tap away. Expiry and
-  // an already-redeemed token are by far the likeliest causes and both are
-  // fixed the same way, so the wording covers them rather than parroting
-  // Supabase's single "invalid or has expired" string.
+  // shown, so the next step is one tap away.
+  //
+  // WHICH reason matters. This used to assert a single hardcoded diagnosis —
+  // "links expire, and each one can only be used once" — for every failure,
+  // including the one where the Supabase SDK never downloaded at all. On mobile
+  // that was not merely unhelpful but actively misleading: it told the player
+  // (and the owner, for weeks) that sign-in links were expiring, when the link
+  // was fine and the CDN was blocked. Telling someone to request a fresh link
+  // when the network is the problem sends them round a loop that cannot
+  // terminate — every new link fails identically.
   if (signInError) {
-    openLoginModal({ hint: `That sign-in link didn't work — links expire, and each one can only be used once. Enter your email for a fresh one.` });
+    openLoginModal({ hint: signInHint(signInError), retryable: signInError instanceof SupabaseUnavailableError });
+  }
+
+  function signInHint(error) {
+    if (error instanceof SupabaseUnavailableError) {
+      return `${error.message} Your link is still valid — pull down to refresh once you're back online.`;
+    }
+    // Expiry and an already-redeemed token are the likeliest remaining causes
+    // and both are fixed the same way, so the wording covers them rather than
+    // parroting Supabase's single "invalid or has expired" string.
+    return `That sign-in link didn't work — links expire, and each one can only be used once. Enter your email for a fresh one.`;
   }
 
   // Seeds the header with whatever session Supabase already restored from
@@ -450,7 +500,12 @@ export function initHeader(root, { signInError = null } = {}) {
   // two different things to do. `verifyEmailOtp` is kept in state/auth.js as the
   // escape hatch for mail apps whose in-app browser has isolated storage, which
   // no link can solve.
-  function openLoginModal({ hint } = {}) {
+  // `retryable` means the failure was the network/CDN, not the token — main.js
+  // has deliberately LEFT the token in the URL in that case, so simply loading
+  // the page again redeems it. Offering "Send Link" there would be the wrong
+  // advice (the link in hand is fine), so retry leads and the email form stays
+  // available underneath for anyone who'd rather start over.
+  function openLoginModal({ hint, retryable = false } = {}) {
     openModal({
       title: 'Log In',
       render: (body) => {
@@ -459,13 +514,15 @@ export function initHeader(root, { signInError = null } = {}) {
           return;
         }
         body.innerHTML = `
-          <p>${hint ?? "We'll email you a one-time sign-in link — no password to remember."}</p>
+          <p>${escapeHtml(hint ?? "We'll email you a one-time sign-in link — no password to remember.")}</p>
+          ${retryable ? `<button type="button" class="login-retry-btn">Try Again</button>` : ''}
           <form class="login-form">
             <input type="email" class="login-email-input" placeholder="you@example.com" required autocomplete="email" />
             <button type="submit">Send Link</button>
           </form>
           <p class="login-status" hidden></p>
         `;
+        body.querySelector('.login-retry-btn')?.addEventListener('click', () => window.location.reload());
         const form = body.querySelector('.login-form');
         const status = body.querySelector('.login-status');
         form.addEventListener('submit', async (event) => {

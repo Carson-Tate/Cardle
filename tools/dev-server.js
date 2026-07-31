@@ -13,6 +13,11 @@ const MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.json': 'application/json; charset=utf-8',
+  // Served from the repo root (robots.txt, sitemap.xml). Without these they'd
+  // fall through to application/octet-stream and download rather than render,
+  // which makes them awkward to eyeball locally.
+  '.txt': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
 };
 
 const server = http.createServer(async (req, res) => {

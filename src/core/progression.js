@@ -20,8 +20,12 @@ import { handStrengthIndex, HAND_RANKS } from './hand-evaluator.js';
 import { gradeForScore, gradeRank, SCORE_GRADES } from './score-grade.js';
 
 // Every run earns the base, just for playing the day — a daily game's
-// progression should never stall on bad luck.
-export const XP_BASE_PER_RUN = 100;
+// progression should never stall on bad luck. Raised from 100 on the owner's
+// "xp easier to earn": this is the term that lifts the FLOOR, so it is felt
+// most on exactly the days that previously felt unrewarded (busted hand, no
+// bonuses, a discard that didn't come off). The terms below already pay for a
+// good day; nothing but this pays for a bad one.
+export const XP_BASE_PER_RUN = 150;
 // Scaled by hand category (0 = High Card ... 11 = Royal Flush), so a better
 // hand is worth more without the 274,000x spread the point table has.
 export const XP_PER_HAND_STRENGTH = 25;
@@ -50,13 +54,49 @@ export const XP_PER_SCORE_GRADE = 100;
 // restated. Used by the tests and by anything sizing a progress display.
 export const MAX_SCORE_GRADE_RANK = SCORE_GRADES.length - 1;
 
-// Cumulative XP needed to REACH a level grows by this much more each level:
-// level 2 costs 300, level 3 a further 600, level 4 a further 900. That's a
-// triangular curve, chosen because a typical run earns roughly 250-350 XP, so
-// early levels land every run or two (immediately rewarding) while level 10
-// takes ~45 days and level 20 most of a year (a long-term goal that can't be
-// rushed, since there's only one run per day by design, §9.2).
+// --- The level curve ------------------------------------------------------
+//
+// The cost of the FIRST level-up (1 -> 2). Every later band is this plus
+// XP_LEVEL_BAND_GROWTH per level, until it stops at XP_LEVEL_BAND_CAP.
 export const XP_PER_LEVEL_STEP = 300;
+// How much more each level costs than the one before it, while still growing.
+export const XP_LEVEL_BAND_GROWTH = 150;
+// The most a single level can ever cost. THIS IS THE WHOLE FIX (owner: "levels
+// scale better").
+//
+// The curve used to be triangular — band(L) = 300 x L — which meant the cost of
+// one level grew without bound: level 20 -> 21 alone cost 6,000 XP, about three
+// weeks at one run per day, and level 40 would have cost six. In a game that
+// hands out exactly one run per day by design (§9.2), a band that grows forever
+// doesn't read as "a long-term goal", it reads as the game quietly ending. The
+// player's rate of progress is fixed at ~1 run/day, so anything super-linear
+// eventually outruns them no matter how well they play.
+//
+// Capping the band makes levelling asymptotically STEADY instead: bands widen
+// for the first nine levels (so early progress still visibly accelerates away
+// from the tutorial), then settle at a level roughly every 4-5 days forever.
+// That is a pace a daily game can actually sustain.
+//
+// Because every new band is <= the old band at the same level (they are equal
+// at level 1 and cheaper everywhere after), this change can only move an
+// existing player's level UP. Levels are DERIVED from daily_plays rather than
+// stored, so everyone re-levels on their next page load — and nobody can be
+// demoted by it, which is the property that makes it safe to ship.
+export const XP_LEVEL_BAND_CAP = 1500;
+
+// The first level whose band is already at the cap, derived rather than
+// restated so the three dials above stay the only things to tune.
+// With 300/150/1500 this is 9.
+const CAP_LEVEL = 1 + Math.ceil((XP_LEVEL_BAND_CAP - XP_PER_LEVEL_STEP) / XP_LEVEL_BAND_GROWTH);
+// Cumulative XP at CAP_LEVEL, above which the curve is a straight line.
+const CAP_LEVEL_XP =
+  XP_PER_LEVEL_STEP * (CAP_LEVEL - 1) + (XP_LEVEL_BAND_GROWTH * (CAP_LEVEL - 1) * (CAP_LEVEL - 2)) / 2;
+
+/** XP to get from `level` to `level + 1`. */
+export function xpBandForLevel(level) {
+  if (level < 1) return XP_PER_LEVEL_STEP;
+  return Math.min(XP_PER_LEVEL_STEP + XP_LEVEL_BAND_GROWTH * (level - 1), XP_LEVEL_BAND_CAP);
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -107,21 +147,46 @@ export function xpForRun(result) {
 
 /**
  * Total XP required to reach `level`. Level 1 is the starting point and costs
- * nothing. Triangular: XP_PER_LEVEL_STEP * (level-1) * level / 2.
+ * nothing. Two pieces: a widening (quadratic) run up to CAP_LEVEL, then a
+ * straight line at XP_LEVEL_BAND_CAP per level.
  */
 export function totalXpForLevel(level) {
   if (level <= 1) return 0;
-  return (XP_PER_LEVEL_STEP * (level - 1) * level) / 2;
+  if (level <= CAP_LEVEL) {
+    const steps = level - 1;
+    return XP_PER_LEVEL_STEP * steps + (XP_LEVEL_BAND_GROWTH * steps * (steps - 1)) / 2;
+  }
+  return CAP_LEVEL_XP + XP_LEVEL_BAND_CAP * (level - CAP_LEVEL);
 }
 
 /**
- * The level a given lifetime XP total corresponds to. Closed form (the
- * positive root of the triangular formula above) rather than a loop, so this
- * stays O(1) no matter how far a player progresses.
+ * The level a given lifetime XP total corresponds to — the exact inverse of
+ * totalXpForLevel.
+ *
+ * Closed form for both pieces (the positive root of the quadratic below the
+ * cap, plain division above it) so this stays O(1) however far a player
+ * progresses. The correction loops afterwards exist only to absorb floating
+ * point: Math.sqrt can land a hair under an exact boundary and floor() then
+ * reports the level BELOW the one the player just earned. They run at most one
+ * iteration, and they are what make "levelForXp is the exact inverse at every
+ * boundary" true rather than nearly true.
  */
 export function levelForXp(totalXp) {
   const xp = Math.max(0, Number.isFinite(totalXp) ? totalXp : 0);
-  return Math.floor((1 + Math.sqrt(1 + (8 * xp) / XP_PER_LEVEL_STEP)) / 2);
+
+  let level;
+  if (xp >= CAP_LEVEL_XP) {
+    level = CAP_LEVEL + Math.floor((xp - CAP_LEVEL_XP) / XP_LEVEL_BAND_CAP);
+  } else {
+    // steps = level - 1 solves (G/2)·steps² + (STEP - G/2)·steps - xp = 0.
+    const b = XP_PER_LEVEL_STEP - XP_LEVEL_BAND_GROWTH / 2;
+    const steps = (-b + Math.sqrt(b * b + 2 * XP_LEVEL_BAND_GROWTH * xp)) / XP_LEVEL_BAND_GROWTH;
+    level = 1 + Math.floor(steps);
+  }
+
+  while (totalXpForLevel(level + 1) <= xp) level++;
+  while (level > 1 && totalXpForLevel(level) > xp) level--;
+  return level;
 }
 
 /**

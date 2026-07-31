@@ -1299,6 +1299,13 @@ header h1 {
    A flex row rather than the button trailing the paragraph, so the pair is
    centred as a unit and the button's baseline does not depend on whether the
    hint has wrapped. Wraps on narrow screens so a long hint never squeezes it. */
+/* Unsaved modifier picks in the admin schedule. Warning-coloured so it reads as
+   "you still have to press Save", not as a neutral count. */
+.admin-unsaved-count {
+  background: #b4690e;
+  color: #fff;
+}
+
 .hint-row {
   display: flex;
   justify-content: center;
@@ -1311,8 +1318,11 @@ header h1 {
 /* Slightly smaller than a standalone .copy-btn so it reads as sitting WITH the
    hint line rather than dominating it. No `display` declaration anywhere on
    this button, deliberately: it is toggled with `hidden`, and the UA's
-   `[hidden] { display: none }` only wins while nothing overrides it. */
-.share-btn {
+   `[hidden] { display: none }` only wins while nothing overrides it.
+
+   Was `.share-btn`, which ad blockers hide on sight — see the markup comment in
+   index.html. Do not rename it back. */
+.result-copy-btn {
   padding: 0.35rem 0.95rem;
   font-size: 0.82rem;
 }

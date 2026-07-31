@@ -8,6 +8,7 @@ import {
   buildStoryTextFromSelections,
   buildStoryText,
   buildShareText,
+  buildFinalHandText,
   generateStory,
 } from '../src/story/generator.js';
 import { FRAGMENTS, SLOT_META } from '../src/story/templates.js';
@@ -273,6 +274,84 @@ describe('FRAGMENTS completeness', () => {
     for (const slot of ['opening', 'action', 'object', 'connector', 'ending', 'emoji']) {
       assert.equal(typeof SLOT_META[slot]?.label, 'string');
     }
+  });
+});
+
+// Owner bug report: the Share button was "not showing wilds/correct card the
+// wild should be".
+//
+// A wild is an ordinary dealt card carrying a flag, so its own rank/suit are
+// real, printable, and meaningless — leftover data from wherever it landed in
+// the shuffle. Printing them unconditionally, which is what this used to do,
+// erased the wild from the share text AND contradicted the hand name on the
+// line above it.
+describe('buildFinalHandText and wild cards', () => {
+  const wild = (rank, suit) => ({ rank, suit, wild: true });
+  // The legacy shape every stored hand still uses. isWild() accepts both, so
+  // both must render identically — history would otherwise silently rewrite
+  // itself the moment someone re-shared an old run.
+  const legacyWild = (rank, suit) => ({ rank, suit, rarity: 'joker' });
+
+  test('an ordinary hand is unchanged', () => {
+    const hand = [c(2, 'S'), c(5, 'H'), c(9, 'D'), c(11, 'C'), c(13, 'S')];
+    assert.equal(buildFinalHandText(hand), '2♠ 5♥ 9♦ J♣ K♠');
+  });
+
+  test('a wild shows the jester AND what it played as, not its meaningless dealt face', () => {
+    // Dealt as 3♦, but the hand was scored with it acting as K♥.
+    const hand = [c(13, 'S'), c(13, 'C'), c(13, 'D'), wild(3, 'D'), c(7, 'H')];
+    const logical = [c(13, 'S'), c(13, 'C'), c(13, 'D'), c(13, 'H'), c(7, 'H')];
+    const text = buildFinalHandText(hand, logical);
+    assert.equal(text, 'K♠ K♣ K♦ 🃏→K♥ 7♥');
+    assert.ok(!text.includes('3♦'), 'the wild\'s meaningless dealt face leaked into the share text');
+  });
+
+  test('the legacy rarity:"joker" shape renders identically', () => {
+    const hand = [c(13, 'S'), legacyWild(3, 'D')];
+    const logical = [c(13, 'S'), c(13, 'H')];
+    assert.equal(buildFinalHandText(hand, logical), 'K♠ 🃏→K♥');
+  });
+
+  test('two wilds resolve to their OWN substitutions, not both to the first', () => {
+    const hand = [wild(3, 'D'), wild(6, 'C'), c(13, 'S'), c(13, 'C'), c(7, 'H')];
+    const logical = [c(13, 'H'), c(13, 'D'), c(13, 'S'), c(13, 'C'), c(7, 'H')];
+    assert.equal(buildFinalHandText(hand, logical), '🃏→K♥ 🃏→K♦ K♠ K♣ 7♥');
+  });
+
+  test('falls back to a bare jester when no logical hand is available', () => {
+    const hand = [c(13, 'S'), wild(3, 'D')];
+    // Incomplete, but never WRONG — which is the point. The old behaviour
+    // printed "3♦" here, actively misinforming the player.
+    assert.equal(buildFinalHandText(hand), 'K♠ 🃏');
+  });
+
+  test('a missing rank or suit degrades to empty, never the string "undefined"', () => {
+    assert.equal(buildFinalHandText([{ rank: 13 }, { suit: 'S' }]), 'K ♠');
+  });
+
+  test('the emoji grid marks a wild as a wild rather than an unrelated suit', () => {
+    const hand = [c(2, 'S'), wild(5, 'H'), c(9, 'D')];
+    assert.equal(buildEmojiGrid(hand, []), '♠ 🃏 ♦');
+  });
+
+  test('generateStory feeds the logical hand through to the share text', () => {
+    const result = {
+      dayNumber: 7,
+      originalHand: [c(13, 'S'), c(13, 'C'), c(13, 'D'), wild(3, 'D'), c(7, 'H')],
+      finalHand: [c(13, 'S'), c(13, 'C'), c(13, 'D'), wild(3, 'D'), c(7, 'H')],
+      discardIndices: [],
+      score: {
+        handResult: { label: 'Four of a Kind' },
+        total: 500,
+        logicalFinalHand: [c(13, 'S'), c(13, 'C'), c(13, 'D'), c(13, 'H'), c(7, 'H')],
+      },
+      decisionRating: 0.75,
+    };
+    const { shareText } = generateStory(result, ZERO_SELECTIONS, new Date('2025-01-01T12:00:00Z'));
+    assert.ok(shareText.includes('🃏→K♥'), shareText);
+    // The bug in one assertion: the hand name and the cards used to disagree.
+    assert.ok(shareText.includes('Four of a Kind'), shareText);
+    assert.ok(!shareText.includes('3♦'), shareText);
   });
 });
 

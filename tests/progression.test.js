@@ -11,6 +11,8 @@ import {
   XP_PER_BONUS,
   XP_PER_ACHIEVEMENT,
   XP_PER_LEVEL_STEP,
+  XP_LEVEL_BAND_CAP,
+  xpBandForLevel,
   XP_PER_SCORE_GRADE,
   MAX_SCORE_GRADE_RANK,
 } from '../src/core/progression.js';
@@ -148,12 +150,57 @@ describe('levelProgress', () => {
   // Roughly one run per day by design (§9.2), so the curve's pacing is
   // measured in days. Locks in the intent described in progression.js rather
   // than leaving it as a comment that could silently drift.
-  test('pacing: a typical run levels you fast early and slowly later', () => {
+  //
+  // RETUNED on the owner's "xp easier to earn / levels scale better". The
+  // previous version of this test asserted level 20 took >120 runs; that was the
+  // behaviour being complained about, so the assertion moved with the design
+  // rather than the design being bent to keep the test green.
+  test('pacing: a typical run levels you fast early and steadily thereafter', () => {
     const typicalRun = xpForRun(run({ score: { handResult: { id: 'PAIR' }, extraBonuses: [{}, {}] }, decisionRating: 0.6 }));
     const runsToReach = (level) => Math.ceil(totalXpForLevel(level) / typicalRun);
     assert.ok(runsToReach(2) <= 2, `level 2 took ${runsToReach(2)} runs, expected to feel immediate`);
-    assert.ok(runsToReach(10) > 20 && runsToReach(10) < 90, `level 10 took ${runsToReach(10)} runs`);
-    assert.ok(runsToReach(20) > 120, `level 20 took ${runsToReach(20)} runs, expected a long-term goal`);
+    assert.ok(runsToReach(10) > 15 && runsToReach(10) < 50, `level 10 took ${runsToReach(10)} runs`);
+    // Still months of daily play, but reachable rather than theoretical.
+    assert.ok(runsToReach(20) > 60 && runsToReach(20) < 140, `level 20 took ${runsToReach(20)} runs`);
+  });
+
+  // THE ACTUAL FIX. A daily game hands out a fixed ~1 run/day, so a band that
+  // keeps growing eventually outruns any player no matter how well they play.
+  // Capping it is what makes high levels keep arriving.
+  test('the cost of a single level stops growing once it reaches the cap', () => {
+    assert.equal(xpBandForLevel(1), XP_PER_LEVEL_STEP);
+    for (let level = 1; level < 80; level++) {
+      const band = xpBandForLevel(level);
+      assert.ok(band <= XP_LEVEL_BAND_CAP, `band at level ${level} was ${band}, above the cap`);
+      assert.ok(band >= xpBandForLevel(level - 1), `band at level ${level} shrank`);
+    }
+    assert.equal(xpBandForLevel(60), XP_LEVEL_BAND_CAP);
+    // And the cap is what totalXpForLevel actually uses up there.
+    assert.equal(totalXpForLevel(61) - totalXpForLevel(60), XP_LEVEL_BAND_CAP);
+  });
+
+  test('xpBandForLevel agrees with totalXpForLevel at every level', () => {
+    for (let level = 1; level <= 80; level++) {
+      assert.equal(
+        totalXpForLevel(level + 1) - totalXpForLevel(level),
+        xpBandForLevel(level),
+        `band mismatch at level ${level}`,
+      );
+    }
+  });
+
+  // Levels are DERIVED from stored runs, never banked (see the module header),
+  // so retuning the curve re-levels every existing player on their next page
+  // load. That is only safe in one direction: nobody may LOSE a level they had.
+  // This pins the property by comparing against the curve this replaced.
+  test('the retune can only move an existing player up, never demote them', () => {
+    const oldTriangularTotal = (level) => (level <= 1 ? 0 : (XP_PER_LEVEL_STEP * (level - 1) * level) / 2);
+    for (let level = 2; level <= 60; level++) {
+      assert.ok(
+        totalXpForLevel(level) <= oldTriangularTotal(level),
+        `level ${level} now costs ${totalXpForLevel(level)}, more than the old ${oldTriangularTotal(level)}`,
+      );
+    }
   });
 });
 

@@ -1,0 +1,18 @@
+# Cardle — https://cardle.lol
+#
+# At the REPO ROOT, not in /public: robots.txt is only honoured at the origin
+# root, and vercel.json serves the repo root as the static root (outputDirectory
+# ".") while rewriting only "/" to /public/index.html. tools/dev-server.js
+# resolves paths the same way, so this file is reachable at /robots.txt both
+# locally and deployed.
+
+User-agent: *
+Allow: /
+
+# The admin tools. Access is enforced by the database, not by hiding the URL
+# (DESIGN.md §11f) — this is here to keep an empty, JS-gated page out of the
+# index, not as a security measure. Never treat a Disallow as access control:
+# it is a public file that advertises the path to anyone who reads it.
+Disallow: /?admin
+
+Sitemap: https://cardle.lol/sitemap.xml

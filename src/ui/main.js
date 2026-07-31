@@ -4,6 +4,7 @@ import { initProfile } from './profile.js';
 import { initAdmin } from './admin.js';
 import { initLeaderboard } from './leaderboard.js';
 import { verifySignInLink } from '../state/auth.js';
+import { SupabaseUnavailableError } from '../state/supabase-client.js';
 
 const params = new URLSearchParams(window.location.search);
 
@@ -21,19 +22,33 @@ const params = new URLSearchParams(window.location.search);
 // Supabase or network failure still falls through to a fully playable board.
 let signInError = null;
 if (params.has('token_hash')) {
+  // Whether the token is still worth retrying. A token that was REJECTED is
+  // spent and must be cleaned up; a token we never got to present — because the
+  // SDK itself wouldn't load — is untouched and still valid for the rest of its
+  // hour.
+  let tokenSpent = true;
   try {
     await verifySignInLink(params.get('token_hash'), params.get('type') ?? 'magiclink');
   } catch (error) {
-    signInError = error?.message ?? 'That sign-in link did not work.';
+    signInError = error;
+    // THE CDN NEVER LOADED, so the token was never presented to Supabase and is
+    // still good. Leaving it in the URL is what makes a pull-to-refresh work —
+    // getSupabase() deliberately clears its cached promise on failure so a retry
+    // can succeed, but that retry is worthless if the only copy of the token has
+    // already been erased from the address bar. This is the mobile case: a
+    // flaky cellular connection cost the player their link permanently, and
+    // every fresh email failed the same way, which is what made it look like
+    // sign-in links were broken rather than the network being slow.
+    if (error instanceof SupabaseUnavailableError) tokenSpent = false;
   }
-  // Strip the credential from the URL either way: a reload must not retry an
-  // already-redeemed token (which would fail and look like a broken link), and
-  // a one-time token has no business sitting in the address bar, the back
-  // history, or an outgoing Referer header.
-  const clean = new URL(window.location.href);
-  clean.searchParams.delete('token_hash');
-  clean.searchParams.delete('type');
-  window.history.replaceState({}, '', clean);
+  // A one-time token has no business sitting in the address bar, the back
+  // history, or an outgoing Referer header once it has actually been used.
+  if (tokenSpent) {
+    const clean = new URL(window.location.href);
+    clean.searchParams.delete('token_hash');
+    clean.searchParams.delete('type');
+    window.history.replaceState({}, '', clean);
+  }
 }
 
 // Passed the failure (if any) so a dead link says so, rather than dumping the

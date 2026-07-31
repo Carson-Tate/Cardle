@@ -62,13 +62,21 @@ export async function loadGameConfig({ force = false } = {}) {
     config.fragments = mergeWordBank(config.wordBank);
     config.customCosmetics = validateCustomCosmetics(byKey.get(CONFIG_KEYS.CUSTOM_COSMETICS)).value;
     config.loaded = true;
+    cached = config;
+    return cached;
   } catch (error) {
-    // Deliberately swallowed: see the availability note at the top.
+    // Deliberately swallowed: see the availability note at the top. The caller
+    // still gets a fully playable config.
     console.warn('Game config unavailable; using built-in defaults:', error);
+    // NOT CACHED, unlike the two resolved paths above. A failed read used to be
+    // stored like a successful one, so a single transient blip at page load
+    // poisoned the cache for the entire session: every later caller was served
+    // the empty config from memory without another request, and the player
+    // spent the whole visit on the rotation modifier while an admin's pin sat
+    // in the database being ignored. Leaving `cached` alone means the next
+    // caller simply tries again.
+    return config;
   }
-
-  cached = config;
-  return cached;
 }
 
 /** Drops the cache so the next load re-reads — used after an admin write. */

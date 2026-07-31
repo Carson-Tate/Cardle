@@ -277,11 +277,22 @@ export function rarityMultiplier(cards) {
 // score-breakdown proof strip instead of that same meaningless leftover data.
 export function logicalCardsFor(finalHand, finalHandResult) {
   if (!finalHandResult.hasWildJoker) return finalHand;
-  return finalHand.map((card) =>
-    isWild(card)
-      ? { rank: finalHandResult.wildSubstitution.rank, suit: finalHandResult.wildSubstitution.suit }
-      : card,
-  );
+  // POSITION-KEYED, not the singular `wildSubstitution`. Two wilds in one hand
+  // resolve to two DIFFERENT cards, and this used to hand both slots the first
+  // one's substitution — so a hand that wild-completed, say, a Full House would
+  // render as two identical cards that don't add up to the hand it was scored
+  // as. Rare enough to go unnoticed while WILD_CHANCE was ~1 hand in 100; at
+  // the current ~1 in 11 a two-wild hand turns up roughly every 120 hands.
+  //
+  // `wildSubstitution` remains the fallback because it is the only field STORED
+  // results written before `wildSubstitutions` existed have, and this runs over
+  // history (the profile page and the leaderboard both re-render old hands).
+  const byIndex = finalHandResult.wildSubstitutions ?? {};
+  return finalHand.map((card, index) => {
+    if (!isWild(card)) return card;
+    const substitution = byIndex[index] ?? finalHandResult.wildSubstitution;
+    return substitution ? { rank: substitution.rank, suit: substitution.suit } : card;
+  });
 }
 
 // The "proof" indices for the winning combination: which final-hand cards

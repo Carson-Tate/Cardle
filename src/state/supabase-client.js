@@ -60,15 +60,104 @@ export function getSupabase() {
   return clientPromise;
 }
 
+// The SDK version, pinned. Was `@supabase/supabase-js@2` — a MAJOR RANGE, which
+// is what broke sign-in on mobile (owner: "importing a module script failed").
+//
+// Two separate problems came from that one `@2`:
+//
+//  1. esm.sh picks a build target by SNIFFING THE USER-AGENT and 302s to e.g.
+//     `/es2022/supabase-js.mjs`. An in-app webview (Gmail iOS, Outlook mobile,
+//     Instagram) or a very new iOS Safari can present a UA esm.sh doesn't
+//     recognise, and the build it falls back to may use syntax that WebKit
+//     can't parse. A module that fails to PARSE rejects the dynamic import, and
+//     WebKit's message for that is literally "Importing a module script
+//     failed." — the exact error reported. Pinning `?target=` removes the
+//     sniffing entirely, so every device gets a build we have actually tested.
+//  2. An unpinned range silently re-resolves per request, so two devices could
+//     load different SDK builds an hour apart. That also made a load-bearing
+//     DEFAULT unpinned: this code relies on the auth flow defaulting to
+//     `implicit`, and a future 2.x switching it to `pkce` would break the
+//     magic-link handoff with no change on our side (see flowType below).
+//
+// Bumping this is a deliberate act: check the release notes for a flowType or
+// storage default change before you do.
+const SUPABASE_VERSION = '2.111.0';
+
+// es2020 is old enough for every browser that can run ES modules at all
+// (including the WebKit builds in mail-app webviews) and new enough that the
+// SDK isn't shipped through a heavy down-level transform.
+const SDK_TARGET = 'es2020';
+
+// Tried in order. Two INDEPENDENT CDNs rather than one, because a mobile
+// content blocker (1Blocker, AdGuard, Brave shields) or a captive network can
+// blackhole a single third-party origin — and unlike desktop, that's common
+// enough on mobile to be a real failure mode rather than an edge case. The
+// project has no build step by design, so vendoring the SDK isn't available as
+// an option; a second origin is the next best thing.
+const SDK_SOURCES = [
+  `https://esm.sh/@supabase/supabase-js@${SUPABASE_VERSION}?target=${SDK_TARGET}`,
+  `https://cdn.jsdelivr.net/npm/@supabase/supabase-js@${SUPABASE_VERSION}/+esm`,
+];
+
 async function importAndCreateClient() {
-  const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
-  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  let lastError = null;
+  for (const source of SDK_SOURCES) {
+    try {
+      // eslint-disable-next-line no-await-in-loop -- sequential fallback is the point
+      const { createClient } = await import(/* @vite-ignore */ source);
+      return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, CLIENT_OPTIONS);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new SupabaseUnavailableError(lastError);
 }
+
+// Every one of these is already the SDK default. They are written out anyway
+// because each is load-bearing for a bug the owner actually hit, and a default
+// is exactly the kind of thing that changes under you on a version bump.
+const CLIENT_OPTIONS = {
+  auth: {
+    // THE MAGIC-LINK HANDOFF DEPENDS ON THIS. Mobile mail apps open a link in
+    // an isolated in-app webview, which then hands off to the default browser —
+    // so the browser that REDEEMS the link is frequently not the one that
+    // requested it. `implicit` redeems a `token_hash` server-side and needs
+    // nothing from local storage, so it survives that handoff. `pkce` stores a
+    // `code_verifier` in the requesting browser's localStorage and would fail
+    // every single time, looking exactly like an expired link.
+    flowType: 'implicit',
+    // The session lives in localStorage and is refreshed in the background, so
+    // a closed-and-reopened tab is still signed in.
+    persistSession: true,
+    autoRefreshToken: true,
+    // Inert for us — the emailed link carries `?token_hash=` as a QUERY param,
+    // never an `#access_token` fragment (see supabase/email-templates/) — but
+    // pinned so it stays inert.
+    detectSessionInUrl: true,
+  },
+};
 
 export class SupabaseNotConfiguredError extends Error {
   constructor() {
     super("Supabase isn't set up yet — fill in src/state/supabase-client.js with your project's URL and anon key.");
     this.name = 'SupabaseNotConfiguredError';
+  }
+}
+
+/**
+ * The SDK itself could not be downloaded or parsed — a blocked CDN, an offline
+ * device, a captive portal.
+ *
+ * DISTINCT FROM every other auth error on purpose. Callers used to see only
+ * "something threw" and reported it to the player as a dead sign-in link, which
+ * sent the owner hunting an expiry bug for a failure that had nothing to do with
+ * the token. Anything catching auth errors should check for this first.
+ */
+export class SupabaseUnavailableError extends Error {
+  constructor(cause) {
+    super("Couldn't reach the sign-in service — check your connection, or try again with any content blocker paused.");
+    this.name = 'SupabaseUnavailableError';
+    this.cause = cause;
   }
 }
 

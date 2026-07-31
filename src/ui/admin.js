@@ -35,7 +35,7 @@ import {
 import { loadGameConfig, adminSetConfig, adminClearConfig } from '../state/game-config.js';
 import { dayNumber } from '../state/persistence.js';
 import { openModal } from './modal.js';
-import { gameDayFor, addGameDays, instantWithinGameDay } from '../core/game-day.js';
+import { gameDayFor, addGameDays, instantWithinGameDay, msUntilNextReset } from '../core/game-day.js';
 
 function escapeHtml(value) {
   return String(value)
@@ -82,8 +82,44 @@ export async function initAdmin(root) {
   let notice = null;
   let gameConfig = null;
 
+  // UNSAVED modifier picks, keyed by game day; '' means "back to rotation".
+  //
+  // This exists because render() rebuilds `root.innerHTML` wholesale, and it is
+  // called by things that have nothing to do with the schedule — searching for a
+  // username, clicking a player, any player action. Every one of those silently
+  // reverted a modifier the owner had just picked, with no warning, and the next
+  // Save then wrote the OLD value back and reported "Modifier schedule saved."
+  // That is the likeliest shape of the reported bug: the save genuinely
+  // succeeded, it just saved something the owner had never chosen.
+  let pendingModifierEdits = new Map();
+
   await Promise.all([loadOverview(), runSearch(''), loadConfig()]);
   render();
+  scheduleGameDayRefresh();
+
+  // The schedule's labels ("Today", "Tomorrow", "+2d") and the ISO days they map
+  // to are computed once per render, from the game day at that moment. A tab
+  // left open across the 19:00 America/New_York rollover therefore keeps calling
+  // an ENDED day "Today" — and a pin saved then is filed under a dead date and
+  // silently never applies. Not hypothetical: the stored config's own
+  // `updated_at` shows the owner editing fourteen seconds after a rollover.
+  //
+  // Re-renders rather than reloading, so any unsaved picks survive; they are
+  // keyed by absolute ISO day, so they stay attached to the day they were
+  // chosen for even as the labels shift under them.
+  function scheduleGameDayRefresh() {
+    setTimeout(
+      async () => {
+        await loadConfig();
+        notice = { kind: 'ok', text: 'A new game day just started — the schedule below has been relabelled.' };
+        render();
+        scheduleGameDayRefresh();
+      },
+      // A second past the boundary, so gameDayFor() is unambiguously into the
+      // new day rather than racing it.
+      msUntilNextReset() + 1000,
+    );
+  }
 
   async function loadConfig() {
     try {
@@ -91,9 +127,20 @@ export async function initAdmin(root) {
       // editors must show what the game is actually honouring, so a stored value
       // that failed validation appears as the default it fell back to rather
       // than as text the game is silently ignoring.
-      gameConfig = await loadGameConfig({ force: true });
+      const next = await loadGameConfig({ force: true });
+      // loadGameConfig NEVER REJECTS — by design, so one failed read can't take
+      // the game down (state/game-config.js). For the game that is right; for
+      // this page it is dangerous, because a failed read arrives as a perfectly
+      // valid-looking EMPTY config. Left unchecked it repainted all fourteen
+      // rows as "— rotation —", which looks exactly like a save that didn't
+      // take, and armed the next Save to write that emptiness back and delete
+      // every real pin. `loaded` is the flag that tells the two apart.
+      if (!next.loaded) throw new Error('the config read came back empty');
+      gameConfig = next;
+      return true;
     } catch (error) {
-      notice = { kind: 'error', text: `Couldn't load game config: ${error.message ?? error}` };
+      notice = { kind: 'error', text: `Couldn't load game config: ${error.message ?? error}. Nothing was changed — reload before editing.` };
+      return false;
     }
   }
 
@@ -108,8 +155,13 @@ export async function initAdmin(root) {
     }
     try {
       await adminSetConfig(key, value);
-      await loadConfig();
-      notice = { kind: 'ok', text: successMessage };
+      // The write is already committed at this point, so a failed read-back must
+      // not be reported as a failed save — but it must not be reported as a
+      // clean success either, because the rows below are now showing defaults
+      // rather than what is stored.
+      notice = (await loadConfig())
+        ? { kind: 'ok', text: successMessage }
+        : { kind: 'error', text: `Saved — but couldn't read it back to confirm. Reload the page before editing again.` };
     } catch (error) {
       notice = { kind: 'error', text: `${error.message ?? error}` };
     }
@@ -244,15 +296,20 @@ export async function initAdmin(root) {
       const iso = addGameDays(todayGameDay, offset);
       // getDailyModifier and dayNumber take an instant, not a label.
       const date = instantWithinGameDay(iso);
-      const overrideId = modifierOverrideFor(overrides, iso);
-      days.push({ date, iso, offset, overrideId, effective: getDailyModifier(date, overrideId) });
+      // An unsaved pick outranks what's stored, so a re-render triggered by an
+      // unrelated action can't quietly undo it.
+      const dirty = pendingModifierEdits.has(iso);
+      const overrideId = dirty ? pendingModifierEdits.get(iso) || null : modifierOverrideFor(overrides, iso);
+      days.push({ date, iso, offset, overrideId, dirty, effective: getDailyModifier(date, overrideId) });
     }
     const overrideCount = Object.keys(overrides).length;
+    const unsavedCount = pendingModifierEdits.size;
 
     return `
       <section class="profile-section">
         <h3 class="profile-section-title">
           Daily Modifier Schedule ${overrideCount > 0 ? `<span class="profile-count">${overrideCount} overridden</span>` : ''}
+          ${unsavedCount > 0 ? `<span class="profile-count admin-unsaved-count">${unsavedCount} unsaved</span>` : ''}
         </h3>
         <ul class="admin-schedule">
           ${days
@@ -275,7 +332,9 @@ export async function initAdmin(root) {
                       )}</option>`,
                   ).join('')}
                 </select>
-                <small>${escapeHtml(`${d.effective.emoji} ${d.effective.label}`)}${d.overrideId ? ' (pinned)' : ''}</small>
+                <small>${escapeHtml(`${d.effective.emoji} ${d.effective.label}`)}${d.overrideId ? ' (pinned)' : ''}${
+                  d.dirty ? ' · unsaved' : ''
+                }</small>
               </span>
             </li>`,
             )
@@ -616,11 +675,36 @@ export async function initAdmin(root) {
 
     root.querySelector('#admin-delete-player')?.addEventListener('click', () => confirmDeletePlayer());
 
-    root.querySelector('#admin-save-modifiers')?.addEventListener('click', () => {
-      const overrides = {};
-      root.querySelectorAll('[data-modifier-day]').forEach((select) => {
-        if (select.value) overrides[select.dataset.modifierDay] = select.value;
+    // Records a pick the moment it is made, so it survives any re-render before
+    // Save is clicked. Re-rendering here instead would be simpler but would take
+    // focus off the select mid-interaction, so the row's own preview text is
+    // patched in place.
+    root.querySelectorAll('[data-modifier-day]').forEach((select) => {
+      select.addEventListener('change', () => {
+        const iso = select.dataset.modifierDay;
+        pendingModifierEdits.set(iso, select.value);
+        const preview = select.parentElement?.querySelector('small');
+        if (preview) {
+          const effective = getDailyModifier(instantWithinGameDay(iso), select.value || null);
+          preview.textContent = `${effective.emoji} ${effective.label}${select.value ? ' (pinned)' : ''} · unsaved`;
+        }
       });
+    });
+
+    root.querySelector('#admin-save-modifiers')?.addEventListener('click', () => {
+      // MERGED onto what is already stored, not rebuilt from the visible rows.
+      // Rebuilding meant the payload only ever described the 14 days on screen,
+      // so saving any change silently DELETED every pin outside that window —
+      // including yesterday's, and anything scheduled more than two weeks out.
+      // A row explicitly set back to "— rotation —" still deletes that one day,
+      // because that is a choice the admin actually made.
+      const overrides = { ...(gameConfig?.modifierOverrides ?? {}) };
+      root.querySelectorAll('[data-modifier-day]').forEach((select) => {
+        const day = select.dataset.modifierDay;
+        if (select.value) overrides[day] = select.value;
+        else delete overrides[day];
+      });
+      pendingModifierEdits = new Map();
       saveConfig(CONFIG_KEYS.MODIFIER_OVERRIDES, overrides, validateModifierOverrides, 'Modifier schedule saved.');
     });
 

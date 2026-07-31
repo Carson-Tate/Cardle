@@ -1,5 +1,6 @@
 import { hashSeed, createRng, shuffle, rankLabel, suitGlyph } from '../core/deck.js';
 import { evaluateHand, handStrengthIndex } from '../core/hand-evaluator.js';
+import { isWild } from '../core/rarity.js';
 import { FRAGMENTS } from './templates.js';
 import { gameDayFor } from '../core/game-day.js';
 
@@ -144,15 +145,60 @@ export function buildStoryText(originalHand, finalHand, discardIndices, date = n
 // to spoil.
 export function buildEmojiGrid(finalHand, discardIndices) {
   const discarded = new Set(discardIndices);
-  return finalHand.map((card, index) => suitGlyph(card.suit) + (discarded.has(index) ? '✨' : '')).join(' ');
+  // A wild's own suit is meaningless leftover data (see cardFace below), so it
+  // gets the jester rather than a suit glyph it never actually played as.
+  return finalHand
+    .map((card, index) => (isWild(card) ? WILD_GLYPH : suitGlyph(card.suit) ?? '') + (discarded.has(index) ? '✨' : ''))
+    .join(' ');
 }
 
-// The actual final hand, rank and suit, in play order — owner request:
-// "redesign what is copied from the copy results, showing what cards were
-// drawn." No drawn/kept marker (owner: "remove the stars in the copied") —
-// just the plain final hand.
-export function buildFinalHandText(finalHand) {
-  return finalHand.map((card) => `${rankLabel(card.rank)}${suitGlyph(card.suit)}`).join(' ');
+const WILD_GLYPH = '🃏';
+
+// Guarded on the INPUT, not the return value: this runs over STORED hands too,
+// and a row missing a field would otherwise put the literal string "undefined"
+// on the player's clipboard. Note that `rankLabel(undefined)` returns the STRING
+// "undefined" (it falls through to `String(rank)`), so a `?? ''` on its result
+// catches nothing — the missing field has to be spotted before the call.
+// mini-card.js guards the same way.
+function cardFace(card) {
+  const rank = card?.rank == null ? '' : rankLabel(card.rank);
+  return `${rank}${suitGlyph(card?.suit) ?? ''}`;
+}
+
+/**
+ * The actual final hand, rank and suit, in play order — owner request:
+ * "redesign what is copied from the copy results, showing what cards were
+ * drawn." No drawn/kept marker (owner: "remove the stars in the copied") —
+ * just the plain final hand.
+ *
+ * WILDS RENDER AS `🃏→K♣` (owner: the share button was "not showing wilds/
+ * correct card the wild should be"). A wild is an ordinary dealt card carrying
+ * a flag, so `card.rank`/`card.suit` on one are real, printable, and completely
+ * meaningless — leftover data from wherever it happened to land in the shuffle
+ * (scoring.js). Printing them unconditionally, which is what this used to do,
+ * produced a share text that CONTRADICTED ITS OWN FIRST LINE: a wild-completed
+ * Four of a Kind announced "Four of a Kind" above five cards that visibly
+ * weren't. It also erased the wild from the player's view entirely — they saw
+ * 🃏 on the board and an unrelated card face in the copied text.
+ *
+ * Both halves are shown rather than just the substitution, because both are
+ * things the player wants to brag about: that they GOT a wild, and what it
+ * turned into.
+ *
+ * @param {object[]} finalHand - the raw dealt hand
+ * @param {object[]|null} [logicalHand] - score.logicalFinalHand, the same five
+ *   slots with each wild replaced by what it played as. Omitted for callers
+ *   that don't have a scored result; wilds then render as a bare 🃏, which is
+ *   incomplete but never wrong.
+ */
+export function buildFinalHandText(finalHand, logicalHand = null) {
+  return finalHand
+    .map((card, index) => {
+      if (!isWild(card)) return cardFace(card);
+      const became = logicalHand?.[index];
+      return became ? `${WILD_GLYPH}→${cardFace(became)}` : WILD_GLYPH;
+    })
+    .join(' ');
 }
 
 // Owner: "i think we should remove the poem from the copy and just add the
@@ -187,7 +233,10 @@ export function generateStory(result, selections, date = new Date(), fragments =
     selections ?? getDefaultSelections(result.originalHand, result.finalHand, result.discardIndices, date, fragments);
   const text = buildStoryTextFromSelections(result.originalHand, result.finalHand, result.discardIndices, resolvedSelections, date, fragments);
   const emojiGrid = buildEmojiGrid(result.finalHand, result.discardIndices);
-  const finalHandText = buildFinalHandText(result.finalHand);
+  // `logicalFinalHand` is written by scoreRun and persisted verbatim with the
+  // rest of the result, so it is available on BOTH share paths — the fresh
+  // reveal and an already-played reload.
+  const finalHandText = buildFinalHandText(result.finalHand, result.score?.logicalFinalHand ?? null);
   const shareText = buildShareText(result, finalHandText);
   return { text, emojiGrid, finalHandText, shareText, selections: resolvedSelections };
 }

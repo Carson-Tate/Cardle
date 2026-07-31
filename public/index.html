@@ -10,6 +10,67 @@
   <link rel="icon" href="/public/favicon.svg" type="image/svg+xml" sizes="any" />
   <link rel="apple-touch-icon" href="/public/favicon.svg" />
   <meta name="theme-color" content="#2f6f4f" />
+
+  <!-- SEARCH ENGINES (DESIGN.md §11w). This is a static single-page app whose
+       body is empty until JavaScript runs, so everything a crawler can rely on
+       has to be here in the head. Google does execute JS, but on a second pass
+       that can lag by days — the description below is what appears in results
+       until then, and for Bing and every social unfurler it is all there is.
+
+       Deliberately generic rather than describing TODAY's hand: the page is
+       re-crawled on its own schedule, so anything day-specific would be stale
+       and wrong most of the time. -->
+  <meta name="description"
+        content="Cardle is a free daily poker puzzle. Everyone gets the same five cards once a day — choose your discards, build the best hand you can, and compare your score with friends." />
+  <!-- The site is served from /public via a rewrite, so the same content is
+       reachable at more than one path. This names the one that counts and stops
+       the query-param routes (?profile, ?leaderboard, ?admin) being indexed as
+       separate thin pages competing with the homepage. -->
+  <link rel="canonical" href="https://cardle.lol/" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://cardle.lol/" />
+  <meta property="og:site_name" content="Cardle" />
+  <meta property="og:title" content="Cardle — Daily Poker Puzzle" />
+  <meta property="og:description"
+        content="One poker hand a day. Same cards for everyone — the only thing that separates a good day from a bad one is which cards you throw away." />
+  <!-- The favicon doubles as the preview image: it is the only graphic the
+       project has, and an unfurled link with no image at all reads as broken.
+       SVG is not accepted by every unfurler, so this is a known-imperfect
+       placeholder — a 1200x630 PNG is the upgrade if link previews matter. -->
+  <meta property="og:image" content="https://cardle.lol/public/favicon.svg" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Cardle — Daily Poker Puzzle" />
+  <meta name="twitter:description"
+        content="One poker hand a day. Same cards for everyone — the only thing that separates a good day from a bad one is which cards you throw away." />
+
+  <!-- Structured data. `VideoGame` + `WebSite` is the honest pair for what this
+       is; Google uses it to understand the entity behind the domain rather than
+       to draw a rich result, so there is no snippet to lose if it is ignored. -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "VideoGame",
+    "name": "Cardle",
+    "url": "https://cardle.lol/",
+    "description": "A free daily poker puzzle. One five-card hand a day, the same for every player.",
+    "genre": ["Puzzle", "Card Game"],
+    "playMode": "SinglePlayer",
+    "applicationCategory": "Game",
+    "operatingSystem": "Any",
+    "browserRequirements": "Requires JavaScript",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
+  </script>
+
+  <!-- The auth SDK is fetched from these at sign-in time (state/supabase-client.js).
+       Warming the connection here means the TLS handshake is already done when a
+       player taps Log In, which matters most on the mobile connections where
+       that import has been timing out. Both origins are listed because the
+       second is the fallback. -->
+  <link rel="preconnect" href="https://esm.sh" crossorigin />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+
   <link rel="stylesheet" href="/public/styles.css" />
 </head>
 <body>
@@ -60,12 +121,25 @@
       <div id="controls">
         <!-- The hint and the Share button share one centred row (owner request:
              Share "to the right of the come back tomorrow" and "center the whole
-             thing"). Share stays `hidden` until a run has actually been scored —
+             thing"). It stays `hidden` until a run has actually been scored —
              it has nothing to share before that, and its handler is not attached
-             until the fortune renders. -->
+             until the fortune renders.
+
+             NAMED `result-copy-btn`, NOT `share-btn` (owner: "share button being
+             blocked by some ad blockers"). EasyList and Fanboy's social lists
+             carry generic cosmetic rules on the token `share-btn`, and this
+             element used it as BOTH its class and its id, so either form of the
+             rule matched. The result was invisible-by-design: a cosmetic filter
+             injects `display: none !important`, which beats `hidden = false`, so
+             the button simply never appeared and nothing errored. Nothing here
+             is a social widget — the button copies text to the clipboard and
+             makes no network request at all — so matching that filter was pure
+             collateral damage. Keep the word "share" out of the class and id;
+             the visible LABEL is what the player reads, and filter lists match
+             selectors, not text. -->
         <div class="hint-row">
           <p id="discard-hint"></p>
-          <button type="button" class="copy-btn share-btn" id="share-btn" hidden>📋 Share</button>
+          <button type="button" class="copy-btn result-copy-btn" id="result-copy-btn" hidden>📋 Share</button>
         </div>
         <div id="wager-prompt" class="wager-prompt" hidden>
           <p id="wager-prompt-text">You've seen 2 cards. Go for it?</p>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cardle's sitemap. Deliberately ONE entry.
+
+  The site is a static single-page app routed entirely by query param
+  (?profile, ?leaderboard, ?admin — DESIGN.md §11d), and none of those are
+  worth indexing: the profile and leaderboard pages render nothing without a
+  session, so a crawler sees an empty shell, and listing them would put thin
+  duplicate pages into the index competing with the homepage. The <link
+  rel="canonical"> in index.html points at "/" for the same reason.
+
+  `daily` is accurate rather than aspirational: the hand genuinely changes at
+  19:00 America/New_York every day (core/game-day.js).
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://cardle.lol/</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

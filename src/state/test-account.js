@@ -22,17 +22,20 @@
 // Test mode already refuses to read or write the real daily result
 // (state/test-mode.js), so a fake account cannot corrupt a real streak either.
 
-import { xpForRun, totalXpForLevel } from '../core/progression.js';
+import { xpForRun, totalXpForLevel, XP_BASE_PER_RUN, XP_PER_DECISION_RATING } from '../core/progression.js';
 import { gameDayFor, addGameDays } from '../core/game-day.js';
 
 const STORAGE_KEY = 'cardle-test-account';
 export const TEST_ACCOUNT_USER_ID = 'test-account-local';
 export const TEST_ACCOUNT_USERNAME = 'TESTER';
 
-// A run worth EXACTLY 100 XP: the base and nothing else — High Card (strength
-// 0), a score of 0 (grade Busted, so no grade term), no bonuses, no
+// A run worth EXACTLY `XP_BASE_PER_RUN`: the base and nothing else — High Card
+// (strength 0), a score of 0 (grade Busted, so no grade term), no bonuses, no
 // achievements, and a decision rating of 0. That exactness is what lets a target
-// XP be hit on the nose below rather than approximated.
+// XP be hit on the nose below rather than approximated. A non-zero
+// `decisionRating` adds `rating * XP_PER_DECISION_RATING` on top, and that is
+// the only other term in play — which is what makes the arithmetic in
+// testAccountHistory a two-variable problem rather than a search.
 function baseRun(playDate, decisionRating = 0) {
   return {
     playDate,
@@ -109,33 +112,45 @@ export function testAccountProfile() {
  *
  * Built from runs rather than by stating a number, because that is the only way
  * it tests the real thing: `derivePlayerStats` recomputes XP from results, so a
- * fabricated total would exercise a path production never takes. Each whole run
- * contributes 100 (see baseRun) and the remainder rides on one run's decision
- * rating, which is worth 0-100 — so any target is reachable to the point.
+ * fabricated total would exercise a path production never takes.
+ *
+ * Every quantity here is DERIVED from progression.js's constants. It used to
+ * hardcode 100 in four places — which was `XP_BASE_PER_RUN`'s value at the time
+ * — so raising the base silently desynced the whole fake account: asking for 100
+ * XP produced 150, and every level assertion built on top of it drifted with it.
+ * That is the same "anchor to the constant, never the magic number" rule the
+ * score thresholds already follow.
+ *
+ * Each run is worth between XP_BASE_PER_RUN (rating 0) and
+ * XP_BASE_PER_RUN + XP_PER_DECISION_RATING (rating 1), so `n` runs span
+ * [n·BASE, n·(BASE+SPAN)]. Take the fewest runs that can reach the target, then
+ * spread the leftover across their ratings. The spread is what makes an exact
+ * hit possible now that one run's floor (150) exceeds what a single rating can
+ * carry (100) — a remainder no longer fits on one run.
  *
  * Dated backwards from today, one per game day, so streaks and "playing since"
  * read sensibly too.
  */
 export function testAccountHistory(totalXp = testAccountXp()) {
   const target = Math.max(0, Math.round(totalXp));
-  const whole = Math.floor(target / 100);
-  const remainder = target - whole * 100;
+  const perRunMax = XP_BASE_PER_RUN + XP_PER_DECISION_RATING;
+  const runCount = Math.ceil(target / perRunMax);
 
+  // Below one run's floor there is no history that derives to the target, so
+  // this rounds to "not played at all" rather than overshooting. The admin panel
+  // shows what the history ACTUALLY derives to (testAccountActualXp), so the
+  // rounding is visible rather than silent.
+  if (runCount === 0 || runCount * XP_BASE_PER_RUN > target) return [];
+
+  let remainder = target - runCount * XP_BASE_PER_RUN;
   const runs = [];
   let day = gameDayFor(new Date());
-  const push = (rating) => {
-    runs.push(baseRun(day, rating));
+  for (let i = 0; i < runCount; i++) {
+    const carry = Math.min(remainder, XP_PER_DECISION_RATING);
+    remainder -= carry;
+    runs.push(baseRun(day, carry / XP_PER_DECISION_RATING));
     day = addGameDays(day, -1);
-  };
-
-  if (whole === 0) {
-    // Below one full run there is nothing to carry the remainder, and a single
-    // run is worth at least 100 — so this rounds to "no history at all".
-    return [];
   }
-  // One run carries the remainder; the rest are exactly 100 each.
-  push(remainder / 100);
-  for (let i = 1; i < whole; i++) push(0);
   return runs;
 }
 

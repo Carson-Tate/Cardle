@@ -364,9 +364,12 @@ export function scoreRun({
   // §3t fixed for Suit Synergy, reintroduced here through a different door. A
   // Wild dealt as 2♥ but playing as a spade to complete a spade flush scored
   // as a heart on a hearts-bonus day.
+  // The third argument carries what the hand alone cannot answer — Held Card
+  // needs to know which SLOTS were thrown away, and a replacement occupies the
+  // same index as the card it replaced.
   const modifierMultiplier =
     typeof modifierMultiplierInput === 'function'
-      ? modifierMultiplierInput(finalHandResult, logicalFinalHand)
+      ? modifierMultiplierInput(finalHandResult, logicalFinalHand, { discardIndices })
       : modifierMultiplierInput;
   const flavor = flavorBonus(logicalFinalHand);
   const suitSynergy = suitSynergyBonus(logicalFinalHand);

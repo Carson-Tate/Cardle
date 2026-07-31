@@ -6,6 +6,8 @@
 import { getSession } from '../state/auth.js';
 import { BOARDS, BOARD_SIZE, fetchLeaderboard } from '../state/leaderboard.js';
 import { loadGameConfig } from '../state/game-config.js';
+import { getDailyModifier, modifierBoardIsAscending } from '../core/modifiers.js';
+import { modifierOverrideFor } from '../core/game-config.js';
 import { nameplateHtml } from './nameplate.js';
 import { gradeForScore } from '../core/score-grade.js';
 import { evaluateHand } from '../core/hand-evaluator.js';
@@ -68,6 +70,12 @@ export async function initLeaderboard(root) {
   const gameConfig = await loadGameConfig();
   const custom = gameConfig?.customCosmetics ?? null;
 
+  // Today's modifier can turn the Today board upside down (§4f). Resolved the
+  // same way board.js resolves it — the rotation plus any admin override — so
+  // the board and the hand can never disagree about which day's rule is live.
+  const todayModifier = getDailyModifier(new Date(), modifierOverrideFor(gameConfig?.modifierOverrides, new Date()));
+  const ascending = modifierBoardIsAscending(todayModifier);
+
   let boardId = 'daily';
   let friendsOnly = false;
   let rows = [];
@@ -82,7 +90,7 @@ export async function initLeaderboard(root) {
     loadError = null;
     render();
     try {
-      rows = await fetchLeaderboard({ boardId, friendsOnly, userId });
+      rows = await fetchLeaderboard({ boardId, friendsOnly, userId, ascending });
     } catch (error) {
       rows = [];
       loadError = error;
@@ -129,6 +137,17 @@ export async function initLeaderboard(root) {
               .join('')}
           </div>
         </div>
+
+        ${
+          // Only on the board it actually affects. A flipped board with no
+          // explanation just looks broken — the top score being the worst one is
+          // indistinguishable from a sorting bug.
+          ascending && board.id === 'daily'
+            ? `<p class="lb-flipped-note">${escapeHtml(todayModifier.emoji)} <strong>${escapeHtml(
+                todayModifier.label,
+              )}</strong> — today's board is upside down. The <strong>lowest</strong> score is on top. Career points still reward a big score, so today those two pull in opposite directions.</p>`
+            : ''
+        }
 
         <section class="profile-section">
           ${
@@ -220,7 +239,11 @@ export async function initLeaderboard(root) {
           .join('')}
       </ol>
       <p class="admin-hint">
-        Top ${BOARD_SIZE}${friendsOnly ? ' among you and your friends' : ''}. Click any name to see their profile.
+        ${
+          // "Top 25" is a lie on an Upside Down day — these are the 25 LOWEST
+          // scores, which is the whole point of the board.
+          ascending && board.id === 'daily' ? 'Bottom' : 'Top'
+        } ${BOARD_SIZE}${friendsOnly ? ' among you and your friends' : ''}. Click any name to see their profile.
       </p>
     `;
   }

@@ -49,14 +49,25 @@ async function friendCircle(userId) {
  *   `profile` is shaped for ui/nameplate.js so a leaderboard row shows the same
  *   badge/title/paint as everywhere else.
  */
-export async function fetchLeaderboard({ boardId, friendsOnly = false, userId = null }) {
+export async function fetchLeaderboard({ boardId, friendsOnly = false, userId = null, ascending = false }) {
   const board = BOARDS.find((b) => b.id === boardId) ?? BOARDS[0];
   const client = await requireSupabase();
   const limit = friendsOnly ? FRIENDS_FETCH_LIMIT : BOARD_SIZE;
 
+  // Ascending is only ever meaningful on the TODAY board (§4f's Upside Down):
+  // the modifier belongs to one game day, so flipping This Week or All-Time
+  // would let a single day's rule reorder scores from days it has nothing to do
+  // with. Enforced here rather than trusted from the caller, so no future caller
+  // can flip a window board by passing the flag.
+  const sortAscending = ascending && board.id === 'daily';
+
   const { data, error } = board.career
     ? await client.rpc('leaderboard_career_points', { row_limit: limit })
-    : await client.rpc('leaderboard_top_scores', { window_days: board.windowDays, row_limit: limit });
+    : await client.rpc('leaderboard_top_scores', {
+        window_days: board.windowDays,
+        row_limit: limit,
+        sort_ascending: sortAscending,
+      });
   if (error) throw error;
 
   let rows = (data ?? []).map((row) => ({

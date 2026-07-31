@@ -365,6 +365,37 @@ header h1 {
   pointer-events: none;
 }
 
+/* Held Card (§4f). Shares the lock badge's corner but sits on the RIGHT, because
+   it means the opposite: this card is still yours to discard, and the star is an
+   offer rather than a restriction. Solid gold ring against Locked Card's dashed
+   grey one, and no reduced opacity or not-allowed cursor — nothing here should
+   suggest the slot is disabled. */
+.card__held-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.card--marked::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid #d4a017;
+  box-shadow: 0 0 10px color-mix(in srgb, #d4a017 45%, transparent);
+  pointer-events: none;
+}
+
+/* A selected marked card still needs its "marked for discard" state to read —
+   that is the whole decision the modifier is asking about, so the discard
+   affordance must win over the decoration. */
+.card--marked.card--selected::after {
+  border-color: color-mix(in srgb, #d4a017 45%, transparent);
+  box-shadow: none;
+}
+
 .card__joker-face {
   position: absolute;
   top: 50%;
@@ -1589,10 +1620,35 @@ header h1 {
   border-top: 1px solid var(--border);
 }
 
-.friend-result .friends-profile-link {
+/* Names in the friends panel read exactly like leaderboard rows (owner request:
+   "the same style as the leaderboard, bolded and the color they chose").
+
+   The bug this fixes: there was no rule for this anchor at all, so it fell back
+   to the UA's default link styling — blue and underlined. A player WITH a paint
+   rendered correctly (the paint class sets its own colour) while a player
+   without one came out hyperlink blue, which is why only some names looked
+   wrong. `color: inherit` is the fix, because `.paint-paint_default` is itself
+   `color: inherit` and needs a sane colour to inherit.
+
+   NOT hardcoded white, despite the request wording: white is right in dark mode
+   and invisible against the light theme's near-white surface. Inheriting gives
+   white on dark and near-black on light, which is what "the leaderboard style"
+   actually resolves to on each theme. */
+.friends-profile-link {
   min-width: 0;
-  text-decoration: none;
   color: inherit;
+  text-decoration: none;
+}
+
+/* Underline the NAME on hover rather than the whole nameplate, so a player's
+   title doesn't get underlined with it — same as `.lb-name:hover`. */
+.friends-profile-link:hover .nameplate-name {
+  text-decoration: underline;
+}
+
+.friends-list .nameplate-name,
+.friend-result .nameplate-name {
+  font-weight: 700;
 }
 
 .friend-result-btn {
@@ -3187,6 +3243,19 @@ header h1 {
    sat on the name instead, a wide score stole space from the name and shifted
    that row's hand ~19px left of its neighbours'. With the flex on the far right,
    all variation is absorbed after the hand rather than before it. */
+/* Upside Down day (§4f) — says why rank 1 is the worst score, which otherwise
+   reads as a sorting bug rather than a rule. */
+.lb-flipped-note {
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
 .lb-row {
   display: grid;
   grid-template-columns: 1.9rem 8.5rem auto minmax(0, 1fr);

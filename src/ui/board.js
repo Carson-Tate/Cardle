@@ -115,6 +115,9 @@ export function initBoard(root) {
   let dailyModifier;
   let maxDiscards;
   let lockedIndex;
+  // Held Card (§4f). Distinct from lockedIndex despite the similar shape: this
+  // slot IS discardable — the star is a bribe to keep it, not a restriction.
+  let markedIndex;
 
   // Set once, in beginRealPlay() below, before any hand is dealt — null for
   // the whole run means "playing signed out," which gates both which
@@ -129,13 +132,23 @@ export function initBoard(root) {
     anonHint.textContent = text;
   }
 
+  // Whether an admin preview has deliberately overridden the day's modifier.
+  // The server config read is ASYNC, so on a slow connection it can resolve
+  // AFTER the tester has already picked a modifier to preview — and it used to
+  // overwrite that choice a second later, which reads as the preview button
+  // silently not working. An explicit action taken now outranks a fetch that
+  // was already in flight.
+  let modifierForcedByAdmin = false;
+
   function applyModifier(modifier, { forced = false } = {}) {
+    if (forced) modifierForcedByAdmin = true;
     dailyModifier = modifier;
     // Second Look (§4d) starts on its own, lower round-1 cap rather than the
     // usual `.maxDiscards` field — `maxDiscards` gets reassigned to
     // `round2MaxDiscards` mid-run once round 1 finishes, see startRoundTwo().
     maxDiscards = modifier.type === 'twoRoundDiscard' ? modifier.round1MaxDiscards : (modifier.maxDiscards ?? DEFAULT_MAX_DISCARDS);
     lockedIndex = modifier.lockedIndex ?? null;
+    markedIndex = modifier.markedIndex ?? null;
     renderModifierBanner(modifierBanner, modifier, forced);
   }
 
@@ -210,7 +223,7 @@ export function initBoard(root) {
     // Re-apply only if the day is actually overridden, so the common path
     // doesn't repaint the banner for no reason.
     const overrideId = modifierOverrideFor(config.modifierOverrides, today);
-    if (overrideId) applyModifier(getDailyModifier(today, overrideId));
+    if (overrideId && !modifierForcedByAdmin) applyModifier(getDailyModifier(today, overrideId));
     return config;
   });
 
@@ -361,7 +374,10 @@ export function initBoard(root) {
   function startHand({ seed, luckMultiplier = 1, forceRarity = null, forceJokerTier = null, customSlots = null, forceModifier = null } = {}) {
     const myToken = ++dealToken;
     if (forceModifier === '__today__') {
-      applyModifier(getDailyModifier(today));
+      // The explicit reset back to the real day's modifier, so it also clears
+      // the flag that keeps the server override at bay.
+      modifierForcedByAdmin = false;
+      applyModifier(getDailyModifier(today, modifierOverrideFor(gameConfig?.modifierOverrides, today)));
     } else if (forceModifier) {
       const modifier = buildModifierById(forceModifier);
       if (modifier) applyModifier(modifier, { forced: true });
@@ -495,6 +511,7 @@ export function initBoard(root) {
         faceUp: true,
         selected: selectedSet.has(index),
         locked: index === lockedIndex,
+        marked: index === markedIndex,
         onClick: () => toggleDiscard(index),
       });
       handRow.appendChild(el);

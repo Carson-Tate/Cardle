@@ -15,7 +15,7 @@
 // else here is either the registry or private helpers.
 
 import { hashSeed, createRng, shuffle, SUITS, suitGlyph } from './deck.js';
-import { handStrengthIndex } from './hand-evaluator.js';
+import { handStrengthIndex, HAND_RANKS } from './hand-evaluator.js';
 import { gameDayFor, gameDayNumber } from './game-day.js';
 
 // Owner request: modifiers should MULTIPLY the total when their condition is
@@ -39,6 +39,29 @@ const SECOND_LOOK_ROUND_2_MAX_DISCARDS = 1; // fewer, per owner request: "the se
 // it's exactly the boundary the hand-rank table already treats as a miss.
 const DOUBLE_OR_NOTHING_THRESHOLD_ID = 'PAIR';
 const DOUBLE_OR_NOTHING_MULTIPLIER = 2;
+// §4f's batch (owner request). All four are multiplier inputs, sized against
+// the existing ones rather than picked freshly: HIGH_ROLLER's unconditional
+// 1.5x is the floor for "always available", and FLUSH_FRENZY's 4x is the
+// ceiling for "one specific hand only".
+//
+// Held Card is conditional but easy — you simply decline to discard one slot —
+// so it sits just above the unconditional floor.
+const HELD_CARD_MULTIPLIER = 2;
+// Rainbow needs all four suits among five cards, which actively fights every
+// flush-shaped hand, so it pays more than Held Card.
+const RAINBOW_MULTIPLIER = 2.5;
+// Per-card like Suit Bonus, and deliberately smaller than its 0.5: roughly half
+// the deck matches a parity, where only a quarter matches a suit.
+const PARITY_MULTIPLIER_PER_CARD = 0.25;
+// Hot Hand names ONE exact category, so it is priced like Flush Frenzy.
+const HOT_HAND_MULTIPLIER = 4;
+
+// The categories Hot Hand can name. HIGH_CARD is excluded because it is
+// deliberately worth 0 (hand-evaluator.js §3s) — multiplying zero is still
+// zero, so it would read as a broken day. ROYAL_FLUSH is excluded as
+// unreachable often enough to matter: a day whose bonus effectively never pays
+// out is indistinguishable from no modifier at all.
+const HOT_HAND_EXCLUDED_IDS = new Set(['HIGH_CARD', 'ROYAL_FLUSH']);
 
 // Every hand category that IS a flush. Flush Frenzy used to check
 // `id === 'FLUSH'` exactly, which meant the two best flushes in the game —
@@ -69,14 +92,10 @@ export const MODIFIERS = [
     type: 'scoring',
     describe: () => `Flushes score ${FLUSH_FRENZY_MULTIPLIER}x today.`,
   },
-  {
-    id: 'oneSwap',
-    emoji: '🔂',
-    label: 'One Swap',
-    type: 'discardLimit',
-    maxDiscards: 1,
-    describe: () => 'Only 1 discard allowed today.',
-  },
+  // One Swap (a 1-discard day) was removed on owner request. Nothing migrates:
+  // a stored admin override naming it is dropped by validateModifierOverrides
+  // as an unknown id, which is exactly the "degrade to the rotation" behaviour
+  // that validation exists for.
   {
     id: 'fourthChance',
     emoji: '➕',
@@ -124,6 +143,55 @@ export const MODIFIERS = [
     type: 'peekWager',
     describe: () =>
       `You'll see 2 cards first, then choose: 🎲 go for it — no discards, but land at least a Pair and your score doubles, whiff into a bare High Card and it's zero — or 🛡️ play it safe, a completely normal round.`,
+  },
+  // --- §4f (owner request) -------------------------------------------------
+  {
+    id: 'heldCard',
+    emoji: '⭐',
+    label: 'Held Card',
+    // 'scoring', not a new type: the marked slot is a hint, not a rule. Unlike
+    // Locked Card it stays fully discardable — you are being offered a bribe to
+    // keep it, and the whole decision is whether the multiplier is worth the
+    // hand you could have drawn instead.
+    type: 'scoring',
+    describe: () =>
+      `One of your cards is marked ⭐. Keep it to the end and your whole score is multiplied by ×${HELD_CARD_MULTIPLIER} — discard it and you get nothing.`,
+  },
+  {
+    id: 'rainbow',
+    emoji: '🌈',
+    label: 'Rainbow',
+    type: 'scoring',
+    describe: () =>
+      `Land all four suits — ♠️ ♥️ ♦️ ♣️ — in your final hand and your score is multiplied by ×${RAINBOW_MULTIPLIER}.`,
+  },
+  {
+    id: 'parity',
+    emoji: '🔢',
+    label: 'Even Money',
+    type: 'scoring',
+    describe: (ctx) =>
+      `Every ${ctx.parity ?? 'even'}-ranked card in your final hand adds +${Math.round(
+        PARITY_MULTIPLIER_PER_CARD * 100,
+      )}% to your score today. ${ctx.parity === 'odd' ? 'Jacks and Kings count as odd; Queens and Aces are even.' : 'Queens and Aces count as even; Jacks and Kings are odd.'}`,
+  },
+  {
+    id: 'hotHand',
+    emoji: '🔥',
+    label: 'Hot Hand',
+    type: 'scoring',
+    describe: (ctx) => `${ctx.hotHandLabel ?? 'One hand'} scores ×${HOT_HAND_MULTIPLIER} today — that exact hand, nothing else.`,
+  },
+  {
+    id: 'flippedBoard',
+    emoji: '🙃',
+    label: 'Upside Down',
+    // A leaderboard-only modifier: the FIRST one that changes nothing about how
+    // a hand plays or scores. See modifierBoardIsAscending().
+    type: 'leaderboardOrder',
+    ascending: true,
+    describe: () =>
+      "Today's leaderboard is upside down — the LOWEST score sits on top. Your hand plays and scores exactly as normal, so career points still reward a big number. Winning today means going small.",
   },
 ];
 
@@ -210,6 +278,24 @@ function resolveModifier(modifier, random) {
   if (modifier.id === 'lockedCard') {
     context.lockedIndex = Math.floor(random() * 5);
   }
+  if (modifier.id === 'heldCard') {
+    // Which SLOT carries the ⭐, same shape as Locked Card's lockedIndex. A slot
+    // rather than a card identity, because "did you keep it?" is then exactly
+    // "was this index discarded?" — no matching cards by rank and suit, and no
+    // special case for a Wild whose logical suit differs from its dealt one.
+    context.markedIndex = Math.floor(random() * 5);
+  }
+  if (modifier.id === 'parity') {
+    context.parity = random() < 0.5 ? 'even' : 'odd';
+  }
+  if (modifier.id === 'hotHand') {
+    // Picked from HAND_RANKS itself rather than a hand-written list, so a future
+    // category is automatically eligible and can never fall out of step.
+    const eligible = HAND_RANKS.filter((rank) => !HOT_HAND_EXCLUDED_IDS.has(rank.id));
+    const pick = eligible[Math.floor(random() * eligible.length)];
+    context.hotHandId = pick.id;
+    context.hotHandLabel = pick.label;
+  }
   return { ...modifier, ...context, description: modifier.describe(context) };
 }
 
@@ -262,7 +348,11 @@ export function buildModifierById(id) {
 // types, whose whole effect lives in board.js's discard rules instead) — so
 // callers can always multiply by the result unconditionally.
 export function modifierScoringMultiplier(dailyModifier) {
-  return (finalHandResult, finalHand) => {
+  // The third argument is a CONTEXT bag rather than more positional parameters:
+  // Held Card needs to know which slots were thrown away, which is not derivable
+  // from the final hand alone (a replacement occupies the same index). Optional
+  // and defaulted, so every existing caller and test keeps working unchanged.
+  return (finalHandResult, finalHand, { discardIndices = [] } = {}) => {
     if (!dailyModifier) return 1;
     if (dailyModifier.id === 'suitBonus') {
       const matchingCards = finalHand.filter((card) => card.suit === dailyModifier.bonusSuit).length;
@@ -287,6 +377,53 @@ export function modifierScoringMultiplier(dailyModifier) {
         ? DOUBLE_OR_NOTHING_MULTIPLIER
         : 0;
     }
+    if (dailyModifier.id === 'heldCard') {
+      // Kept means simply "not discarded". Checked against the discard list
+      // rather than by looking for the card in the final hand, because a
+      // replacement lands in the same slot — the final hand alone cannot tell
+      // you whether index 3 is the card you started with.
+      const kept = !discardIndices.includes(dailyModifier.markedIndex);
+      return kept ? HELD_CARD_MULTIPLIER : 1;
+    }
+    if (dailyModifier.id === 'rainbow') {
+      // Reads the LOGICAL hand, so a Wild counts as the suit it actually plays
+      // as — the same rule Suit Bonus follows, and the reason it can complete a
+      // rainbow rather than being stuck with its meaningless dealt suit.
+      const suits = new Set(finalHand.map((card) => card.suit).filter(Boolean));
+      return suits.size === SUITS.length ? RAINBOW_MULTIPLIER : 1;
+    }
+    if (dailyModifier.id === 'parity') {
+      const wantEven = dailyModifier.parity !== 'odd';
+      const matching = finalHand.filter(
+        (card) => Number.isFinite(card.rank) && (card.rank % 2 === 0) === wantEven,
+      ).length;
+      return 1 + matching * PARITY_MULTIPLIER_PER_CARD;
+    }
+    if (dailyModifier.id === 'hotHand') {
+      // EXACT category, deliberately — "Two Pair scores x4 today" means Two
+      // Pair, and landing Three of a Kind instead is a different (better) hand
+      // that had its own reward. Contrast Flush Frenzy, which spans every flush
+      // because Straight and Royal Flush ARE flushes; there is no equivalent
+      // family relationship here.
+      return finalHandResult.id === dailyModifier.hotHandId ? HOT_HAND_MULTIPLIER : 1;
+    }
     return 1;
   };
+}
+
+/**
+ * Whether the DAILY leaderboard should rank lowest-first (owner request:
+ * "flipped leaderboard day, normal draw but lowest score is on top for that
+ * day"). The only modifier hook that touches no part of playing a hand.
+ *
+ * Scoring is deliberately untouched: the score a player earns, the grade it
+ * gets, and the career points it adds are all exactly what they would be on any
+ * other day. Only who sits at the top of that one board changes — which is what
+ * makes it a real strategic inversion (topping the board and maximising career
+ * points pull in opposite directions) without disturbing achievements,
+ * personality, the decision rating or the EV solver, every one of which assumes
+ * higher is better. That assumption is why DESIGN.md deferred full Lowball.
+ */
+export function modifierBoardIsAscending(dailyModifier) {
+  return dailyModifier?.type === 'leaderboardOrder' && dailyModifier.ascending === true;
 }

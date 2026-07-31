@@ -1,6 +1,11 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { getDailyModifier, modifierScoringMultiplier, MODIFIERS } from '../src/core/modifiers.js';
+import {
+  getDailyModifier,
+  modifierScoringMultiplier,
+  modifierBoardIsAscending,
+  MODIFIERS,
+} from '../src/core/modifiers.js';
 import { evaluateHand } from '../src/core/hand-evaluator.js';
 import { suitGlyph } from '../src/core/deck.js';
 
@@ -85,7 +90,6 @@ describe('getDailyModifier', () => {
       const date = new Date('2026-07-27T00:00:00Z');
       date.setUTCDate(date.getUTCDate() + d);
       const modifier = getDailyModifier(date);
-      if (modifier.id === 'oneSwap') assert.equal(modifier.maxDiscards, 1);
       if (modifier.id === 'fourthChance') assert.equal(modifier.maxDiscards, 4);
       if (modifier.id === 'cleanSlate') assert.equal(modifier.maxDiscards, 5);
     }
@@ -184,7 +188,9 @@ describe('modifierScoringMultiplier', () => {
   test('discardLimit, lockedCard, and twoRoundDiscard modifiers never contribute a scoring multiplier', () => {
     const hand = [c(2, 'D'), c(5, 'D'), c(9, 'D'), c(11, 'D'), c(13, 'D')]; // a flush, so any accidental scoring hook would show up
     const finalHandResult = evaluateHand(hand);
-    for (const id of ['oneSwap', 'fourthChance', 'cleanSlate', 'lockedCard', 'secondLook']) {
+    // flippedBoard joins them: it changes only how the leaderboard is SORTED,
+    // so it must never touch a score (owner: "normal draw").
+    for (const id of ['fourthChance', 'cleanSlate', 'lockedCard', 'secondLook', 'flippedBoard']) {
       assert.equal(modifierScoringMultiplier({ id })(finalHandResult, hand), 1, id);
     }
   });
@@ -242,5 +248,131 @@ describe('MODIFIERS registry — new §4d entries', () => {
   test('doubleOrNothing is a peekWager modifier', () => {
     const modifier = MODIFIERS.find((m) => m.id === 'doubleOrNothing');
     assert.equal(modifier.type, 'peekWager');
+  });
+});
+
+// --- §4f's batch ------------------------------------------------------------
+describe('Held Card', () => {
+  const hand = [c(9, 'S'), c(9, 'H'), c(2, 'D'), c(4, 'C'), c(5, 'S')];
+  const result = evaluateHand(hand);
+  const mult = (markedIndex, discardIndices) =>
+    modifierScoringMultiplier({ id: 'heldCard', markedIndex })(result, hand, { discardIndices });
+
+  test('pays out when the marked slot was not discarded', () => {
+    assert.equal(mult(3, [0, 1]), 2);
+    assert.equal(mult(3, []), 2, 'discarding nothing keeps it too');
+  });
+
+  test('pays nothing when the marked slot was discarded', () => {
+    assert.equal(mult(3, [3]), 1);
+    assert.equal(mult(0, [0, 2, 4]), 1);
+  });
+
+  // The reason the check is on discardIndices rather than the final hand: a
+  // replacement occupies the same index, so the hand alone cannot answer it.
+  test('is decided by the slot, not by what card ended up there', () => {
+    assert.equal(mult(2, [2]), 1, 'slot 2 was swapped, even though a card sits there');
+  });
+
+  test('defaults to no payout when the caller supplies no discard context', () => {
+    // An empty discard list means nothing was thrown away, so the card is kept.
+    assert.equal(modifierScoringMultiplier({ id: 'heldCard', markedIndex: 1 })(result, hand), 2);
+  });
+});
+
+describe('Rainbow', () => {
+  const mult = (hand) => modifierScoringMultiplier({ id: 'rainbow' })(evaluateHand(hand), hand);
+
+  test('pays out when all four suits are present', () => {
+    assert.equal(mult([c(2, 'S'), c(5, 'H'), c(9, 'D'), c(11, 'C'), c(13, 'S')]), 2.5);
+  });
+
+  test('pays nothing when a suit is missing', () => {
+    assert.equal(mult([c(2, 'S'), c(5, 'H'), c(9, 'D'), c(11, 'H'), c(13, 'S')]), 1);
+    assert.equal(mult([c(2, 'D'), c(5, 'D'), c(9, 'D'), c(11, 'D'), c(13, 'D')]), 1, 'a flush is the opposite of a rainbow');
+  });
+});
+
+describe('Even Money (parity)', () => {
+  // 2,4 even; 5,7,9 odd.
+  const hand = [c(2, 'S'), c(4, 'H'), c(5, 'D'), c(7, 'C'), c(9, 'S')];
+  const result = evaluateHand(hand);
+  const mult = (parity) => modifierScoringMultiplier({ id: 'parity', parity })(result, hand);
+
+  test('adds per matching card', () => {
+    assert.equal(mult('even'), 1 + 2 * 0.25);
+    assert.equal(mult('odd'), 1 + 3 * 0.25);
+  });
+
+  test('treats face cards by their rank value', () => {
+    // J=11 odd, Q=12 even, K=13 odd, A=14 even.
+    const faces = [c(11, 'S'), c(12, 'H'), c(13, 'D'), c(14, 'C'), c(2, 'S')];
+    const faceResult = evaluateHand(faces);
+    assert.equal(modifierScoringMultiplier({ id: 'parity', parity: 'even' })(faceResult, faces), 1 + 3 * 0.25);
+    assert.equal(modifierScoringMultiplier({ id: 'parity', parity: 'odd' })(faceResult, faces), 1 + 2 * 0.25);
+  });
+
+  test('defaults to even when no parity was resolved', () => {
+    assert.equal(modifierScoringMultiplier({ id: 'parity' })(result, hand), mult('even'));
+  });
+});
+
+describe('Hot Hand', () => {
+  const pair = [c(9, 'S'), c(9, 'H'), c(2, 'D'), c(4, 'C'), c(7, 'S')];
+  const twoPair = [c(9, 'S'), c(9, 'H'), c(4, 'D'), c(4, 'C'), c(7, 'S')];
+  const mult = (hand, hotHandId) =>
+    modifierScoringMultiplier({ id: 'hotHand', hotHandId })(evaluateHand(hand), hand);
+
+  test('pays out on the exact named category', () => {
+    assert.equal(mult(pair, 'PAIR'), 4);
+    assert.equal(mult(twoPair, 'TWO_PAIR'), 4);
+  });
+
+  test('pays nothing for a different category, better or worse', () => {
+    assert.equal(mult(twoPair, 'PAIR'), 1, 'a better hand is still not the named one');
+    assert.equal(mult(pair, 'TWO_PAIR'), 1);
+  });
+
+  test('only ever names a category that can actually pay out', () => {
+    // High Card scores 0 (multiplying it stays 0) and Royal Flush is too rare
+    // for the day to mean anything — neither may be picked.
+    for (let d = 0; d < 400; d++) {
+      const date = new Date('2026-07-27T12:00:00Z');
+      date.setUTCDate(date.getUTCDate() + d);
+      const modifier = getDailyModifier(date, 'hotHand');
+      assert.ok(modifier.hotHandId, 'a hot hand day always resolves a category');
+      assert.notEqual(modifier.hotHandId, 'HIGH_CARD');
+      assert.notEqual(modifier.hotHandId, 'ROYAL_FLUSH');
+      assert.ok(modifier.description.includes(modifier.hotHandLabel));
+    }
+  });
+});
+
+describe('Upside Down (flipped leaderboard)', () => {
+  test('flags the daily board as ascending', () => {
+    assert.equal(modifierBoardIsAscending(getDailyModifier(new Date(), 'flippedBoard')), true);
+  });
+
+  test('every other modifier leaves the board alone', () => {
+    for (const m of MODIFIERS) {
+      if (m.id === 'flippedBoard') continue;
+      assert.equal(modifierBoardIsAscending(getDailyModifier(new Date(), m.id)), false, m.id);
+    }
+    assert.equal(modifierBoardIsAscending(null), false);
+    assert.equal(modifierBoardIsAscending(undefined), false);
+  });
+});
+
+describe('One Swap is gone', () => {
+  test('no longer in the roster', () => {
+    assert.equal(MODIFIERS.find((m) => m.id === 'oneSwap'), undefined);
+  });
+
+  test('and can never be produced by the rotation', () => {
+    for (let d = 0; d < 200; d++) {
+      const date = new Date('2026-07-27T12:00:00Z');
+      date.setUTCDate(date.getUTCDate() + d);
+      assert.notEqual(getDailyModifier(date).id, 'oneSwap');
+    }
   });
 });

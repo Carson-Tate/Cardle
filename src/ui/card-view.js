@@ -47,9 +47,15 @@ export function createCardElement(card, { faceUp = true, selected = false, locke
 
   if (faceUp) {
     if (wild) {
+      // The label is always just "WILD". Prefixing the tier ("DIAMOND WILD")
+      // overflowed the card — it is wider than the card at this size, and a
+      // nowrap centred label simply spills past both edges. The tier is already
+      // said twice over by the coloured ring and the rarity badge, which the
+      // wild branch now renders too rather than leaving it to the label.
       el.innerHTML = `
         <span class="card__joker-face">🃏</span>
-        <span class="card__joker-label">${(jokerFlavor ?? (ringTier ? RARITY_BY_ID[ringTier] : null))?.label.toUpperCase() ?? ''} WILD</span>
+        <span class="card__joker-label">WILD</span>
+        ${ringTier ? `<span class="card__rarity-badge">${RARITY_BY_ID[ringTier].emoji}</span>` : ''}
         ${locked ? '<span class="card__lock-badge">🔒</span>' : ''}
         ${marked ? '<span class="card__held-badge">⭐</span>' : ''}
       `;

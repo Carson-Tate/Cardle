@@ -88,12 +88,18 @@ const BASE_FLIP_MS = 180;
 // Keyed by rarity id. Wild is no longer one of those (§3x), so a wild's pacing
 // comes from wildDramaFor() below rather than from this table.
 const FLIP_DURATION_BY_RARITY = { bronze: 350, silver: 500, gold: 700, diamond: 1200 };
-// A wild is a moment in its own right even with no rarity, so it gets the same
-// dramatic treatment the old 'joker' tier had. A wild that ALSO rolled a tier
-// takes whichever pacing is slower — the rarer thing sets the beat.
-const WILD_FLIP_MS = 1000;
-const WILD_ANTICIPATION_MS = 500;
-const WILD_HOLD_MS = 800;
+// A wild reveals at close to NORMAL speed, just a touch slower (owner request:
+// "make the wilds appear normal speed maybe a little slower than normal").
+//
+// It inherited the old 'joker' tier's full drama — a 1000ms flip with half a
+// second of anticipation — which made sense when a wild turned up in one hand in
+// a hundred. At one in eleven (§3x) that long pause stopped being a moment and
+// started being a wait. The rare TIERS keep their drama; wildness on its own no
+// longer buys any. A wild that also rolled a tier still takes the slower pacing,
+// so a Gold Wild reveals like gold.
+const WILD_FLIP_MS = 260; // vs BASE_FLIP_MS 180
+const WILD_ANTICIPATION_MS = 80;
+const WILD_HOLD_MS = 300; // vs a common card's 250
 // A brief hold before a rare card even starts its flip, so its moment
 // doesn't get lost in the normal cascading reveal.
 const ANTICIPATION_BY_RARITY = { bronze: 150, silver: 250, gold: 350, diamond: 650 };
@@ -107,11 +113,20 @@ function revealDramaFor(card) {
   const duration = Math.max(FLIP_DURATION_BY_RARITY[card.rarity] ?? BASE_FLIP_MS, wild ? WILD_FLIP_MS : 0);
   const anticipation = Math.max(ANTICIPATION_BY_RARITY[card.rarity] ?? 0, wild ? WILD_ANTICIPATION_MS : 0);
   const hold = Math.max(HOLD_BY_RARITY[card.rarity] ?? 250, wild ? WILD_HOLD_MS : 0);
-  // The glow marks "something out of the ordinary landed", which a plain wild
-  // now is just as much as a rare card.
-  const dramatic = card.rarity || wild ? 'card--reveal-rare' : null;
+  // ONLY a rarity earns the glow (owner request: "i dont want the normal rarity
+  // wild to flash when doing the reveal animation").
+  //
+  // It was doubly wrong for a plain wild. The pulse reads as "a rare card
+  // landed", which a plain wild is not — and `reveal-rare-pulse` colours itself
+  // from `var(--rarity-glow, gold)`, a variable only the rarity classes set, so
+  // an unrarity'd wild fell through to the literal fallback and flashed GOLD.
+  // A wild that also rolled a tier still glows, in that tier's colour.
+  const dramatic = card.rarity ? 'card--reveal-rare' : null;
   return { duration, anticipation, hold, dramatic };
 }
+
+// Matches `.card--reveal-rare`'s own animation duration in styles.css.
+const REVEAL_PULSE_MS = 700;
 // Timing for the opening deal's card-into-place animation (.card--deal-in,
 // styles.css) — how long each card takes to land, and the stagger between
 // each card starting.
@@ -469,7 +484,15 @@ export function initBoard(root) {
       // whatever's next once the relevant cards are done flipping
       cardEls[index] = await flipReplaceCard(cardEls[index], card, { duration, holdMs, dramaticClass, disabled: true });
       if (token !== dealToken) return false;
-      await delay(90);
+      // The LAST card needs its pulse to finish before this resolves. The caller
+      // immediately calls renderHand(), which rebuilds every card element from
+      // scratch — so a final card mid-pulse had its element destroyed about
+      // 90ms into a 700ms animation, snapping the scale-up back to nothing.
+      // Owner report: "when it is the last card it flashes weird". Earlier cards
+      // never showed it, because the next card's own flip always outlasted their
+      // pulse.
+      const isLast = index === endIndex - 1;
+      await delay(isLast && dramaticClass ? REVEAL_PULSE_MS : 90);
     }
     return true;
   }

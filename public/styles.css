@@ -456,18 +456,36 @@ header h1 {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -60%);
-  font-size: 1.9rem;
+  /* Bigger (owner request) — the jester is the whole identity of the card, and
+     at 1.9rem it read as small against a normal card's rank and suit. */
+  font-size: 2.4rem;
 }
 
+/* WHITE ON A DARK CHIP, not tier-coloured text (owner request: "have the text of
+   the wild white and easy to read").
+   It used to take `color: var(--rarity-glow)`, which gave a plain wild no colour
+   at all (the variable is unset, so it fell back to the inherited near-black)
+   and gave a Gold Wild gold-on-cream at roughly 2:1 contrast. A neutral dark
+   chip is legible against every tier tint and in both themes, and tier identity
+   is already carried by the card's border, glow and rarity badge — so nothing is
+   lost by taking it out of the text. */
 .card__joker-label {
   position: absolute;
-  bottom: 8px;
+  bottom: 6px;
   left: 50%;
   transform: translateX(-50%);
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
   font-size: 0.6rem;
   font-weight: 700;
   letter-spacing: 0.08em;
-  color: var(--rarity-glow);
+  white-space: nowrap;
+  /* Cannot spill past the card, whatever it ends up saying. */
+  max-width: calc(100% - 10px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #ffffff;
 }
 
 /* The dramatic "it landed" pulse, added once a rare card's flip completes

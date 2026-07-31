@@ -391,6 +391,24 @@ Wildness is now its own axis. A card rolls `wild` independently of `rarity`, so 
 
 **And one of my own.** The new plain "Show Wild" admin button carried only `data-force-wild`, while the click handler was bound to `[data-force]` — so it rendered perfectly and did nothing. Found by driving the real button rather than trusting that it existed.
 
+**A follow-up pass on how a wild looks and lands** (owner: "make the wilds appear normal speed maybe a little slower than normal, and have the text of the wild white and easy to read, maybe make the joker icon a little bigger").
+
+The reveal inherited the old joker tier's full drama — a 1000ms flip behind half a second of anticipation. That was proportionate at one hand in a hundred; at one in eleven it stopped being a moment and became a wait. Wildness on its own now buys 260ms against a common card's 180, and the rare TIERS keep their drama, so a Gold Wild still reveals like gold. A test asserts a plain wild now deals faster than a Gold card, which is the relationship that was inverted.
+
+The label was `color: var(--rarity-glow)` — which for a plain wild resolved to nothing at all (the variable is unset, so it fell back to the inherited near-black) and for a Gold Wild gave gold-on-cream at roughly 2:1. It is now white on a neutral dark chip: 6.2:1 in light mode, 19:1 in dark, both measured by compositing the chip's alpha over the card rather than reading its computed colour — the first version of that check ignored the alpha and reported a meaningless 21:1 for any value.
+
+Prefixing the tier ("DIAMOND WILD") overflowed the card, since a nowrap centred label wider than its parent simply spills past both edges. The label is now always just "WILD" and the wild branch renders the rarity BADGE it had been omitting, so the tier is still said — twice, by the ring and the badge — without the text having to carry it.
+
+**Then two reveal flashes** (owner: "i dont want the normal rarity wild to flash when doing the reveal animation, also when it is the last card it flashes weird"). Different causes, both worth recording.
+
+A plain wild was getting `.card--reveal-rare`, which announces "a rare card landed" — and it colours itself from `var(--rarity-glow, gold)`, a variable only the rarity classes set. So an unrarity'd wild fell through to the literal fallback and flashed GOLD, claiming a tier it did not have. The glow is now gated on `card.rarity` alone; a wild that also rolled a tier still glows, in that tier's colour.
+
+The "weird" flash on the last card was a torn animation. `dealInitialHand` calls `renderHand()` the moment the final flip resolves, which rebuilds every card element from scratch — so a last card mid-pulse had its element destroyed about 90ms into a 700ms animation, snapping the scale-up back to nothing. Earlier cards never showed it because the next card's own flip always outlasted their pulse; only the last one had nothing following it. The reveal now waits out the pulse before handing over, and only when the last card actually pulsed, so an ordinary hand pays nothing for the fix.
+
+Measured by observing how long each card kept the pulse class and whether it was removed or torn out of the DOM. Reverting both fixes reproduces the report precisely: pulses lasting 86-99ms and ending in `detached`.
+
+**A flaky test, caught by the sweep rather than by luck.** The first version of that watcher polled on `requestAnimationFrame`. It passed alone and failed inside the full sweep, where a dozen competing Chromium instances throttle rAF enough for a class change to slip between frames. Rewritten as a `MutationObserver`, which is delivered no matter how starved the page is.
+
 ---
 
 ## 4. Daily Modifiers

@@ -44,7 +44,15 @@
       <button type="button" id="draw-btn" class="draw-btn" hidden>🂠 Draw</button>
       <div id="hand-row" class="hand-row"></div>
       <div id="controls">
-        <p id="discard-hint"></p>
+        <!-- The hint and the Share button share one centred row (owner request:
+             Share "to the right of the come back tomorrow" and "center the whole
+             thing"). Share stays `hidden` until a run has actually been scored —
+             it has nothing to share before that, and its handler is not attached
+             until the fortune renders. -->
+        <div class="hint-row">
+          <p id="discard-hint"></p>
+          <button type="button" class="copy-btn share-btn" id="share-btn" hidden>📋 Share</button>
+        </div>
         <div id="wager-prompt" class="wager-prompt" hidden>
           <p id="wager-prompt-text">You've seen 2 cards. Go for it?</p>
           <div class="wager-prompt-actions">

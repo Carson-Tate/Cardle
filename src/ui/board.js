@@ -95,6 +95,7 @@ export function initBoard(root) {
   const handRow = root.querySelector('#hand-row');
   const drawBtn = root.querySelector('#draw-btn');
   const discardHint = root.querySelector('#discard-hint');
+  const shareBtn = root.querySelector('#share-btn');
   const lockInBtn = root.querySelector('#lock-in-btn');
   const dayLabel = root.querySelector('#day-label');
   const modifierBanner = root.querySelector('#modifier-banner');
@@ -739,7 +740,11 @@ export function initBoard(root) {
       }
     }
 
-    await revealScore(resultPanel, result, storyFragments());
+    // The hint line was blanked at lock-in. It now carries the same sign-off the
+    // already-played reload uses, so Share has the text it sits beside on BOTH
+    // paths rather than floating under the cards on its own.
+    discardHint.textContent = 'Come back tomorrow for a new hand.';
+    await revealScore(resultPanel, result, storyFragments(), shareBtn);
   }
 
   // Replaces the discarded cards, in TWO distinct passes (owner request:
@@ -816,12 +821,8 @@ export function initBoard(root) {
     // No count-up animation on this path (it's a reload of an already-
     // finished run) — collapse immediately rather than waiting for anything.
     setupBreakdownCollapse(resultPanel.querySelector('.score-breakdown'));
-    renderStoryBlock(
-      resultPanel.querySelector('#story-block'),
-      result,
-      storyFragments(),
-      resultPanel.querySelector('#share-btn'),
-    );
+    renderStoryBlock(resultPanel.querySelector('#story-block'), result, storyFragments(), shareBtn);
+    shareBtn.hidden = false;
   }
 }
 
@@ -1118,7 +1119,7 @@ function setupBreakdownCollapse(container) {
   });
 }
 
-async function revealScore(resultPanel, result, fragments) {
+async function revealScore(resultPanel, result, fragments, shareBtn = null) {
   const { score, decisionRating: rating, meters, personalityId, newlyUnlocked } = result;
   resultPanel.hidden = false;
   resultPanel.innerHTML = `
@@ -1131,8 +1132,6 @@ async function revealScore(resultPanel, result, fragments) {
     <div class="personality-badge" id="personality-badge" hidden></div>
     <div class="story-block" id="story-block" hidden></div>
     <div class="achievements-toast" id="achievements-toast" hidden></div>
-    <p class="come-back">Come back tomorrow for a new hand.</p>
-    <div class="share-row" id="share-row" hidden><button type="button" class="copy-btn" id="share-btn">📋 Share</button></div>
   `;
 
   const totalEl = resultPanel.querySelector('#score-total');
@@ -1221,11 +1220,9 @@ async function revealScore(resultPanel, result, fragments) {
 
   await delay(300);
   const storyBlock = resultPanel.querySelector('#story-block');
-  renderStoryBlock(storyBlock, result, fragments, resultPanel.querySelector('#share-btn'));
+  renderStoryBlock(storyBlock, result, fragments, shareBtn);
   storyBlock.hidden = false;
-  // Revealed with the fortune, because its share text IS that fortune — and
-  // because its click handler is only attached by the call above.
-  resultPanel.querySelector('#share-row').hidden = false;
+  if (shareBtn) shareBtn.hidden = false;
 
   if (newlyUnlocked.length > 0) {
     await delay(400);
@@ -1684,7 +1681,5 @@ function staticResultHtml(result) {
     <div class="personality-badge">${personalityHtml(personalityId)}</div>
     <div class="story-block" id="story-block"></div>
     ${newlyUnlocked.length > 0 ? `<div class="achievements-toast">${achievementsHtml(newlyUnlocked)}</div>` : ''}
-    <p class="come-back">Come back tomorrow for a new hand.</p>
-    <div class="share-row"><button type="button" class="copy-btn" id="share-btn">📋 Share</button></div>
   `;
 }

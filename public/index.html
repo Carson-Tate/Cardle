@@ -79,6 +79,21 @@
       <section id="result" class="result" hidden></section>
     </main>
   </div>
+  <!-- Site-wide, so it sits below whichever view `#app` rendered — the board,
+       the profile, the leaderboards or the admin page — rather than being tied
+       to one of them. A plain text link, not Buy Me a Coffee's branded button:
+       that is a remote image, and this project loads no third-party assets
+       (one CDN module and nothing else), so an image here would be a new
+       external request that ad blockers routinely stop anyway.
+       `rel="noopener"` because `target="_blank"` otherwise hands the opened tab
+       a reference to this one via `window.opener`. -->
+  <footer id="site-footer">
+    <p>
+      Cardle is free to play.
+      <a href="https://buymeacoffee.com/cardle" target="_blank" rel="noopener noreferrer">Buy me a coffee ☕</a>
+      to help keep it running.
+    </p>
+  </footer>
   <script type="module" src="/src/ui/main.js"></script>
 </body>
 </html>

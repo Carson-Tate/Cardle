@@ -41,6 +41,41 @@ body {
   align-items: center;
 }
 
+/* The support footer (DESIGN.md §11v).
+   `margin-top: auto` pushes it to the bottom of the viewport on short pages —
+   body is a `min-height: 100vh` flex column, so the last child absorbs the slack
+   — while on a long page it simply follows the content. Without it, an empty
+   profile or a logged-out leaderboard would leave the footer floating in the
+   middle of the screen.
+   Deliberately quiet: muted, small, and below everything. It is an offer, not a
+   call to action, and it must not compete with the game. */
+#site-footer {
+  width: 100%;
+  max-width: 640px;
+  margin-top: auto;
+  /* Minimal top padding: `#app` above already ends with its own, and doubling
+     the two is what pushed the link far below the content it follows. */
+  padding: 0.5rem 1rem 1.5rem;
+  text-align: center;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+#site-footer p {
+  margin: 0;
+}
+
+#site-footer a {
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+#site-footer a:hover {
+  text-decoration: underline;
+}
+
 /* #site-header spans the full viewport width (a real top bar), so its own
    padding lives here rather than on body — body used to center #app via
    `justify-content: center` on a row-flex container, which would have put
@@ -52,8 +87,12 @@ body {
   max-width: 640px;
   /* Halved at the top (owner request: less padding above the day label). The
      site header already provides a visual break above this, so 1.5rem read as a
-     gap rather than as breathing room. */
-  padding: 0.75rem 1rem 3rem;
+     gap rather than as breathing room.
+     The bottom was 3rem, from before the support footer existed — it was there
+     to stop content butting against the viewport edge, which the footer now does
+     instead. Stacked with the footer's own padding it made ~73px of dead space
+     above the link (owner: "too much padding above link"). */
+  padding: 0.75rem 1rem 1.25rem;
 }
 
 /* The 2rem gap belongs to the BOARD header (day label / modifier banner /

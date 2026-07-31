@@ -816,7 +816,12 @@ export function initBoard(root) {
     // No count-up animation on this path (it's a reload of an already-
     // finished run) — collapse immediately rather than waiting for anything.
     setupBreakdownCollapse(resultPanel.querySelector('.score-breakdown'));
-    renderStoryBlock(resultPanel.querySelector('#story-block'), result, storyFragments());
+    renderStoryBlock(
+      resultPanel.querySelector('#story-block'),
+      result,
+      storyFragments(),
+      resultPanel.querySelector('#share-btn'),
+    );
   }
 }
 
@@ -1117,7 +1122,7 @@ async function revealScore(resultPanel, result, fragments) {
   const { score, decisionRating: rating, meters, personalityId, newlyUnlocked } = result;
   resultPanel.hidden = false;
   resultPanel.innerHTML = `
-    <h2 id="hand-label">${score.handResult.label}</h2>
+    <h2 class="hand-label">${score.handResult.label}</h2>
     <div class="score-total" id="score-total">0</div>
     <div class="score-grade" id="score-grade" hidden></div>
     <ul class="score-breakdown" id="score-breakdown"></ul>
@@ -1127,6 +1132,7 @@ async function revealScore(resultPanel, result, fragments) {
     <div class="story-block" id="story-block" hidden></div>
     <div class="achievements-toast" id="achievements-toast" hidden></div>
     <p class="come-back">Come back tomorrow for a new hand.</p>
+    <div class="share-row" id="share-row" hidden><button type="button" class="copy-btn" id="share-btn">📋 Share</button></div>
   `;
 
   const totalEl = resultPanel.querySelector('#score-total');
@@ -1215,8 +1221,11 @@ async function revealScore(resultPanel, result, fragments) {
 
   await delay(300);
   const storyBlock = resultPanel.querySelector('#story-block');
-  renderStoryBlock(storyBlock, result, fragments);
+  renderStoryBlock(storyBlock, result, fragments, resultPanel.querySelector('#share-btn'));
   storyBlock.hidden = false;
+  // Revealed with the fortune, because its share text IS that fortune — and
+  // because its click handler is only attached by the call above.
+  resultPanel.querySelector('#share-row').hidden = false;
 
   if (newlyUnlocked.length > 0) {
     await delay(400);
@@ -1337,7 +1346,7 @@ function resolveStorySelections(originalHand, finalHand, discardIndices, fragmen
 // independent now: the fortune is complete from the moment it renders, so
 // there's never a state where the result can't be copied. Editing collapses
 // back to the same default state on Submit, so the button pair stays stable.
-function renderStoryBlock(container, result, fragments) {
+function renderStoryBlock(container, result, fragments, shareBtn = null) {
   const { originalHand, finalHand, discardIndices } = result;
   const { selections, options } = resolveStorySelections(originalHand, finalHand, discardIndices, fragments);
   let story = generateStory(result, selections, undefined, fragments);
@@ -1367,7 +1376,6 @@ function renderStoryBlock(container, result, fragments) {
     </div>
     <div class="story-actions">
       <button type="button" class="story-edit-btn" id="edit-fortune-btn">✏️ Edit Fortune</button>
-      <button type="button" class="copy-btn" id="copy-btn">📋 Copy Result</button>
     </div>
   `;
 
@@ -1375,7 +1383,11 @@ function renderStoryBlock(container, result, fragments) {
   const storyEditorEl = container.querySelector('#story-editor');
   const editBtn = container.querySelector('#edit-fortune-btn');
   const submitBtn = container.querySelector('#submit-story-btn');
-  const copyBtn = container.querySelector('#copy-btn');
+  // Sits below "Come back tomorrow" now (owner request), so it is no longer a
+  // child of the story block and has to be handed in. It still has to be wired
+  // HERE: `story` is rebuilt on every dropdown change, and the share text must
+  // be whichever fortune is on screen at click time.
+  const copyBtn = shareBtn;
 
   // textContent, not interpolated into the innerHTML above — the fragments are
   // repo-authored so nothing here is untrusted, but this is also the same
@@ -1406,14 +1418,16 @@ function renderStoryBlock(container, result, fragments) {
     editBtn.hidden = false;
   });
 
-  copyBtn.addEventListener('click', async () => {
-    await copyToClipboard(story.shareText); // reads the current `story` at click time, not bind time
-    const original = copyBtn.textContent;
-    copyBtn.textContent = '✅ Copied!';
-    setTimeout(() => {
-      copyBtn.textContent = original;
-    }, 1500);
-  });
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      await copyToClipboard(story.shareText); // reads the current `story` at click time, not bind time
+      const original = copyBtn.textContent;
+      copyBtn.textContent = '✅ Copied!';
+      setTimeout(() => {
+        copyBtn.textContent = original;
+      }, 1500);
+    });
+  }
 }
 
 // Shared between the animated reveal and the static "already played" view.
@@ -1656,7 +1670,8 @@ function staticResultHtml(result) {
   const badges = [...buildScoreBadges(score, result.finalHand, result.discardIndices)].reverse();
 
   return `
-    <h2>${score.handResult.label} — ${score.total.toLocaleString()} pts</h2>
+    <h2 class="hand-label">${score.handResult.label}</h2>
+    <div class="score-total">${score.total.toLocaleString()}</div>
     ${(() => {
       const grade = gradeForScore(score.total);
       return `<div class="score-grade score-grade--${grade.id}"><span class="score-grade-emoji">${grade.emoji}</span><span class="score-grade-label">${grade.label}</span></div>`;
@@ -1670,5 +1685,6 @@ function staticResultHtml(result) {
     <div class="story-block" id="story-block"></div>
     ${newlyUnlocked.length > 0 ? `<div class="achievements-toast">${achievementsHtml(newlyUnlocked)}</div>` : ''}
     <p class="come-back">Come back tomorrow for a new hand.</p>
+    <div class="share-row"><button type="button" class="copy-btn" id="share-btn">📋 Share</button></div>
   `;
 }

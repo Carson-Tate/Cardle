@@ -50,11 +50,27 @@ body {
 #app {
   width: 100%;
   max-width: 640px;
-  padding: 1.5rem 1rem 3rem;
+  /* Halved at the top (owner request: less padding above the day label). The
+     site header already provides a visual break above this, so 1.5rem read as a
+     gap rather than as breathing room. */
+  padding: 0.75rem 1rem 3rem;
 }
 
+/* The 2rem gap belongs to the BOARD header (day label / modifier banner /
+   countdown, above the hand) — it was written for that and then silently
+   applied to `#site-header` too, because this selector is a bare element. That
+   generic-selector reach is the bigger half of the gap the owner asked to cut:
+   32px of margin under a top bar that already has a border to separate it, plus
+   #app's own padding on top of that. Scoped to the direct child of #app, which
+   is exactly the board header — the profile/leaderboard/admin pages nest their
+   own `<header>` deeper, so none of them are affected.
+   `text-align: center` deliberately stays global; several surfaces rely on it,
+   and `.profile-header` already opts out explicitly (§11n). */
 header {
   text-align: center;
+}
+
+#app > header {
   margin-bottom: 2rem;
 }
 
@@ -1050,6 +1066,58 @@ header h1 {
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
+}
+
+/* Share sits BELOW "Come back tomorrow" (owner request) rather than beside Edit
+   Fortune, so it reads as the last thing you do rather than an option attached
+   to the fortune. Centred on its own row and given room above so it is not
+   crowded against that line. */
+/* STICKY, so it is reachable without scrolling to the end of a long result
+   panel (owner request) while adding no layout of its own — it keeps the exact
+   place in the flow it already had, so nothing is pushed down. Sticky rather
+   than fixed: it pins to the bottom of the viewport only while its natural
+   position is off-screen, then settles into that position once you reach it,
+   so it stops hovering over the page the moment it no longer needs to.
+   The result panel is its containing block, and no ancestor sets `overflow`,
+   which is the usual reason sticky silently does nothing. */
+.share-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 1rem;
+  position: sticky;
+  bottom: 1rem;
+  z-index: 5;
+  /* Nothing to click in the gutters either side of the pill, so scrolling and
+     card clicks still work through the row while it floats. */
+  pointer-events: none;
+}
+
+.share-row > * {
+  pointer-events: auto;
+}
+
+/* FILLED here, unlike the outlined .copy-btn it inherits from. While pinned it
+   floats over whatever is scrolling behind it, and a transparent background
+   would put page content straight through the label. */
+.share-row .copy-btn {
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 4px 14px color-mix(in srgb, #000000 28%, transparent);
+}
+
+.share-row .copy-btn:hover {
+  background: color-mix(in srgb, var(--accent) 85%, #000000);
+  color: #ffffff;
+}
+
+/* THE `[hidden]` TRAP, seventh time. `display: flex` above beats the UA's
+   `[hidden] { display: none }`, so without this the Share button would stay on
+   screen through the whole reveal -- clickable seconds before renderStoryBlock
+   attaches its handler, which is exactly the dead-button bug this hiding exists
+   to prevent. Never set `display` in this file without asking what toggles
+   `hidden` on that element. */
+.share-row[hidden] {
+  display: none;
 }
 
 /* Visually secondary to .copy-btn — muted rather than accent-outlined — so

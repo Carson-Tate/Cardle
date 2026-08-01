@@ -30,14 +30,38 @@ export const BOARDS = [
   { id: 'career', label: 'Career Points', windowDays: null, career: true },
 ];
 
+// Memoised per user id for the page load — the same shape loadOwnHistory uses,
+// and the promise is cached rather than the value so concurrent callers share
+// one request.
+//
+// The leaderboard reloads on every tab click, and each friends-only load called
+// this, which is two queries of its own. Cycling the four boards with Friends
+// selected was 12 requests where the friend list is identical across all four
+// and cannot change without leaving the page.
+let friendCircleCache = null;
+
 /** The signed-in player's accepted-friend ids, plus themselves. */
-async function friendCircle(userId) {
-  const friends = await getFriends(userId).catch(() => []);
-  const ids = new Set([userId]);
-  for (const row of friends) {
-    ids.add(row.requester_id === userId ? row.addressee_id : row.requester_id);
-  }
-  return ids;
+function friendCircle(userId) {
+  if (friendCircleCache?.userId === userId) return friendCircleCache.promise;
+  const promise = getFriends(userId)
+    .catch(() => [])
+    .then((friends) => {
+      const ids = new Set([userId]);
+      for (const row of friends) {
+        ids.add(row.requester_id === userId ? row.addressee_id : row.requester_id);
+      }
+      return ids;
+    });
+  friendCircleCache = { userId, promise };
+  return promise;
+}
+
+/**
+ * Drops the memo — for after a friendship changes, so the boards do not keep
+ * showing a circle the player has just altered.
+ */
+export function invalidateFriendCircle() {
+  friendCircleCache = null;
 }
 
 /**

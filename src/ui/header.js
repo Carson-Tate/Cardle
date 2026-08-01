@@ -251,8 +251,24 @@ export function initHeader(root, { signInError = null } = {}) {
   // bundle. Hiding the link is presentation only; see admin.js.
   let isAdmin = false;
 
+  // Same concurrent-dedupe as loadProfileOnce, for the same reason: this is
+  // called from refreshProfile, which ran twice per load.
+  let adminCheckInFlight = null;
+
   async function refreshAdminLink() {
-    isAdmin = currentSession ? await isCurrentUserAdmin() : false;
+    if (!currentSession) {
+      isAdmin = false;
+      adminBtn.hidden = true;
+      return;
+    }
+    if (!adminCheckInFlight) {
+      const promise = isCurrentUserAdmin().catch(() => false);
+      adminCheckInFlight = promise;
+      promise.finally(() => {
+        if (adminCheckInFlight === promise) adminCheckInFlight = null;
+      });
+    }
+    isAdmin = await adminCheckInFlight;
     adminBtn.hidden = !isAdmin;
   }
 
@@ -319,17 +335,38 @@ export function initHeader(root, { signInError = null } = {}) {
   // is how that row gets created; it isn't optional, since without a
   // username nothing else here (the header slot, friend requests naming
   // this user) has anything to display.
+  // Dedupes CONCURRENT calls only — the promise is dropped once it settles, so a
+  // later call still refetches.
+  //
+  // Both `getSession().then(...)` and `onAuthStateChange(...)` call
+  // refreshProfile() on every page load (Supabase fires INITIAL_SESSION
+  // immediately on subscribe), so a signed-in player was making two `getProfile`
+  // requests and two `is_admin` RPCs where two would do — and again on every
+  // hourly TOKEN_REFRESHED. `loadOwnHistory` already had this shape, which is
+  // why refreshXp was unaffected and this was easy to miss.
+  //
+  // Deliberately NOT a durable cache: promptForUsername() sets `currentProfile`
+  // directly after creating a row, and a cache holding the earlier `null` would
+  // undo that and re-open the prompt.
+  let profileInFlight = null;
+  function loadProfileOnce(userId) {
+    if (!profileInFlight || profileInFlight.userId !== userId) {
+      const promise = getProfile(userId).catch(() => null);
+      profileInFlight = { userId, promise };
+      promise.finally(() => {
+        if (profileInFlight?.promise === promise) profileInFlight = null;
+      });
+    }
+    return profileInFlight.promise;
+  }
+
   async function refreshProfile() {
     if (!currentSession) {
       currentProfile = null;
       renderAuthSlot();
       return;
     }
-    try {
-      currentProfile = await getProfile(currentSession.user.id);
-    } catch {
-      currentProfile = null;
-    }
+    currentProfile = await loadProfileOnce(currentSession.user.id);
     renderAuthSlot();
     refreshAdminLink();
     if (!currentProfile && usernamePromptOpenForUserId !== currentSession.user.id) {
@@ -371,12 +408,25 @@ export function initHeader(root, { signInError = null } = {}) {
   // startup rather than rely solely on onAuthStateChange's initial firing,
   // since exactly when/whether that first callback carries the restored
   // session isn't consistent across SDK versions.
-  getSession().then((session) => {
-    currentSession = session;
-    sessionResolved = true;
-    refreshProfile();
-    refreshXp();
-  });
+  getSession()
+    .then((session) => {
+      currentSession = session;
+      sessionResolved = true;
+      refreshProfile();
+      refreshXp();
+    })
+    // WITHOUT THIS the header can strand permanently. getSession() guards the
+    // CDN import but not `client.auth.getSession()` itself, so a rejection there
+    // left `sessionResolved` false forever — and renderAuthSlot() returns early
+    // in that state, painting only the neutral placeholder. The result is a
+    // header with no name AND no Log In button, unrecoverable without a reload,
+    // plus an unhandled rejection in the console. Treating a failed lookup as
+    // "logged out" at least leaves a way back in.
+    .catch(() => {
+      currentSession = null;
+      sessionResolved = true;
+      renderAuthSlot();
+    });
 
   onAuthStateChange((session) => {
     currentSession = session;
@@ -677,8 +727,8 @@ export function initHeader(root, { signInError = null } = {}) {
                    (r) => `
                  <li class="friends-list-item">
                    <span>${r.requesterUsername ? `<a class="friends-profile-link" href="/?profile=${encodeURIComponent(r.requesterUsername)}">${r.requesterProfile ? nameplateHtml(r.requesterProfile, { custom: customCosmetics }) : escapeHtml(r.requesterUsername)}</a>` : 'Unknown'}</span>
-                   <button type="button" class="friend-accept-btn" data-id="${r.id}">Accept</button>
-                   <button type="button" class="friend-decline-btn" data-id="${r.id}">Decline</button>
+                   <button type="button" class="friend-accept-btn" data-id="${escapeHtml(r.id)}">Accept</button>
+                   <button type="button" class="friend-decline-btn" data-id="${escapeHtml(r.id)}">Decline</button>
                  </li>`,
                  )
                  .join('')}
@@ -712,7 +762,7 @@ export function initHeader(root, { signInError = null } = {}) {
                   (f) => `
                 <li class="friends-list-item">
                   <span>${f.friendUsername ? `<a class="friends-profile-link" href="/?profile=${encodeURIComponent(f.friendUsername)}">${f.friendProfile ? nameplateHtml(f.friendProfile, { custom: customCosmetics }) : escapeHtml(f.friendUsername)}</a>` : 'Unknown'}</span>
-                  <button type="button" class="friend-remove-btn" data-id="${f.id}">Remove</button>
+                  <button type="button" class="friend-remove-btn" data-id="${escapeHtml(f.id)}">Remove</button>
                 </li>`,
                 )
                 .join('')}
@@ -722,18 +772,36 @@ export function initHeader(root, { signInError = null } = {}) {
 
     wireFriendSearch(body, userId, { friends, pending, sent });
 
-    body.querySelectorAll('.friend-accept-btn').forEach((btn) => {
+    // Both wrapped, because an RLS refusal, an offline device, or a missing
+    // Supabase client otherwise became an unhandled rejection and the button
+    // simply did nothing — no message, no re-enable, no clue. The search-result
+    // handlers further down already catch and report the very same calls, so
+    // this was an inconsistency rather than a decision.
+    const withReport = (btn, action) => {
       btn.addEventListener('click', async () => {
-        await acceptFriendRequest(btn.dataset.id);
-        await renderFriendsPanel(body, userId);
+        btn.disabled = true;
+        try {
+          await action();
+          await renderFriendsPanel(body, userId);
+        } catch (error) {
+          btn.disabled = false;
+          // Re-queried: renderFriendsPanel may have replaced the node this
+          // closure captured.
+          const status = body.querySelector('.add-friend-status');
+          if (status) {
+            status.hidden = false;
+            status.textContent = error.message;
+          }
+        }
       });
+    };
+
+    body.querySelectorAll('.friend-accept-btn').forEach((btn) => {
+      withReport(btn, () => acceptFriendRequest(btn.dataset.id));
     });
 
     body.querySelectorAll('.friend-decline-btn, .friend-remove-btn, .friend-cancel-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        await removeFriendship(btn.dataset.id);
-        await renderFriendsPanel(body, userId);
-      });
+      withReport(btn, () => removeFriendship(btn.dataset.id));
     });
   }
 

@@ -19,6 +19,30 @@ import { evaluateHand } from '../src/core/hand-evaluator.js';
 
 const c = (rank, suit, rarity = null, jokerTier = null) => ({ rank, suit, rarity, jokerTier });
 
+// Double or Nothing (§4) locks in with maxDiscards = 0, so the solver returns
+// exactly one option and bestEV === worstEV. optimalDiscardBonus short-circuits
+// that case to the FULL bonus — correct when a real choice happened to have only
+// one good answer, catastrophic when there was no choice at all. board.js now
+// omits evContext entirely in that case; this pins the half core owns.
+describe('optimalDiscard when there was no decision to grade', () => {
+  const c = (rank, suit) => ({ rank, suit, rarity: null, jokerTier: null });
+  const hand = [c(14, 'S'), c(7, 'H'), c(9, 'D'), c(12, 'C'), c(13, 'S')];
+  const run = (evContext) => scoreRun({ originalHand: hand, finalHand: hand, discardedCount: 0, evContext });
+
+  test('a degenerate evContext still pays the full bonus — which is why the caller must not send one', () => {
+    assert.equal(run({ chosenEV: 100, bestEV: 100, worstEV: 100 }).skillBonuses.optimalDiscard, 200);
+  });
+
+  test('omitting evContext awards nothing for a round with no discard choice', () => {
+    assert.equal(run(undefined).skillBonuses.optimalDiscard, 0);
+  });
+
+  test('and the difference is exactly the free bonus that was being handed out', () => {
+    const free = run({ chosenEV: 100, bestEV: 100, worstEV: 100 }).total - run(undefined).total;
+    assert.equal(free, 200);
+  });
+});
+
 describe('logicalCardsFor', () => {
   const wild = (rank, suit) => ({ rank, suit, wild: true });
 

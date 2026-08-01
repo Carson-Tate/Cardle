@@ -1,0 +1,35 @@
+# Files that must NOT be uploaded to the deployment.
+#
+# vercel.json sets `outputDirectory: "."`, so the repo root IS the static root:
+# every path that exists in the repo is fetchable over HTTP unless excluded here.
+# Verified against production before this file existed —
+# https://cardle.lol/supabase/migrations/012-username-blocklist.sql returned 200
+# with the full seed list, and /DESIGN.md returned all 392 KB of internal notes.
+#
+# That mattered most for the username blocklist. src/state/auth.js argues at
+# length that the availability check must return a bare boolean so the word list
+# "cannot be recited" — and the list was sitting in a world-readable .sql file
+# the whole time. A deploy config quietly undid an RLS design.
+#
+# NOT excluded, deliberately:
+#   src/        the browser imports these modules directly — this is a no-build
+#               project, so the source IS the bundle. It is readable by design.
+#   public/     the site itself.
+#   robots.txt, sitemap.xml, vercel.json, package.json
+#               served, or needed by the platform.
+
+# Database schema, RLS policies, security-definer function bodies, and the
+# blocklist seed list.
+supabase/
+
+# Internal design notes and the numbered decision log.
+DESIGN.md
+GAME_PLAN.md
+
+# Test suites and the local dev server. Neither runs on Vercel, and the dev
+# server has no business being readable as a hint about local tooling.
+tests/
+tools/
+
+# Editor/agent scratch, in case any ever lands in the repo root.
+.claude/

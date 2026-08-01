@@ -27,9 +27,12 @@ function utcDayNumber(isoDate) {
 /**
  * @param {Array<{playDate: string, result: object}>} history - one entry per
  *   completed run, any order (sorted internally). `playDate` is a YYYY-MM-DD
- *   UTC date string, matching daily_plays.play_date.
+ *   GAME DAY string (§11l, rolls 19:00 America/New_York), matching
+ *   daily_plays.play_date — which state/daily-play.js writes with gameDayFor().
+ *   NOT a UTC date: passing one disagrees with the game day for an hour each
+ *   summer evening and reintroduces the streak bug §11l fixed.
  * @param {{today?: string}} [options] - `today` (YYYY-MM-DD) decides whether
- *   the current streak is still live; defaults to the real UTC today.
+ *   the current streak is still live; defaults to the current GAME day.
  */
 export function derivePlayerStats(history, { today } = {}) {
   const entries = (Array.isArray(history) ? history : [])

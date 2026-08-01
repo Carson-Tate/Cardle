@@ -34,6 +34,41 @@ import { formatCountdown, msUntilNextReset } from '../core/game-day.js';
 import { createCardElement } from './card-view.js';
 import { delay, animateCountUp, flipCardToBack, flipReplaceCard, flySparks, flyXpGain } from './animations.js';
 
+// Byte-identical to the copy in every other UI module (nameplate, modal,
+// mini-card, leaderboard, header, profile, admin). board.js was the ONE module
+// without it, which is how two live injection paths survived here:
+//
+//  1. The fortune word bank. Those phrases used to be repo-authored literals —
+//     a comment in this file still said so — but §11g made them admin-editable
+//     through `game_config`, and validateWordBank only checks "non-empty string
+//     with no internal period". A phrase containing `</select><img src=x
+//     onerror=...>` renders into the story picker in EVERY player's browser
+//     after every run, so one compromised admin account becomes arbitrary
+//     JavaScript in every session — including the Supabase token in
+//     localStorage. That is privilege escalation, not a cosmetic bug.
+//  2. The stored run `result`, which is player-written jsonb: the REST grant is
+//     `update (result)` on your own row with no shape validation, so
+//     `score.handResult.label` and every badge field are attacker-controlled.
+//     Only ever your OWN result renders here, so that half is self-XSS today —
+//     but it is one refactor away from being cross-user, and the cross-user
+//     renderers (profile.js, leaderboard.js) already escape.
+//
+// `&` must be replaced first or the later replacements would be double-escaped.
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+// What the Share button copies right now. Module-scope because the button is a
+// persistent node bound once (see renderStoryBlock) while the text it copies
+// changes with every re-render of the fortune.
+let currentShareText = '';
+let copyResetTimer = null;
+
 const DEFAULT_MAX_DISCARDS = 3; // overridden per day by a discardLimit-type modifier (DESIGN.md §4)
 
 // Owner request: a description + card-proof for every score-breakdown line,
@@ -720,16 +755,36 @@ export function initBoard(root) {
       return discardPosition === -1 ? card : replacements[discardPosition];
     });
 
+    // WAS THERE A DECISION TO GRADE AT ALL?
+    //
+    // Double or Nothing (§4) forces `maxDiscards = 0` and locks in immediately,
+    // so the solver returns exactly ONE option and best === worst. Every
+    // skill measure then degenerated into a free top mark:
+    //   - optimalDiscardBonus short-circuits on `bestEV === worstEV` and pays
+    //     the full OPTIMAL_DISCARD_MAX_BONUS, with a badge reading "your discard
+    //     matched the mathematically best play" — for a round with no discard.
+    //   - decisionRating compares the score against best.ev, which is the same
+    //     five cards, so it is exactly 1.0. That pins Skill at 100% and unlocks
+    //     `flawless` ("play a round with a perfect decision rating").
+    // Roughly one day in thirteen handed every player who took the wager the
+    // game's "you played perfectly" rewards for nothing.
+    //
+    // Both are suppressed rather than zeroed: the player did not play BADLY
+    // either, and a 0% Skill reading would be just as untrue as 100%. Omitting
+    // evContext drops the bonus and its badge, and a null rating is the shape
+    // progression.js and player-stats.js already treat as "not measured".
+    const hadAChoice = evByDiscard.length > 1;
+
     const score = scoreRun({
       originalHand,
       finalHand,
       discardedCount: discardIndices.length,
       discardIndices,
       maxDiscards,
-      evContext: { chosenEV, bestEV: best.ev, worstEV: worst.ev },
+      evContext: hadAChoice ? { chosenEV, bestEV: best.ev, worstEV: worst.ev } : undefined,
       modifierMultiplier: modifierScoringMultiplier(dailyModifier),
     });
-    const rating = decisionRating(score.baseScore, best.ev);
+    const rating = hadAChoice ? decisionRating(score.baseScore, best.ev) : null;
 
     const originalHandResult = evaluateHand(originalHand);
     const meters = computeMeters({
@@ -1186,7 +1241,7 @@ async function revealScore(resultPanel, result, fragments, shareBtn = null) {
   const { score, decisionRating: rating, meters, personalityId, newlyUnlocked } = result;
   resultPanel.hidden = false;
   resultPanel.innerHTML = `
-    <h2 class="hand-label">${score.handResult.label}</h2>
+    <h2 class="hand-label">${escapeHtml(score.handResult.label)}</h2>
     <div class="score-total" id="score-total">0</div>
     <div class="score-grade" id="score-grade" hidden></div>
     <ul class="score-breakdown" id="score-breakdown"></ul>
@@ -1266,9 +1321,16 @@ async function revealScore(resultPanel, result, fragments, shareBtn = null) {
 
   const ratingWrap = resultPanel.querySelector('#decision-rating');
   const ratingValueEl = resultPanel.querySelector('#decision-rating-value');
-  ratingWrap.hidden = false;
+  // HIDDEN when there was no decision to grade — a Double or Nothing round
+  // locks in with zero discards, so there is no choice to rate. It used to show
+  // "0%" in that case (the `?? 0` below), which reads as "you played terribly"
+  // for a round the player was never allowed to play. Absent is the honest
+  // presentation: not measured, rather than measured badly.
   const ratingPct = Number.isFinite(rating) ? Math.round(rating * 100) : null;
-  await animateCountUp(ratingValueEl, 0, ratingPct ?? 0, 500, { suffix: '%' });
+  ratingWrap.hidden = ratingPct === null;
+  if (ratingPct !== null) {
+    await animateCountUp(ratingValueEl, 0, ratingPct, 500, { suffix: '%' });
+  }
 
   await delay(250);
   const metersEl = resultPanel.querySelector('#meters');
@@ -1287,10 +1349,16 @@ async function revealScore(resultPanel, result, fragments, shareBtn = null) {
   storyBlock.hidden = false;
   if (shareBtn) shareBtn.hidden = false;
 
-  if (newlyUnlocked.length > 0) {
+  // Array.isArray, matching the guards progression.js and player-stats.js
+  // already apply to this same field: it can be absent on a row written by an
+  // older client, and renderAlreadyPlayed() is not inside a try — a TypeError
+  // here aborted the whole result panel mid-render, so one old row cost the
+  // player their entire result rather than just a toast.
+  const unlocked = Array.isArray(newlyUnlocked) ? newlyUnlocked : [];
+  if (unlocked.length > 0) {
     await delay(400);
     const achievementsEl = resultPanel.querySelector('#achievements-toast');
-    achievementsEl.innerHTML = achievementsHtml(newlyUnlocked);
+    achievementsEl.innerHTML = achievementsHtml(unlocked);
     achievementsEl.hidden = false;
   }
 
@@ -1527,10 +1595,10 @@ function renderStoryBlock(container, result, fragments, shareBtn = null) {
         ${STORY_SLOT_ORDER.map(
           (slot) => `
             <label class="story-slot">
-              <span class="story-slot-label">${SLOT_META[slot].label}</span>
+              <span class="story-slot-label">${escapeHtml(SLOT_META[slot].label)}</span>
               <select data-slot="${slot}">
                 ${options[slot]
-                  .map((option, index) => `<option value="${index}"${index === selections[slot] ? ' selected' : ''}>${option}</option>`)
+                  .map((option, index) => `<option value="${index}"${index === selections[slot] ? ' selected' : ''}>${escapeHtml(option)}</option>`)
                   .join('')}
               </select>
             </label>
@@ -1554,10 +1622,14 @@ function renderStoryBlock(container, result, fragments, shareBtn = null) {
   // be whichever fortune is on screen at click time.
   const copyBtn = shareBtn;
 
-  // textContent, not interpolated into the innerHTML above — the fragments are
-  // repo-authored so nothing here is untrusted, but this is also the same
-  // element the change handler below writes to, so using one mechanism for
-  // both keeps them from drifting.
+  // textContent, not interpolated into the innerHTML above. This comment used to
+  // say the fragments were "repo-authored so nothing here is untrusted" — that
+  // stopped being true when §11g made the word bank admin-editable through
+  // `game_config`, and the stale reassurance is part of why the unescaped
+  // `<option>` above went unnoticed for so long. textContent is now doing real
+  // security work, not just consistency: it is immune to markup by construction.
+  // It also remains the same element the change handler below writes to, so one
+  // mechanism for both keeps them from drifting.
   storyTextEl.textContent = story.text;
 
   container.querySelectorAll('select[data-slot]').forEach((select) => {
@@ -1584,14 +1656,38 @@ function renderStoryBlock(container, result, fragments, shareBtn = null) {
   });
 
   if (copyBtn) {
-    copyBtn.addEventListener('click', async () => {
-      await copyToClipboard(story.shareText); // reads the current `story` at click time, not bind time
-      const original = copyBtn.textContent;
-      copyBtn.textContent = '✅ Copied!';
-      setTimeout(() => {
-        copyBtn.textContent = original;
-      }, 1500);
-    });
+    // BOUND EXACTLY ONCE, with the text kept in a module-scope ref that this
+    // call updates.
+    //
+    // #result-copy-btn lives OUTSIDE #result (it shares the hint row under the
+    // cards), so unlike everything else in the panel it is never rebuilt —
+    // `resultPanel.innerHTML = ''` does not touch it. Every renderStoryBlock()
+    // call therefore stacked another listener, each closing over its own
+    // `story`. Harmless in normal play, where this runs once per page load; in
+    // test mode each admin redeal added one, so a single click fired N
+    // clipboard writes (last to resolve wins, so the clipboard could end up
+    // holding a PREVIOUS hand's text) and a later handler captured `original`
+    // as "✅ Copied!" and restored that as the permanent label.
+    //
+    // Deliberately NOT solved by cloning the node to drop its listeners: callers
+    // hold this element in `initBoard`'s closure and set `.hidden` on it AFTER
+    // this function returns, so replacing it would leave them writing to a
+    // detached node and the button would never appear at all.
+    currentShareText = story.shareText;
+    if (!copyBtn.dataset.copyBound) {
+      copyBtn.dataset.copyBound = '1';
+      // Captured at BIND time, so a second click landing inside the 1.5s window
+      // cannot immortalise "✅ Copied!" as the label.
+      const idleLabel = copyBtn.textContent;
+      copyBtn.addEventListener('click', async () => {
+        await copyToClipboard(currentShareText);
+        copyBtn.textContent = '✅ Copied!';
+        clearTimeout(copyResetTimer);
+        copyResetTimer = setTimeout(() => {
+          copyBtn.textContent = idleLabel;
+        }, 1500);
+      });
+    }
   }
 }
 
@@ -1817,11 +1913,11 @@ function badgeCardHtml(badge, logicalHand, rawHand, displayValue) {
   return `
     <div class="score-badge-header">
       ${badge.emoji ? `<span class="score-badge-icon">${badge.emoji}</span>` : ''}
-      <span class="score-badge-label">${badge.label}</span>
-      <span class="score-badge-tag ${tagClassName(badge.tag)}">${badge.tag}</span>
+      <span class="score-badge-label">${escapeHtml(badge.label)}</span>
+      <span class="score-badge-tag ${escapeHtml(tagClassName(badge.tag))}">${escapeHtml(badge.tag)}</span>
       <span class="score-badge-value">${sign}${Math.abs(displayValue).toLocaleString()}</span>
     </div>
-    ${badge.description ? `<p class="score-badge-desc">${badge.description}</p>` : ''}
+    ${badge.description ? `<p class="score-badge-desc">${escapeHtml(badge.description)}</p>` : ''}
     ${miniCardStripHtml(logicalHand, rawHand, badge.highlightIndices)}
   `;
 }
@@ -1839,7 +1935,7 @@ function staticResultHtml(result) {
   const badges = [...buildScoreBadges(score, result.finalHand, result.discardIndices)].reverse();
 
   return `
-    <h2 class="hand-label">${score.handResult.label}</h2>
+    <h2 class="hand-label">${escapeHtml(score.handResult.label)}</h2>
     <div class="score-total">${score.total.toLocaleString()}</div>
     ${(() => {
       const grade = gradeForScore(score.total);
@@ -1852,6 +1948,6 @@ function staticResultHtml(result) {
     <div class="meters">${staticMetersHtml(meters)}</div>
     <div class="personality-badge">${personalityHtml(personalityId)}</div>
     <div class="story-block" id="story-block"></div>
-    ${newlyUnlocked.length > 0 ? `<div class="achievements-toast">${achievementsHtml(newlyUnlocked)}</div>` : ''}
+    ${Array.isArray(newlyUnlocked) && newlyUnlocked.length > 0 ? `<div class="achievements-toast">${achievementsHtml(newlyUnlocked)}</div>` : ''}
   `;
 }

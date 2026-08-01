@@ -25,7 +25,19 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === '/') urlPath = '/public/index.html';
 
   const filePath = path.join(ROOT, urlPath);
-  if (!filePath.startsWith(ROOT)) {
+
+  // `ROOT + path.sep`, not bare `ROOT`. A plain prefix test passes for a SIBLING
+  // directory whose name merely starts with the project's: `/../Cardle-backup/x`
+  // resolves to `…\Desktop\Cardle-backup\x`, which "starts with" `…\Desktop\Cardle`
+  // and was served. The separator makes it a real containment check.
+  //
+  // The dotfile rule is the more important half: without it `/.git/config` and
+  // `/.env` were served to anyone who asked. This listens on every interface, so
+  // "it's only the dev server" means "anyone on the same café or office network
+  // while npm run dev is running".
+  const insideRoot = filePath.startsWith(ROOT + path.sep);
+  const hidden = urlPath.split('/').some((segment) => segment.startsWith('.'));
+  if (!insideRoot || hidden) {
     res.writeHead(403);
     res.end('Forbidden');
     return;
@@ -42,6 +54,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+// Loopback only. This serves the entire repo with no auth, so binding every
+// interface put the working tree on the local network for the duration of every
+// dev session. Nothing needs it reachable from another machine; if you ever do
+// (testing on a phone), pass the host explicitly rather than removing this.
+server.listen(PORT, process.env.HOST ?? '127.0.0.1', () => {
   console.log(`Cardle dev server running at http://localhost:${PORT}`);
 });

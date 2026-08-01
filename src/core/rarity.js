@@ -57,13 +57,6 @@ export const RARITIES = [
   { id: 'bronze', emoji: '🥉', label: 'Bronze', chance: 0.07, basePoints: 150, perRankPoints: 12, multiplier: 1.2 },
   { id: 'silver', emoji: '🥈', label: 'Silver', chance: 0.03, basePoints: 210, perRankPoints: 18, multiplier: 1.5 },
   { id: 'gold', emoji: '🥇', label: 'Gold', chance: 0.01, basePoints: 300, perRankPoints: 25, multiplier: 2.5 },
-  // Owner: "rename the joker to a wild, i think it makes more sense" —
-  // display-only rename. `id`/`jokerTier`/`hasWildJoker`/etc. stay 'joker'
-  // throughout the codebase on purpose: renaming the internal id too would
-  // touch dozens of call sites for no player-facing benefit, and would
-  // silently mismatch any already-saved result (localStorage, or a signed-in
-  // player's `daily_plays` row, §11c) that recorded `rarity: 'joker'` before
-  // this label existed.
   { id: 'diamond', emoji: '💎', label: 'Diamond', chance: 0.001, basePoints: 850, perRankPoints: 70, multiplier: 15 },
 ];
 
@@ -104,6 +97,13 @@ export const WILD_POINTS = 200;
 // renders them, and the leaderboard RE-EVALUATES them to name the hand (§11n).
 // Drop this and every historical wild silently stops being wild, quietly
 // downgrading old hands on the boards.
+// The label is "Wild" rather than "Joker" per the owner's "rename the joker to a
+// wild, i think it makes more sense" — a DISPLAY-only rename. The internal id
+// stays 'joker' on purpose: renaming it would silently mismatch every
+// already-saved result that recorded `rarity: 'joker'`. (This note used to sit
+// in the RARITIES array above, where it had been stranded next to the Diamond
+// tier after the joker entry it described was removed — so it read as
+// documentation for Diamond, which it has nothing to do with.)
 export const LEGACY_JOKER_RARITY = { id: 'joker', emoji: '🃏', label: 'Wild', chance: 0 };
 
 /**
@@ -134,8 +134,14 @@ export const TOTAL_SPECIAL_CHANCE = RARITIES.reduce((sum, tier) => sum + tier.ch
 // renormalized to their relative proportions (bronze:silver:gold:diamond =
 // 70:30:10:1) so "most Jokers are bronze-flavored, a Diamond Joker is
 // vanishingly rare" reads the same way rarity does everywhere else in the
-// game. Only ever called for a card that already rolled 'joker' on the
-// outer tier roll.
+// game.
+//
+// NEVER CALLED ANY MORE. RARITIES no longer contains a 'joker' entry, so
+// rarityForRoll() cannot return one and nothing can "roll joker on the outer
+// tier roll" — grep confirms zero call sites in src/. Kept, like deck.js's
+// dailySeed, only so the old distribution stays documented and testable for
+// reasoning about stored rows that still carry a jokerTier. Delete it if that
+// stops being useful; nothing in the shipped game depends on it.
 export function jokerTierForRoll(roll) {
   let cumulative = 0;
   for (const tier of JOKER_SUB_TIERS) {

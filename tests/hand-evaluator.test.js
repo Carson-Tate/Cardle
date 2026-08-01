@@ -344,6 +344,39 @@ describe('Three Straight / Four Straight classification', () => {
   });
 });
 
+// An Ace sits at BOTH ends of the run scan (ace-low and ace-high), so a hand can
+// contain two runs of equal length. The scorer and the proof-strip highlighter
+// are separate functions and used to break that tie in OPPOSITE directions: the
+// score took the first (low) run while contributingIndices highlighted the high
+// one. The player saw Q K A called out as the winning run and was paid for
+// A 2 3 — 473 points instead of 781.
+describe('run tie-breaking with an Ace at both ends', () => {
+  test('scores the HIGHER of two equal-length runs', () => {
+    // A-2-3 and Q-K-A are both runs of three.
+    const both = evaluateHand([c(14, 'S'), c(2, 'H'), c(3, 'D'), c(12, 'C'), c(13, 'S')]);
+    const highOnly = evaluateHand([c(14, 'S'), c(7, 'H'), c(9, 'D'), c(12, 'C'), c(13, 'S')]);
+    const lowOnly = evaluateHand([c(14, 'S'), c(2, 'H'), c(3, 'D'), c(7, 'C'), c(9, 'S')]);
+
+    assert.equal(both.id, 'THREE_STRAIGHT');
+    assert.equal(highOnly.id, 'THREE_STRAIGHT');
+    assert.equal(lowOnly.id, 'THREE_STRAIGHT');
+    // The bug: `both` used to equal `lowOnly`.
+    assert.equal(both.score, highOnly.score, 'a hand holding both runs must be paid for the higher one');
+    assert.ok(highOnly.score > lowOnly.score, 'sanity: the high run is worth more');
+  });
+
+  test('an ace-low straight is still found when it is the only run', () => {
+    const wheel = evaluateHand([c(14, 'S'), c(2, 'H'), c(3, 'D'), c(4, 'C'), c(5, 'S')]);
+    assert.equal(wheel.id, 'STRAIGHT');
+  });
+
+  test('the longest run still wins outright over a shorter higher one', () => {
+    // A-2-3-4 (four) versus K-A (two). Length must beat position.
+    const result = evaluateHand([c(14, 'S'), c(2, 'H'), c(3, 'D'), c(4, 'C'), c(13, 'S')]);
+    assert.equal(result.id, 'FOUR_STRAIGHT');
+  });
+});
+
 describe('handStrengthIndex', () => {
   test('High Card is weakest, Royal Flush is strongest', () => {
     assert.equal(handStrengthIndex('HIGH_CARD'), 0);

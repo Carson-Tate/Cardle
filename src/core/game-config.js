@@ -234,9 +234,24 @@ export function validateCustomCosmetics(raw) {
     seen.add(id);
     return id;
   };
+  // Markup characters are refused outright, matching the treatment `id`
+  // (^[A-Za-z0-9_]{1,40}$) and paint `color` (^#[0-9a-fA-F]{6}$) already get.
+  //
+  // Defense in depth, not a live hole: all six current render sites escape. But
+  // this value is admin-authored, world-readable, and reaches every nameplate,
+  // every picker chip and an `<option>` — so its safety currently rests on
+  // nobody ever adding a seventh render site that forgets. That is exactly how
+  // the original friends-list XSS happened, and how the unescaped word-bank
+  // `<option>` in board.js survived. Validate the value, then the render site
+  // cannot be the single point of failure.
+  const MARKUP_CHARS = /[<>&"']/;
   const takeLabel = (entry, kind, id) => {
     if (typeof entry?.label !== 'string' || !entry.label.trim()) {
       errors.push(`${kind} "${id}": label is required`);
+      return null;
+    }
+    if (MARKUP_CHARS.test(entry.label)) {
+      errors.push(`${kind} "${id}": label may not contain < > & " or '`);
       return null;
     }
     return entry.label.trim();
@@ -267,7 +282,11 @@ export function validateCustomCosmetics(raw) {
     const label = takeLabel(entry, 'badge', id);
     const availability = takeAvailability(entry, 'badge', id);
     if (!label || availability === null) continue;
-    const emoji = typeof entry.emoji === 'string' && entry.emoji.trim() ? entry.emoji.trim() : '⭐';
+    // Same markup rule as `label` above, and the same reasoning — this renders
+    // beside usernames. Falls back to the default rather than erroring: an emoji
+    // is decoration, so a bad one should not cost the admin the whole save.
+    const rawEmoji = typeof entry.emoji === 'string' ? entry.emoji.trim() : '';
+    const emoji = rawEmoji && !MARKUP_CHARS.test(rawEmoji) ? rawEmoji : '⭐';
     // A custom badge has no achievement behind it, so 'level' is meaningless
     // for one — it collapses to 'grant' rather than being silently unreachable.
     badges.push({

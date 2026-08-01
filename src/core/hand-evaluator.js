@@ -98,7 +98,8 @@ export function scoreForHandId(id) {
   return RANK_BY_ID[id].score;
 }
 
-// 0 = High Card ... 9 = Royal Flush, for comparing "how many ranks did it
+// 0 = High Card ... 11 = Royal Flush (HAND_RANKS.length is 12 since Three
+// and Four Straight were promoted to real categories), for comparing "how many ranks did it
 // improve by" (Long Shot bonus) rather than comparing raw point values.
 export function handStrengthIndex(id) {
   const position = HAND_RANKS.findIndex((r) => r.id === id);
@@ -213,10 +214,30 @@ function evaluateHandWithWildJokers(cards, jokerIndices) {
       }
     }
   } else {
-    for (const suitA of SUITS) {
+    // SAME PRUNING AS THE ONE-WILD BRANCH, which this used to skip — it iterated
+    // all four suits for both wilds, 52x52 = 2,704 evaluations per hand against
+    // the 169 actually needed.
+    //
+    // The argument is identical and holds for two wilds: a flush needs five
+    // cards of one suit, two wilds can supply at most two of them, so the three
+    // FIXED cards must already share a suit or no flush is reachable — which is
+    // exactly what candidateSuitsFor() tests. isFlush() (line 117) is the only
+    // place suit reaches the score at all, so when it cannot fire, suit cannot
+    // affect the result and one representative suit suffices.
+    //
+    // Behaviour-preserving, not an approximation, for the reason the one-wild
+    // comment gives: replacement requires a STRICTLY greater score and both
+    // loops already began at SUITS[0], so (SUITS[0], SUITS[0]) had already won
+    // every irrelevant-suit tie before this pruning existed.
+    //
+    // Worth it because three random cards share a suit only ~5% of the time, so
+    // ~95% of two-wild hands now cost 16x less — and since ev-solver.js
+    // evaluates the whole discard space, two-wild hands were consuming the
+    // majority of a solve despite being ~0.3% of hands.
+    for (const suitA of firstSuits) {
       for (const rankA of RANKS) {
         const a = { rank: rankA, suit: suitA };
-        for (const suitB of SUITS) {
+        for (const suitB of firstSuits) {
           for (const rankB of RANKS) {
             const b = { rank: rankB, suit: suitB };
             const candidate = evaluateFixedHand([...fixed, a, b]);
@@ -391,7 +412,23 @@ function runLengthAndHighCard(cards) {
       curLen = 0;
       curHigh = null;
     }
-    if (curLen > bestLen) {
+    // `>=`, not `>`: on a TIE, keep the LATER (higher) run.
+    //
+    // This scan walks r=1..14 and an Ace is present at BOTH ends (r=1 for
+    // ace-low, r=14), so a hand like A♠ 2♥ 3♦ Q♣ K♠ contains two runs of three:
+    // A-2-3 and Q-K-A. Keeping the first meant the hand was scored on A-2-3 —
+    // 473 points — while contributingIndices(), which uses
+    // longestConsecutiveRunIndices() and prefers the HIGH run on a tie,
+    // highlighted Q♣ K♠ A♠ as the proof. The player was shown one run and paid
+    // for a different, worse one: 473 instead of the 781 that Q-K-A is worth.
+    //
+    // It also fed hasRareCardInWinningCombo, so a rare card sitting in Q/K/A
+    // granted the whole-hand multiplier for a run the score had not come from.
+    //
+    // Aligning on "higher run wins" rather than making the proof match the low
+    // run, because the two functions must agree and the higher run is both the
+    // better hand and what the player would expect to be paid for.
+    if (curLen >= bestLen) {
       bestLen = curLen;
       bestHigh = curHigh;
     }

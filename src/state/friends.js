@@ -219,14 +219,32 @@ export async function getFriends(userId) {
     });
 }
 
-// Only the addressee can accept (schema.sql's RLS policy allows either side
-// to UPDATE the row, but accepting only makes sense from the receiving
-// side — the requester accepting their own outgoing request would be a
-// no-op bug, not a real action, so it's not exposed as a button anywhere).
+// Only the addressee can accept, and migration 014 is what actually enforces
+// that.
+//
+// The previous comment here claimed the requester accepting their own outgoing
+// request "would be a no-op bug, not a real action". That was wrong, and the
+// wrongness was load-bearing: the RLS policy allowed EITHER side to update, so
+// a requester calling this on their own sent request wrote a genuine accepted
+// friendship and appeared in the addressee's friends list uninvited. Not
+// reachable through the UI, entirely reachable through the REST endpoint, which
+// does not care what the UI offers.
+//
+// `.select()` so a refusal is LOUD. Under the tightened policy a row the caller
+// may not accept simply falls outside the USING clause, and PostgREST reports
+// that as a successful update of zero rows — silently doing nothing, which is
+// the one outcome that would look identical to success in the panel.
 export async function acceptFriendRequest(friendshipId) {
   const client = await requireSupabase();
-  const { error } = await client.from('friendships').update({ status: 'accepted' }).eq('id', friendshipId);
+  const { data, error } = await client
+    .from('friendships')
+    .update({ status: 'accepted' })
+    .eq('id', friendshipId)
+    .select('id');
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("That request couldn't be accepted — it may have been withdrawn already.");
+  }
 }
 
 // One function for every "make this friendship row go away" action —

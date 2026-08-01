@@ -60,6 +60,21 @@ function baseRun(playDate, decisionRating = 0) {
 }
 
 /** Whether the fake account is switched on. Both gates must hold. */
+/**
+ * Both gates, checked together.
+ *
+ * Called at EVERY point that returns fake identity — getSession,
+ * onAuthStateChange and getProfile in state/auth.js, fetchPlayHistory in
+ * state/profile.js, and addTestAccountXp below — so there is no path that
+ * returns the fake account without both.
+ *
+ * A note on how independent these really are: the localStorage flag is set by a
+ * checkbox that only renders when `?test` is already present, so anyone who
+ * reaches gate 1 is one click from gate 2. It is a deliberate opt-in, not a
+ * second secret. What actually makes this safe is that the fake account holds no
+ * Supabase JWT, so every real query still runs as `anon` — and test mode sets
+ * `persist: false`, so no run it produces is ever written to daily_plays.
+ */
 export function isTestAccountActive(search = typeof window === 'undefined' ? '' : window.location.search) {
   if (typeof window === 'undefined' || !new URLSearchParams(search).has('test')) return false;
   try {

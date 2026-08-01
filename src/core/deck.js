@@ -132,7 +132,7 @@ export function rarityForRoll(roll, luckMultiplier = 1) {
 // card's rarity is rolled here too, deterministically from the same seed —
 // consumed right after the shuffle, so a given seed always deals the exact
 // same hand and rarities again. Two rng() calls per card, always both consumed
-// regardless of outcome (rarity roll, then a joker-sub-tier roll) so the
+// regardless of outcome (rarity roll, then a wildness roll) so the
 // sequencing a given seed produces never depends on which cards happened to
 // land rare — only *which* rarity/tier a card gets does.
 //

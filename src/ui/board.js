@@ -343,6 +343,10 @@ export function initBoard(root) {
   // meaningless (but harmless) for every other modifier. Reset on every
   // fresh deal, same as `selected`.
   let discardRound = 1;
+  // Round one's discards, kept so submit-run can replay BOTH rounds from the
+  // seed. The stored `originalHand` on a Second Wind day is the POST-round-one
+  // hand, so without this the server could not reproduce it.
+  let roundOneDiscards = null;
   // Bumped every time startHand() fires — every in-flight animation loop
   // (dealInitialHand, revealDrawnCards, lockIn) captures the token it was
   // started with and bails the moment it no longer matches. Without this, a
@@ -494,6 +498,7 @@ export function initBoard(root) {
     drawPile = dealt.drawPile;
     selected.clear();
     discardRound = 1;
+    roundOneDiscards = null;
 
     resultPanel.hidden = true;
     resultPanel.innerHTML = '';
@@ -673,6 +678,7 @@ export function initBoard(root) {
     originalHand = roundTwoHand;
     drawPile = drawPile.slice(discardIndices.length);
     selected.clear();
+    roundOneDiscards = discardIndices;
     discardRound = 2;
     maxDiscards = dailyModifier.round2MaxDiscards;
 
@@ -834,6 +840,16 @@ export function initBoard(root) {
       meters,
       personalityId: personality.id,
       newlyUnlocked,
+      // THE SERVER'S INPUTS (§11z). submit-run ignores the score above and
+      // recomputes it from the seed; these are the only things it cannot derive.
+      // `discardRounds` is ordered because Second Wind discards twice and each
+      // round draws from what the previous one left behind.
+      discardRounds: roundOneDiscards ? [roundOneDiscards, discardIndices] : [discardIndices],
+      wagered: dailyModifier.wagered === true,
+      // Advisory, and bounded server-side: it can move the total by at most
+      // OPTIMAL_DISCARD_MAX_BONUS, which is why re-running the expensive EV
+      // solve on the server is not worth it.
+      evContext: hadAChoice ? { chosenEV, bestEV: best.ev, worstEV: worst.ev } : undefined,
       // Recorded so the profile page can faithfully replay achievement rules
       // over stored history (core/player-stats.js) — a couple of them compare
       // discardedCount against the day's cap, which wasn't recoverable from

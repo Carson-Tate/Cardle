@@ -55,11 +55,75 @@ async function fetchRow(client, userId, playDate) {
   return data;
 }
 
-// Fills in the result on a row already claimed via claimTodaySeed — the
-// schema's column-level grant only allows this one column to change here,
-// so there's no path (short of the DB itself) to rewrite `seed`.
+/**
+ * Submits a finished run for SERVER-SIDE scoring (DESIGN.md §11z).
+ *
+ * The client no longer sends a score. It sends the only thing it is actually
+ * entitled to decide — which cards were thrown away — and the `submit-run` Edge
+ * Function re-deals from the seed it has held since before the hand existed,
+ * replays those discards, and computes the total itself.
+ *
+ * WHY THE CHANGE. `result` is jsonb, and this used to write it wholesale: RLS
+ * restricted which ROW you could touch but nothing restricted what you put in
+ * it, and the leaderboard reads the score straight out of that blob. Any
+ * signed-in player could PATCH their own row with any total they liked.
+ *
+ * FALLS BACK TO THE DIRECT WRITE while the function is being rolled out, so
+ * deploy order cannot cost a player their run. Once migration 015 revokes the
+ * client's `update (result)` grant the fallback stops being possible — which is
+ * the point, and is why 015 must be run only AFTER the function is confirmed
+ * working. The fallback is what makes that ordering safe rather than a cutover.
+ *
+ * @returns {Promise<object|null>} the server's authoritative result when it
+ *   scored the run, or null when the fallback wrote the client's own. Callers
+ *   should prefer the returned value over what they computed locally.
+ */
 export async function saveTodayResultForUser(userId, result, date = new Date()) {
   const client = await requireSupabase();
+
+  try {
+    const { data, error } = await client.functions.invoke('submit-run', {
+      body: {
+        // The only free input. An ordered list of rounds, because Second Wind
+        // discards twice and each round draws from what the previous left.
+        discardRounds: result.discardRounds ?? [result.discardIndices ?? []],
+        wagered: result.wagered === true,
+        dayNumber: result.dayNumber,
+        // Advisory only, and bounded server-side: these feed display and capped
+        // terms, never the leaderboard total.
+        evContext: result.evContext,
+        decisionRating: result.decisionRating,
+        meters: result.meters,
+        personalityId: result.personalityId,
+        newlyUnlocked: result.newlyUnlocked,
+      },
+    });
+    if (error) throw error;
+    if (data?.result) return data.result;
+    // A 2xx with no result means the function ran but refused the run — treat
+    // it as a real failure rather than silently falling back to writing the
+    // client's own number, which would defeat the entire exercise.
+    throw new Error(data?.error ?? 'the run was not accepted');
+  } catch (error) {
+    // Only the "function is not deployed yet" case may fall through. Anything
+    // else — a rejected run, a 409, a 422 — must surface, or a cheat would be
+    // quietly retried through the unverified path.
+    if (!isFunctionMissing(error)) throw error;
+    console.warn('submit-run unavailable; falling back to the direct write:', error?.message ?? error);
+  }
+
   const { error } = await client.from('daily_plays').update({ result }).eq('user_id', userId).eq('play_date', isoDate(date));
   if (error) throw error;
+  return null;
+}
+
+// Distinguishes "the Edge Function has not been deployed" from "it ran and said
+// no". Supabase surfaces a missing function as a 404 from the functions gateway;
+// a network failure reaching it looks the same from here and is treated the same
+// way, since both mean the run was never actually judged.
+function isFunctionMissing(error) {
+  const status = error?.context?.status ?? error?.status;
+  if (status === 404) return true;
+  const message = String(error?.message ?? '').toLowerCase();
+  return message.includes('failed to fetch') || message.includes('failed to send');
 }

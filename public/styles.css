@@ -3535,6 +3535,77 @@ header h1 {
   line-height: 1;
 }
 
+/* Today's standing — the TOP/BOTTOM % chip (§11aa).
+   Sits directly under the grade and is deliberately QUIETER than it: smaller,
+   and with no neon rim or outer glow. The grade is the verdict on the hand; this
+   is a footnote about the company it kept, and two competing gradient pills
+   stacked would read as one confusing badge.
+
+   FILLED with white text rather than tinted text on a transparent background,
+   because the default theme is LIGHT (dark is the media query at the top of this
+   file) — a filled pill carries its own contrast and so looks identical either
+   way, whereas coloured text would have needed two sets of hues.
+
+   No `display` is set anywhere except here, and the matching `[hidden]` rule
+   below is mandatory: this element is toggled with `hidden`, and an explicit
+   `display` beats the UA's `[hidden] { display: none }`. That trap has bitten
+   this codebase seven times. */
+.score-standing {
+  /* `flex` + `width: fit-content`, NOT `inline-flex`. The grade above is
+     inline-flex, so an inline-flex chip flowed onto the SAME LINE and sat
+     overlapping it rather than beneath — caught by screenshotting the pair
+     (grade y=616 h=30, chip y=622 h=21) after a test asserting only
+     "chip.top >= grade.top" happily passed. A block-level box with fit-content
+     width takes its own line and still centres via the auto margins below. */
+  display: flex;
+  width: fit-content;
+  align-items: baseline;
+  gap: 0.45rem;
+  /* Pulled up into the grade's bottom margin so the two read as one stack. */
+  margin: -0.5rem auto 1rem;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  background: var(--standing-fill);
+  color: #ffffff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  animation: line-in 300ms ease both;
+}
+
+.score-standing[hidden] {
+  display: none;
+}
+
+/* The field size, secondary to the percentage itself. */
+.score-standing-field {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+}
+
+/* Five tiers, keyed on percentile FROM THE TOP so the colour tracks "how well
+   did I do" rather than which word (TOP/BOTTOM) the label happens to use —
+   BOTTOM 50% and TOP 50% are adjacent placings and must not look like opposites.
+   Every fill is dark enough for white text to clear 4.5:1 (computed: 5.1, 6.6,
+   7.7, 6.1, 8.0 respectively), which is the WCAG bar for text this size. */
+.score-standing--elite {
+  --standing-fill: #8a6a12;
+}
+.score-standing--strong {
+  --standing-fill: #1f6b45;
+}
+.score-standing--middling {
+  --standing-fill: #3a5570;
+}
+.score-standing--weak {
+  --standing-fill: #8a5620;
+}
+.score-standing--poor {
+  --standing-fill: #8a3535;
+}
+
 /* --- The nine tiers, ramping grey -> steel -> ember -> green -> blue -> teal ->
    gold -> violet -> prismatic as the score climbs. Fills are the vivid hue
    darkened just far enough for 4.6:1 white text (computed, not eyeballed);

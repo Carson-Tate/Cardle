@@ -30,6 +30,7 @@ import { SLOT_META } from '../story/templates.js';
 import { RARITIES, TOTAL_SPECIAL_CHANCE, WILD_CHANCE, isWild } from '../core/rarity.js';
 import { getDailyModifier, buildModifierById, modifierScoringMultiplier, MODIFIERS } from '../core/modifiers.js';
 import { gradeForScore } from '../core/score-grade.js';
+import { fetchDailyStanding } from '../state/standing.js';
 import { formatCountdown, msUntilNextReset } from '../core/game-day.js';
 import { createCardElement } from './card-view.js';
 import { delay, animateCountUp, flipCardToBack, flipReplaceCard, flySparks, flyXpGain } from './animations.js';
@@ -945,6 +946,9 @@ export function initBoard(root) {
     lockInBtn.hidden = true;
     resultPanel.hidden = false;
     resultPanel.innerHTML = staticResultHtml(result);
+    // The reload path needs it too — and this is where it earns its keep, since
+    // the field has grown since the run was locked in.
+    renderStanding(resultPanel, result.score?.total ?? 0);
     // No count-up animation on this path (it's a reload of an already-
     // finished run) — collapse immediately rather than waiting for anything.
     setupBreakdownCollapse(resultPanel.querySelector('.score-breakdown'));
@@ -1260,6 +1264,7 @@ async function revealScore(resultPanel, result, fragments, shareBtn = null) {
     <h2 class="hand-label">${escapeHtml(score.handResult.label)}</h2>
     <div class="score-total" id="score-total">0</div>
     <div class="score-grade" id="score-grade" hidden></div>
+    <div class="score-standing" id="score-standing" hidden></div>
     <ul class="score-breakdown" id="score-breakdown"></ul>
     <p class="decision-rating" id="decision-rating" hidden>Decision Rating: <strong id="decision-rating-value">0%</strong></p>
     <div class="meters" id="meters" hidden></div>
@@ -1326,9 +1331,19 @@ async function revealScore(resultPanel, result, fragments, shareBtn = null) {
   if (gradeEl) {
     const grade = gradeForScore(score.total);
     gradeEl.className = `score-grade score-grade--${grade.id}`;
-    gradeEl.innerHTML = `<span class="score-grade-emoji">${grade.emoji}</span><span class="score-grade-label">${grade.label}</span>`;
+    gradeEl.innerHTML = `<span class="score-grade-emoji">${escapeHtml(grade.emoji)}</span><span class="score-grade-label">${escapeHtml(grade.label)}</span>`;
     gradeEl.hidden = false;
   }
+
+  // Where this run placed against everyone else who played today (§11aa).
+  //
+  // Awaited but never allowed to fail the reveal: fetchDailyStanding resolves
+  // null on every error, and a null simply leaves the chip hidden. It sits
+  // beside the grade because the two answer different halves of "was that
+  // good?" — the grade rates the hand against every hand that could exist, this
+  // rates it against the ones that actually turned up today, and they routinely
+  // disagree.
+  renderStanding(resultPanel, score.total);
 
   // Owner request: collapse the breakdown down to the top badge + half of
   // the second once — and only once — the count-up reveal above is fully
@@ -1432,6 +1447,34 @@ async function revealXpGain(result) {
   } catch (error) {
     console.warn('XP animation skipped:', error);
   }
+}
+
+// Fills in the TOP/BOTTOM % chip once the standing arrives (§11aa).
+//
+// Fire-and-forget on purpose. The chip is a decoration on a result the player
+// already has, so it must never delay or break the reveal — fetchDailyStanding
+// resolves null on every failure (unrun migration, blocked CDN, logged out,
+// field too small) and a null just leaves the element hidden.
+//
+// Recomputed on every view rather than frozen at lock-in, because the field
+// grows all day: a run that led at noon is mid-table by evening, and showing the
+// stale noon figure would be a lie the player could disprove by opening the
+// leaderboard.
+function renderStanding(resultPanel, total) {
+  const el = resultPanel.querySelector('#score-standing');
+  if (!el) return;
+  fetchDailyStanding()
+    .then((standing) => {
+      if (!standing || !el.isConnected) return;
+      el.className = `score-standing score-standing--${standing.tier}`;
+      el.innerHTML = `<span class="score-standing-label">${escapeHtml(standing.label)}</span>` +
+        `<span class="score-standing-field">of ${standing.total} today</span>`;
+      el.hidden = false;
+      // `title`, not visible text: the placing is the interesting number and the
+      // exact rank is detail most players will not want in the chip itself.
+      el.setAttribute('title', `${standing.rank} of ${standing.total} runs finished today`);
+    })
+    .catch(() => {});
 }
 
 function meterRowHtml(id) {
@@ -1955,7 +1998,8 @@ function staticResultHtml(result) {
     <div class="score-total">${score.total.toLocaleString()}</div>
     ${(() => {
       const grade = gradeForScore(score.total);
-      return `<div class="score-grade score-grade--${grade.id}"><span class="score-grade-emoji">${grade.emoji}</span><span class="score-grade-label">${grade.label}</span></div>`;
+      return `<div class="score-grade score-grade--${escapeHtml(grade.id)}"><span class="score-grade-emoji">${escapeHtml(grade.emoji)}</span><span class="score-grade-label">${escapeHtml(grade.label)}</span></div>
+        <div class="score-standing" id="score-standing" hidden></div>`;
     })()}
     <ul class="score-breakdown">
       ${badges.map((badge) => `<li class="score-badge">${badgeCardHtml(badge, score.logicalFinalHand, result.finalHand, badge.value)}</li>`).join('')}

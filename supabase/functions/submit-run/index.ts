@@ -31,14 +31,37 @@ import { modifierOverrideFor, CONFIG_KEYS, validateModifierOverrides } from '../
 import { PERSONALITIES } from '../../../src/core/personality.js';
 import { ACHIEVEMENTS } from '../../../src/core/achievements.js';
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+// REFLECTS the requested headers rather than naming a fixed list.
+//
+// The first version allowed only `authorization, content-type`. supabase-js also
+// sends `apikey` and `x-client-info` on every call, so the browser refused the
+// preflight's terms and BLOCKED THE POST BEFORE SENDING IT. The function's logs
+// showed the signature exactly: four OPTIONS at 200 and not a single POST behind
+// them. The client saw a network-shaped failure, could not tell it apart from
+// "not deployed", and silently fell back to the old write path — so the whole
+// thing looked deployed and did nothing.
+//
+// Reflecting is safe here because the origin is `*` and no credentials are
+// accepted: the JWT arrives as an explicit Authorization header, not a cookie.
+// It also cannot break again when the SDK adds another header.
+function corsFor(req: Request): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers':
+      req.headers.get('Access-Control-Request-Headers') ??
+      'authorization, apikey, x-client-info, content-type, x-supabase-api-version',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    // Preflights are cached for a day, so this is one extra round trip per
+    // browser per day rather than one per submission.
+    'Access-Control-Max-Age': '86400',
+  };
+}
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+const jsonFor = (req: Request, body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsFor(req), 'Content-Type': 'application/json' },
+  });
 
 // Fields the server does NOT compute, accepted from the client but bounded so a
 // forged one cannot be worth anything. Each is display-only or feeds a capped
@@ -74,11 +97,11 @@ function sanitizeAdvisory(body: Record<string, unknown>) {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-  if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+  if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: corsFor(req) });
+  if (req.method !== 'POST') return jsonFor(req, { error: 'POST only' }, 405);
 
   const authHeader = req.headers.get('Authorization') ?? '';
-  if (!authHeader) return json({ error: 'sign-in required' }, 401);
+  if (!authHeader) return jsonFor(req, { error: 'sign-in required' }, 401);
 
   const url = Deno.env.get('SUPABASE_URL')!;
   // The caller's own JWT, used ONLY to establish who they are. It carries no
@@ -87,14 +110,14 @@ Deno.serve(async (req: Request) => {
     global: { headers: { Authorization: authHeader } },
   });
   const { data: userData, error: userError } = await asCaller.auth.getUser();
-  if (userError || !userData?.user) return json({ error: 'sign-in required' }, 401);
+  if (userError || !userData?.user) return jsonFor(req, { error: 'sign-in required' }, 401);
   const userId = userData.user.id;
 
   let body: Record<string, unknown>;
   try {
     body = await req.json();
   } catch {
-    return json({ error: 'body must be JSON' }, 400);
+    return jsonFor(req, { error: 'body must be JSON' }, 400);
   }
 
   const service = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
@@ -112,14 +135,14 @@ Deno.serve(async (req: Request) => {
     .eq('play_date', today)
     .maybeSingle();
 
-  if (rowError) return json({ error: rowError.message }, 500);
+  if (rowError) return jsonFor(req, { error: rowError.message }, 500);
   // No row means no hand was ever claimed — you cannot submit a run you were
   // never dealt.
-  if (!row) return json({ error: 'no hand claimed for today' }, 409);
+  if (!row) return jsonFor(req, { error: 'no hand claimed for today' }, 409);
   // ONE SUBMISSION PER DAY. Without this a player could keep re-submitting
   // different discard sets against the same seed until one scored well, which
   // would defeat the whole point of claiming the seed up front.
-  if (row.result !== null) return json({ error: 'today is already finished' }, 409);
+  if (row.result !== null) return jsonFor(req, { error: 'today is already finished' }, 409);
 
   // The modifier is resolved server-side too: it carries the scoring multiplier
   // AND the discard caps, so a client-supplied one would just be another way to
@@ -137,7 +160,7 @@ Deno.serve(async (req: Request) => {
     wagered: body.wagered === true,
     evContext: body.evContext,
   });
-  if (!verified.ok) return json({ error: 'run rejected', details: verified.errors }, 422);
+  if (!verified.ok) return jsonFor(req, { error: 'run rejected', details: verified.errors }, 422);
 
   const advisory = sanitizeAdvisory(body);
   const result = {
@@ -159,8 +182,8 @@ Deno.serve(async (req: Request) => {
     .eq('user_id', userId)
     .eq('play_date', today);
 
-  if (writeError) return json({ error: writeError.message }, 500);
+  if (writeError) return jsonFor(req, { error: writeError.message }, 500);
   // Returned so the client can reconcile — if its own optimistic score differs,
   // the server's is the one that counts.
-  return json({ result });
+  return jsonFor(req, { result });
 });

@@ -109,7 +109,17 @@ export async function saveTodayResultForUser(userId, result, date = new Date()) 
     // else — a rejected run, a 409, a 422 — must surface, or a cheat would be
     // quietly retried through the unverified path.
     if (!isFunctionMissing(error)) throw error;
-    console.warn('submit-run unavailable; falling back to the direct write:', error?.message ?? error);
+    // NAMES CORS EXPLICITLY, because a blocked preflight is indistinguishable
+    // from a missing function here — both surface as "failed to fetch" — and
+    // that ambiguity already cost us once: the function was deployed and
+    // working, its allow-headers list just omitted the `apikey` and
+    // `x-client-info` headers supabase-js sends, so the browser refused to send
+    // the POST at all. Everything looked fine and nothing was verified.
+    console.warn(
+      'submit-run did not run; falling back to the direct write. If the function IS deployed, ' +
+        'check its CORS Access-Control-Allow-Headers — a blocked preflight looks identical to a 404 here.',
+      error?.message ?? error,
+    );
   }
 
   const { error } = await client.from('daily_plays').update({ result }).eq('user_id', userId).eq('play_date', isoDate(date));

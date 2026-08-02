@@ -2,3 +2,9 @@
 node_modules/
 .DS_Store
 Thumbs.db
+
+# Supabase CLI scratch. Rewritten on every `supabase link`, and it records the
+# project ref, org id and backend version strings — no credentials (checked),
+# but it is local state, not source. Committed once by accident when the
+# functions deploy ran with everything staged.
+supabase/.temp/

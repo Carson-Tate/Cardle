@@ -3559,8 +3559,7 @@ header h1 {
      width takes its own line and still centres via the auto margins below. */
   display: flex;
   width: fit-content;
-  align-items: baseline;
-  gap: 0.45rem;
+  align-items: center;
   /* Pulled up into the grade's bottom margin so the two read as one stack. */
   margin: -0.5rem auto 1rem;
   padding: 0.2rem 0.7rem;
@@ -3576,13 +3575,6 @@ header h1 {
 
 .score-standing[hidden] {
   display: none;
-}
-
-/* The field size, secondary to the percentage itself. */
-.score-standing-field {
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  opacity: 0.8;
 }
 
 /* Five tiers, keyed on percentile FROM THE TOP so the colour tracks "how well

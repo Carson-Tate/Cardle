@@ -1467,11 +1467,12 @@ function renderStanding(resultPanel, total) {
     .then((standing) => {
       if (!standing || !el.isConnected) return;
       el.className = `score-standing score-standing--${standing.tier}`;
-      el.innerHTML = `<span class="score-standing-label">${escapeHtml(standing.label)}</span>` +
-        `<span class="score-standing-field">of ${standing.total} today</span>`;
+      el.innerHTML = `<span class="score-standing-label">${escapeHtml(standing.label)}</span>`;
       el.hidden = false;
-      // `title`, not visible text: the placing is the interesting number and the
-      // exact rank is detail most players will not want in the chip itself.
+      // The field size and exact placing live in the TOOLTIP, not the chip
+      // (owner: no "of xxx today"). The percentage is the whole point; the
+      // denominator is detail, and spelling it out made a one-glance badge into
+      // something to read.
       el.setAttribute('title', `${standing.rank} of ${standing.total} runs finished today`);
     })
     .catch(() => {});

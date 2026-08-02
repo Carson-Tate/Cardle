@@ -1406,7 +1406,7 @@ A full sweep of the source tree. The findings clustered, and the clusters are mo
 
 ### 11aa. Daily Standing ✅ built (owner: "i want a thing like rngdle has where it says top/bottom 49% or whatever you score that day compared to others, have it be different colors based on the number")
 
-A coloured chip under the grade: **TOP 3% · OF 40 TODAY**. The score alone cannot answer "was that any good?" — 3,157 means nothing in isolation. The grade ladder (§11i) rates the hand against every hand that *could* exist; this rates it against the hands that actually turned up, and the two routinely disagree: a modest hand can top a quiet day.
+A coloured chip under the grade: **TOP 3%**. Just the percentage — the field size and exact placing sit in the tooltip rather than the chip (owner: no "of xxx today"), because the denominator turned a one-glance badge into something to read. The score alone cannot answer "was that any good?" — 3,157 means nothing in isolation. The grade ladder (§11i) rates the hand against every hand that *could* exist; this rates it against the hands that actually turned up, and the two routinely disagree: a modest hand can top a quiet day.
 
 **Counted in Postgres, not the browser.** The obvious implementation fetches today's rows and counts locally, and it is wrong twice over: every row carries the full stored `result` (hands, bonuses, meters — several KB each, growing with the player count forever) so a browser would download the entire day's play to compute one integer, and it would hand every player a complete dump of everyone else's hands. `daily_standing()` returns two integers. `security invoker` like the leaderboard functions, since it reads exactly what the caller may already read under `daily_plays`' own policy.
 

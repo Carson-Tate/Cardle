@@ -709,7 +709,15 @@ header h1 {
 
 #controls {
   text-align: center;
-  margin-bottom: 2rem;
+  /* THIS is the gap above .board-help, not .board-help's own margin-top.
+     Adjacent siblings' vertical margins COLLAPSE to the larger of the two, so
+     while this was 2rem, shrinking the help row's margin-top changed nothing at
+     all — the visible gap stayed at 32px and only measuring the actual distance
+     between the two boxes showed it. The help row now declares no top margin,
+     so this value is the single owner of that space and there is nothing left
+     to collapse against.
+     Was 2rem, when #result followed directly and needed the separation. */
+  margin-bottom: 0.7rem;
 }
 
 #discard-hint {
@@ -4306,7 +4314,13 @@ header h1 {
   align-items: center;
   justify-content: center;
   gap: 0.5rem 0.9rem;
-  margin: 1.1rem auto 0;
+  /* Kept tight on purpose (owner: "i dont want the score to be pushed down too
+     much"). This row sits between the game and the result panel, so every pixel
+     here is a pixel the score moves further below the fold on a phone.
+     NO top margin by design: #controls above owns that gap outright, because
+     two adjacent margins collapse to the larger and a value here could only
+     ever push the row further down, never pull it up. */
+  margin: 0 auto 0.9rem;
 }
 
 .board-help-btn {
@@ -4552,9 +4566,3 @@ header h1 {
   }
 }
 
-/* Breathing room below the board's help controls (owner request) — they sat
-   flush against whatever followed, which on a finished run is the result
-   panel. */
-.board-help {
-  margin-bottom: 1.6rem;
-}

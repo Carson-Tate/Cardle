@@ -188,15 +188,8 @@ function candidateSuitsFor(others) {
 function evaluateHandWithWildJokers(cards, jokerIndices) {
   const fixed = cards.filter((_, i) => !jokerIndices.includes(i));
 
-  // Exhaustive for one or two wilds — the only counts reachable in real play
-  // (a second wild is already ~1 in 25,000 hands, a third ~1 in 12 million).
-  // Three or more is only reachable through the test-mode admin panel's
-  // custom hand builder, where a full 52^n search would hang the page, so
-  // those resolve one wild at a time instead: each pass picks the best card
-  // for one wild with the rest held at their current best guess. Not provably
-  // optimal, but bounded, and still far better than leaving them literal.
   if (jokerIndices.length > 2) {
-    return evaluateHandWithWildJokersGreedy(cards, jokerIndices, fixed);
+    return evaluateHandWithManyWildJokers(cards, jokerIndices, fixed);
   }
 
   let best = null;
@@ -254,26 +247,109 @@ function evaluateHandWithWildJokers(cards, jokerIndices) {
   return withWildMetadata(best, jokerIndices, bestSubstitution);
 }
 
-function evaluateHandWithWildJokersGreedy(cards, jokerIndices, fixed) {
-  // Start every wild at a harmless placeholder, then improve one at a time.
-  const subs = jokerIndices.map(() => ({ rank: RANKS[0], suit: SUITS[0] }));
-  let best = evaluateFixedHand([...fixed, ...subs]);
-  for (let pass = 0; pass < 2; pass++) {
-    for (let w = 0; w < subs.length; w++) {
-      for (const suit of SUITS) {
-        for (const rank of RANKS) {
-          const trial = subs.slice();
-          trial[w] = { rank, suit };
-          const candidate = evaluateFixedHand([...fixed, ...trial]);
-          if (candidate.score > best.score) {
-            best = candidate;
-            subs[w] = { rank, suit };
-          }
-        }
+// Three or more wilds. Exhaustive and provably optimal, which the hill-climbing
+// search this replaced was not (owner bug report: "i just had 5 wilds in a hand
+// and technically the best hand would be a royal flush but it counted as a four
+// of a kind of 2's instead").
+//
+// WHY GREEDY FAILED, because the shape of the failure matters more than the
+// count. It started every wild at 2♠ and improved ONE at a time, keeping a
+// change only if it raised the score. From five 2s — already a Four of a Kind —
+// every single-card step is downhill: swapping one 2 for a T♠ breaks the quads
+// and pays less, so the search refused it and stopped. A Royal Flush is five
+// simultaneous changes away, and hill-climbing cannot cross a valley. Four
+// wilds was wrong the same way and nobody had noticed: one 7♣ plus four wilds
+// scored 234,078 (quad 2s) when 7♣8♣9♣T♣J♣ is a 6,080,000 Straight Flush.
+//
+// ONE SUIT FOR ALL THE WILDS, which is what makes exhaustive affordable. Suit
+// reaches the score only through isFlush(), and a flush needs all five cards
+// alike — so giving two wilds DIFFERENT suits can only destroy a flush, never
+// build one. The single best suit is therefore the one the fixed cards already
+// share (matching them is the only way a flush is reachable at all); with no
+// fixed cards, or with two that disagree, any suit does equally and SUITS[0] is
+// as good as another. This is the same argument §11y used to prune the one- and
+// two-wild branches, carried to its conclusion.
+//
+// COMBINATIONS WITH REPETITION, not permutations. Once every wild shares a
+// suit they are interchangeable, so only the MULTISET of their ranks can change
+// the hand — `start = i` in the recursion keeps ranks non-decreasing and cuts
+// 13^5 = 371,293 orderings down to C(17,5) = 6,188 distinct hands. For three
+// wilds it is 455 and for four, 1,820. The early exit does the rest: Royal
+// Flush is flat at its HAND_RANKS value with no rank scaling (§3u), so it is a
+// hard ceiling — reaching it means nothing else needs trying, and the ranks are
+// walked HIGH-first so the hands that hit that ceiling come up almost
+// immediately.
+// MEMOISED, because ev-solver.js is what makes the cost real. A single solve
+// evaluates the whole discard space — tens of thousands of hands — and a
+// four-wild hand is the expensive case (the ceiling exit almost never fires,
+// since it needs the one fixed card to be T–A of the right suit). Uncached,
+// one solve on an all-wild hand took 54 SECONDS.
+//
+// The key is the wild COUNT plus the fixed cards, because that is genuinely all
+// the search reads: evaluateFixedHand returns {id, label, score, tiebreak} with
+// no positional data, and `tiebreak` is built from sorted ranks — so where the
+// wilds sat in the original hand cannot change the answer, only which hand
+// positions the substitutions are then keyed to (withWildMetadata's job, after
+// the cache). The hit rate is what makes it worth it: discarding one card from
+// a five-wild hand leaves four wilds plus ONE drawn card, so the thousands of
+// draws the solver walks collapse onto at most 47 distinct searches.
+//
+// Ranks/suits are stored raw and rebuilt per call rather than handing every
+// caller the same card objects — the allocation is nothing next to the search,
+// and a shared mutable substitution leaking into scoring.js is the kind of
+// aliasing bug that would surface as one player's hand rewriting another's.
+const MAX_HAND_SCORE = RANK_BY_ID.ROYAL_FLUSH.score;
+const MANY_WILD_CACHE_LIMIT = 20_000;
+const manyWildCache = new Map();
+
+function searchManyWilds(fixed, n) {
+  const fixedSuits = new Set(fixed.map((card) => card.suit));
+  const wildSuit = fixedSuits.size === 1 ? [...fixedSuits][0] : SUITS[0];
+  const descendingRanks = [...RANKS].sort((a, b) => b - a);
+
+  const chosen = new Array(n);
+  let best = null;
+  let bestRanks = null;
+
+  const search = (position, start) => {
+    if (best?.score === MAX_HAND_SCORE) return; // ceiling reached — nothing can beat it
+    if (position === n) {
+      const candidate = evaluateFixedHand([...fixed, ...chosen.map((rank) => ({ rank, suit: wildSuit }))]);
+      if (!best || candidate.score > best.score) {
+        best = candidate;
+        bestRanks = chosen.slice();
       }
+      return;
     }
+    for (let i = start; i < descendingRanks.length; i++) {
+      chosen[position] = descendingRanks[i];
+      search(position + 1, i);
+    }
+  };
+  search(0, 0);
+
+  return { best, ranks: bestRanks, suit: wildSuit };
+}
+
+function evaluateHandWithManyWildJokers(cards, jokerIndices, fixed) {
+  const n = jokerIndices.length;
+  const key = `${n}|${fixed
+    .map((card) => `${card.rank}${card.suit}`)
+    .sort()
+    .join(',')}`;
+
+  let entry = manyWildCache.get(key);
+  if (!entry) {
+    entry = searchManyWilds(fixed, n);
+    // Cleared wholesale rather than evicted one at a time: this only fills at
+    // all during a solve, the entries are all equally likely to recur, and an
+    // LRU's bookkeeping would cost more than the occasional recompute.
+    if (manyWildCache.size >= MANY_WILD_CACHE_LIMIT) manyWildCache.clear();
+    manyWildCache.set(key, entry);
   }
-  return withWildMetadata(best, jokerIndices, subs);
+
+  const substitution = entry.ranks.map((rank) => ({ rank, suit: entry.suit }));
+  return withWildMetadata(entry.best, jokerIndices, substitution);
 }
 
 function withWildMetadata(best, jokerIndices, substitutions) {

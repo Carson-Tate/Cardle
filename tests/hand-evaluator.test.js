@@ -133,12 +133,100 @@ describe('evaluateHand with a wild joker', () => {
     assert.deepEqual(wildSubstitution, wildSubstitutions[0]);
   });
 
-  test('a hand of nothing but wilds resolves without hanging (admin hand builder)', () => {
+  // This test used to assert only that five wilds TERMINATED and scored above
+  // zero, and it passed happily while the answer was a Four of a Kind of 2s
+  // (owner bug report). Asserting termination is not asserting correctness —
+  // the hill-climbing search it was written against always terminated, it just
+  // stopped at the first local maximum it found.
+  test('five wilds make the best hand that exists, not merely a hand', () => {
     const hand = [j(2, 'H'), j(3, 'D'), j(4, 'S'), j(5, 'C'), j(6, 'H')];
     const start = Date.now();
     const result = evaluateHand(hand);
     assert.ok(Date.now() - start < 1000, 'five wilds should not take a full second');
-    assert.ok(result.score > 0);
+    assert.equal(result.id, 'ROYAL_FLUSH');
+    assert.equal(result.score, scoreForHandId('ROYAL_FLUSH'));
+  });
+
+  // Four wilds was wrong the same way and nobody had reported it: the hand
+  // below scored 234,078 (quad 2s) when 7♣ 8♣ 9♣ 10♣ J♣ is a Straight Flush
+  // worth 6,080,000. Kept as its own case because the reported bug was five
+  // wilds, and fixing only what was reported would have left this.
+  test('four wilds plus one card build the best hand that card allows', () => {
+    const result = evaluateHand([j(2, 'H'), j(3, 'D'), j(4, 'S'), j(5, 'C'), c(7, 'C')]);
+    assert.equal(result.id, 'STRAIGHT_FLUSH');
+    // Every wild must take the fixed card's suit, or there is no flush at all.
+    for (const sub of Object.values(result.wildSubstitutions)) assert.equal(sub.suit, 'C');
+  });
+
+  test('four wilds plus a high card reach a Royal Flush', () => {
+    assert.equal(evaluateHand([j(), j(), j(), j(), c(13, 'S')]).id, 'ROYAL_FLUSH');
+  });
+
+  test('three wilds plus two suited cards in range make a Straight Flush', () => {
+    // 9♠ and J♠ — 10♠ Q♠ K♠ completes 9-10-J-Q-K.
+    const result = evaluateHand([j(), j(), j(), c(9, 'S'), c(11, 'S')]);
+    assert.equal(result.id, 'STRAIGHT_FLUSH');
+    assert.equal(result.score, evaluateHand([c(9, 'S'), c(10, 'S'), c(11, 'S'), c(12, 'S'), c(13, 'S')]).score);
+  });
+
+  // THE INVARIANT THAT WOULD HAVE CAUGHT BOTH BUGS AT ONCE. A wild can always
+  // impersonate the card it replaced, so turning any card wild can never make
+  // the best available hand worse. The old search broke this badly and visibly:
+  // three wilds scored 331,513 and four scored 234,078.
+  test('making one more card wild never lowers the score', () => {
+    const suits = ['S', 'H', 'D', 'C'];
+    for (let trial = 0; trial < 300; trial++) {
+      const hand = [];
+      const used = new Set();
+      while (hand.length < 5) {
+        const rank = 2 + Math.floor(Math.random() * 13);
+        const suit = suits[Math.floor(Math.random() * 4)];
+        if (used.has(`${rank}${suit}`)) continue;
+        used.add(`${rank}${suit}`);
+        hand.push(c(rank, suit));
+      }
+      let previous = evaluateHand(hand).score;
+      for (let n = 1; n <= 5; n++) {
+        const withWilds = hand.map((card, i) => (i < n ? { ...card, rarity: 'joker' } : card));
+        const score = evaluateHand(withWilds).score;
+        assert.ok(
+          score >= previous,
+          `${n} wild(s) scored ${score}, fewer wilds scored ${previous} — hand ${JSON.stringify(hand)}`,
+        );
+        previous = score;
+      }
+    }
+  });
+
+  // Differential against a brute force that tries all 52³ substitutions with no
+  // pruning and no cleverness. Three wilds is the largest count a naive
+  // reference can cover in test time, and it is enough to prove the suit
+  // collapse and the combinations-with-repetition search agree with exhaustion.
+  test('three wilds match an unpruned 52³ brute force', () => {
+    const suits = ['S', 'H', 'D', 'C'];
+    const ranks = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+    const fixtures = [
+      [c(9, 'S'), c(11, 'S')], // suited and in straight range
+      [c(9, 'S'), c(11, 'H')], // mixed suits, no flush reachable
+      [c(7, 'C'), c(7, 'D')], // a pair to build on
+      [c(2, 'C'), c(14, 'D')], // far apart, no straight
+      [c(10, 'H'), c(13, 'H')], // suited, royal range
+    ];
+
+    for (const fixed of fixtures) {
+      let brute = -1;
+      for (const r1 of ranks)
+        for (const s1 of suits)
+          for (const r2 of ranks)
+            for (const s2 of suits)
+              for (const r3 of ranks)
+                for (const s3 of suits) {
+                  const score = evaluateHand([...fixed, c(r1, s1), c(r2, s2), c(r3, s3)]).score;
+                  if (score > brute) brute = score;
+                }
+      const actual = evaluateHand([j(), j(), j(), ...fixed]).score;
+      assert.equal(actual, brute, `fixed ${JSON.stringify(fixed)}`);
+    }
   });
 
   // candidateSuitsFor() prunes the wild's suit loop to a single suit when the

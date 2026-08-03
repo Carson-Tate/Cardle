@@ -3,6 +3,36 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Google Ads tag (gtag.js) — conversion tracking and remarketing for the
+       cardle.lol ad campaign (DESIGN.md §11ae).
+
+       PLACED AFTER <meta charset>, not literally first. Google's instructions
+       say "immediately after the <head> element"; the charset declaration has
+       to land inside the first 1024 bytes or the browser may guess an encoding
+       and re-parse, and this snippet is ~350 bytes of that budget. Sitting
+       second costs nothing — the tag is `async`, so what matters is that the
+       request starts early, not that it is byte zero.
+
+       IT WILL UNDERCOUNT, and that is expected rather than a fault to chase.
+       googletagmanager.com is on every ad blocker's default list, so a
+       meaningful share of real visits will never report. §11w already learned
+       this the hard way when a blocker ate the Share button. Treat the numbers
+       as a floor and a trend, not a headcount.
+
+       This is the project's SECOND external dependency, after esm.sh's Supabase
+       SDK. Worth stating plainly because the rule elsewhere has been to avoid
+       them (§11v declined a remote image for the support link on exactly these
+       grounds). It is `async` and nothing waits on it, so the game still loads
+       and plays normally when it is blocked, throttled or down. -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=AW-18368131357"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'AW-18368131357');
+  </script>
+
   <title>Cardle — Daily Poker Puzzle</title>
   <!-- Tab icon (DESIGN.md §11i). Declared explicitly because the site is served
        from /public via a rewrite, so a browser's default /favicon.ico probe

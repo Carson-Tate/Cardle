@@ -33,6 +33,8 @@ import { gradeForScore } from '../core/score-grade.js';
 import { fetchDailyStanding } from '../state/standing.js';
 import { formatCountdown, msUntilNextReset } from '../core/game-day.js';
 import { createCardElement } from './card-view.js';
+import { openHandGuide } from './hand-guide.js';
+import { openHelpModal } from './header.js';
 // The badge-card breakdown moved out when the leaderboard and profile gained
 // click-to-view hands (§11ab) — three surfaces render it now, and a second
 // copy would drift the first time a bonus was added.
@@ -153,6 +155,35 @@ const DEAL_IN_STAGGER_MS = 90;
 const TURN_OVER_STAGGER_MS = 90;
 const TURN_OVER_SETTLE_MS = 220;
 
+// Owner: "i sent it to a random person and he had trouble what the game was
+// about." The rules have always been one click away behind the header's ?
+// icon, and a first-timer does not click it — so the first visit ever gets How
+// to Play opened for them (§11af).
+//
+// ONCE, EVER, and the flag is written BEFORE the modal opens rather than after
+// it is dismissed: a player who closes the tab mid-read has still seen it, and
+// the alternative reopens it every single visit until they happen to click the
+// × — which turns a helpful introduction into something to get rid of.
+//
+// Wrapped because localStorage throws outright in some privacy modes. Failing
+// to show an intro must never stop the game loading, so every branch here fails
+// toward "just play".
+const INTRO_SEEN_KEY = 'cardle-intro-seen';
+
+function showIntroOnFirstVisit() {
+  let seen = true;
+  try {
+    seen = window.localStorage.getItem(INTRO_SEEN_KEY) !== null;
+    if (!seen) window.localStorage.setItem(INTRO_SEEN_KEY, '1');
+  } catch {
+    return; // storage blocked — skip rather than show it on every load
+  }
+  if (seen) return;
+  // After the board paints, so the modal opens over a game rather than a blank
+  // page — the point is to explain what they are looking at.
+  requestAnimationFrame(() => openHelpModal());
+}
+
 export function initBoard(root) {
   const handRow = root.querySelector('#hand-row');
   const drawBtn = root.querySelector('#draw-btn');
@@ -170,6 +201,13 @@ export function initBoard(root) {
   const wagerPrompt = root.querySelector('#wager-prompt');
   const wagerYesBtn = root.querySelector('#wager-yes-btn');
   const wagerNoBtn = root.querySelector('#wager-no-btn');
+
+  // Beginner help, beside the cards (§11af). Both stay available for the whole
+  // run — "does a Flush beat a Straight" is asked mid-decision, not only before
+  // drawing.
+  root.querySelector('#hand-guide-btn')?.addEventListener('click', () => openHandGuide());
+  root.querySelector('#how-to-play-btn')?.addEventListener('click', () => openHelpModal());
+  showIntroOnFirstVisit();
 
   const today = new Date();
   const config = resolveRunConfig();

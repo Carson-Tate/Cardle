@@ -6,6 +6,7 @@
 // into it.
 
 import { openModal } from './modal.js';
+import { openHandGuide } from './hand-guide.js';
 import { nameplateHtml, PROFILE_UPDATED_EVENT, LOGIN_REQUESTED_EVENT } from './nameplate.js';
 import {
   getSession,
@@ -52,6 +53,97 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+// MODULE-LEVEL AND EXPORTED, not a closure inside initHeader (§11af). The
+// board needs to open this too — a first-time visitor gets it automatically
+// and there is a permanent link beside the cards — and it reads no header
+// state, so there was nothing keeping it in there but where it was written.
+export function openHelpModal() {
+  openModal({
+    title: 'How to Play',
+    className: 'modal--help',
+    render: (body) => {
+      // DELIBERATELY SHORT (owner: "it looks very intimidating when it first
+      // opens up"). This is the first thing a brand-new player sees, now that
+      // it opens itself on a first visit (§11af) — so it has to answer "what am
+      // I doing" in a few seconds, not teach the whole game. Wilds, rare cards
+      // and the daily modifier were three more sections of prose; they are all
+      // still here, collapsed, for the player who has already started and wants
+      // to know why something on screen is glowing.
+      body.innerHTML = `
+        <p class="help-goal">
+          <!-- Carries the SAME false premise the meta description did (§11w's
+               fix): "the only thing that separates a good day from a bad one
+               is which cards you throw away" was written when every player was
+               dealt identical cards from a date-derived seed. Hands are random
+               per player now (state/persistence.js), so the deal separates
+               days too — and claiming otherwise tells a player who drew badly
+               that they simply played worse. -->
+          <strong>Build the best five-card poker hand you can.</strong> One hand a day, dealt just
+          for you.
+        </p>
+        <ol class="help-steps">
+          <li>You get <strong>5 cards</strong>.</li>
+          <li>Tap any you don't want, then <strong>Lock In</strong> to swap them for new ones.</li>
+          <li>Your final hand is scored — better hands score more.</li>
+          <li>Come back tomorrow for a new one.</li>
+        </ol>
+
+        <p class="help-poker-note">
+          <strong>Don't know poker?</strong> You don't need to — the game always scores your cards
+          as the best hand they can make. This lists them all, best to worst:
+        </p>
+        <button type="button" class="board-help-btn help-guide-cta" id="help-open-guide">🃏 See Hand Rankings</button>
+
+        <details class="help-details">
+          <summary>🃏 What's a Wild card?</summary>
+          <div class="help-details-body">
+            <p>
+              A <strong>Wild</strong> turns up every handful of days and
+              <strong>becomes whatever card your hand needs most</strong>.
+            </p>
+            <p>
+              Hold <span class="help-cards">9♠ 9♥ 4♦ 🃏</span> and it plays as a third nine — Three
+              of a Kind. Hold four hearts and a Wild, and it becomes a heart to finish the Flush.
+              You never choose: it always counts as whatever scores you the most.
+            </p>
+          </div>
+        </details>
+
+        <details class="help-details">
+          <summary>✨ Why is that card glowing?</summary>
+          <div class="help-details-body">
+            <p>
+              Any card can turn up <strong>rare</strong> — 🥉 Bronze, 🥈 Silver, 🥇 Gold or
+              💎 Diamond. Rare cards pay bonus points just for being in your hand, and if one is
+              genuinely <em>part of your winning hand</em>, it multiplies your
+              <strong>entire score</strong>.
+            </p>
+            <p class="help-note">
+              Wild and rare are independent, so a card can be both: a 🥇 Gold Wild completes your
+              hand <em>and</em> multiplies what it's worth.
+            </p>
+          </div>
+        </details>
+
+        <details class="help-details">
+          <summary>🧭 What's the Daily Modifier?</summary>
+          <div class="help-details-body">
+            <p>
+              A rule that changes every day, shown above your hand. It might give you more or fewer
+              discards, multiply certain hands, or add a twist to the usual flow — so the best play
+              today isn't always the best play tomorrow.
+            </p>
+          </div>
+        </details>
+      `;
+      // Opened from here as well as from the board, because somebody reading
+      // the rules cold is exactly who needs it — and they should not have to
+      // close this, find a button, and lose their place to get it.
+      body.querySelector('#help-open-guide')?.addEventListener('click', () => openHandGuide());
+    },
+  });
 }
 
 /**
@@ -510,60 +602,6 @@ export function initHeader(root, { signInError = null } = {}) {
     if (event.target.closest('button')) setMenuOpen(false);
   });
 
-  function openHelpModal() {
-    openModal({
-      title: 'How to Play',
-      render: (body) => {
-        body.innerHTML = `
-          <p class="help-goal">
-            <!-- Carries the SAME false premise the meta description did (§11w's
-                 fix): "the only thing that separates a good day from a bad one
-                 is which cards you throw away" was written when every player was
-                 dealt identical cards from a date-derived seed. Hands are random
-                 per player now (state/persistence.js), so the deal separates
-                 days too — and claiming otherwise tells a player who drew badly
-                 that they simply played worse. -->
-            <strong>The goal:</strong> build the strongest five-card poker hand you can, once a day,
-            and score as many points as possible. Your five cards are dealt just for you — what you
-            do with them is the part that's up to you.
-          </p>
-          <ol class="help-steps">
-            <li>You get one hand of 5 cards, once per day.</li>
-            <li>Every day has a <strong>Daily Modifier</strong> (shown above your hand) that changes the rules for the day — more or fewer discards, bonus multipliers, or a special twist on the usual flow.</li>
-            <li>Click a card to mark it for discard — the <strong>Discard X/Y</strong> button shows how many you've marked.</li>
-            <li>Click it to lock in. Marked cards get swapped for new ones, and your final 5-card poker hand is scored — stronger hands score more.</li>
-            <li>That's it for today — come back tomorrow for a new hand.</li>
-          </ol>
-
-          <h3 class="help-heading">🃏 Wild cards</h3>
-          <p>
-            A <strong>Wild</strong> is an ordinary card that turns up now and then — slightly rarer
-            than any single normal card, so expect one every handful of days. It pays a small bonus
-            just for showing up, but the real reason you want it is that it
-            <strong>becomes whatever card your hand needs most</strong>.
-          </p>
-          <p>
-            Hold <span class="help-cards">9♠ 9♥ 4♦ 🃏</span> and the Wild plays as a third nine —
-            Three of a Kind. Hold four hearts and a Wild, and it plays as a heart to finish the
-            Flush. You never choose: it's always counted as whichever card scores you the most.
-          </p>
-
-          <h3 class="help-heading">✨ Rare cards</h3>
-          <p>
-            Separately, any card can turn up <strong>rare</strong> — 🥉 Bronze, 🥈 Silver, 🥇 Gold or
-            💎 Diamond. Rare cards pay bonus points just for being in your hand, and if a rare card
-            is genuinely <em>part of your winning hand</em> (not just sitting alongside it), it
-            multiplies your <strong>entire score</strong> — the rarer the card, the bigger the
-            multiplier.
-          </p>
-          <p class="help-note">
-            The two are independent, so a card can be both: a 🥇 Gold Wild completes your hand
-            <em>and</em> multiplies what it's worth.
-          </p>
-        `;
-      },
-    });
-  }
 
   // ONE WAY IN: tap the emailed button. The link lands back on our own domain
   // carrying a `token_hash`, which main.js redeems before anything renders —

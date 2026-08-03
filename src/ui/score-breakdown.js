@@ -37,7 +37,10 @@ const SKILL_META = {
   cleanFinish: { emoji: '💎', label: 'Clean Finish', description: 'Every card in the final hand contributes — no dead weight.' },
 };
 
-const HAND_DESCRIPTIONS = {
+// Exported for the hand-rankings cheat sheet (§11af), which teaches exactly what
+// these badges remind you of. One wording for "what is a Full House", not two
+// that drift.
+export const HAND_DESCRIPTIONS = {
   HIGH_CARD: 'No pair, no flush, no straight.',
   PAIR: 'Two cards share a rank.',
   THREE_STRAIGHT: 'Three ranks in a row, no pair.',

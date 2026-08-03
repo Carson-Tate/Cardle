@@ -195,6 +195,23 @@
         </div>
         <button id="lock-in-btn" hidden>Lock In</button>
       </div>
+
+      <!-- Beginner help, sitting with the GAME rather than in the header
+           (DESIGN.md §11af). Owner: "i sent it to a random person and he had
+           trouble what the game was about" — the header's ? icon has always
+           explained it, and a first-timer does not click it. These are next to
+           the cards, which is where both questions are actually asked:
+           "what am I looking at" before drawing, and "does a Flush beat a
+           Straight" with three cards already marked.
+
+           Not `hidden`: unlike almost everything else in #controls these are
+           useful before, during and after a run, so there is no state in which
+           they should disappear. -->
+      <div class="board-help">
+        <button type="button" id="hand-guide-btn" class="board-help-btn">🃏 Hand Rankings</button>
+        <button type="button" id="how-to-play-btn" class="board-help-link">New here? How to play</button>
+      </div>
+
       <section id="result" class="result" hidden></section>
     </main>
   </div>

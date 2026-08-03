@@ -4292,3 +4292,269 @@ header h1 {
 .hand-modal-rating strong {
   color: var(--text);
 }
+
+/* ---------------------------------------------------------------------------
+   Beginner help: hand-rankings cheat sheet + board entry points (§11af)
+   --------------------------------------------------------------------------- */
+
+/* Sits under the game's own controls, always visible. Deliberately quiet —
+   these are for the player who needs them, and must not compete with Draw or
+   Lock In for attention. */
+.board-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem 0.9rem;
+  margin: 1.1rem auto 0;
+}
+
+.board-help-btn {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.board-help-btn:hover,
+.board-help-btn:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+/* A link, not a second button: two pills side by side read as two equal
+   choices, and "how to play" is the lesser of the two for anyone past their
+   first run. */
+.board-help-link {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.3rem 0.2rem;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.board-help-link:hover,
+.board-help-link:focus-visible {
+  color: var(--accent);
+}
+
+/* The cheat sheet itself. Wider than the default modal because each row is a
+   name, a score and five example cards on one line. */
+.modal--guide {
+  max-width: 500px;
+}
+
+.guide-intro,
+.guide-note {
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  margin: 0 0 0.9rem;
+}
+
+.guide-note {
+  margin: 0.9rem 0 0;
+}
+
+.guide-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.guide-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+}
+
+.guide-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.guide-rank {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  min-width: 1.2rem;
+}
+
+.guide-name {
+  font-weight: 800;
+  font-size: 0.94rem;
+}
+
+/* Three Straight and Four Straight are Cardle's own (§3w) and sit above hands a
+   poker player expects to beat them. Marked rather than silently reordered. */
+.guide-tag {
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--selected) 22%, transparent);
+  color: color-mix(in srgb, var(--selected) 70%, var(--text));
+  white-space: nowrap;
+}
+
+/* Flexible track LAST, so a 54,800,000 can't steal width from the name — the
+   same rule §11n's leaderboard alignment landed on. */
+.guide-score {
+  margin-left: auto;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.guide-desc {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.guide-cards {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  margin-top: 0.45rem;
+}
+
+@media (max-width: 420px) {
+  /* The score wraps under the name rather than squeezing it — a name that
+     ellipsises is useless on a page whose whole job is naming things. */
+  .guide-row-head {
+    flex-wrap: wrap;
+  }
+  .guide-score {
+    margin-left: 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   How to Play: wider, shorter, with the deep detail collapsed (§11af pass 2)
+   --------------------------------------------------------------------------- */
+
+/* Wider than the default 420px (owner request). The steps read as short lines
+   rather than a wall of wrapped text at this width, which is most of why the
+   original felt intimidating — the copy got shorter, but the measure did too. */
+.modal--help {
+  max-width: 540px;
+}
+
+.modal--help .help-goal {
+  font-size: 1rem;
+  margin: 0 0 0.9rem;
+}
+
+.modal--help .help-steps {
+  margin: 0 0 1.1rem;
+  padding-left: 1.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.help-poker-note {
+  margin: 0 0 0.7rem;
+  font-size: 0.88rem;
+}
+
+.help-guide-cta {
+  display: block;
+  width: fit-content;
+  margin: 0 0 1.1rem;
+}
+
+/* A native <details>, not a scripted accordion: it is keyboard accessible and
+   screen-reader-correct for free, it works before any JS runs, and there is no
+   open/closed state for this module to get out of step with the DOM. */
+.help-details {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-top: 0.5rem;
+  background: var(--bg);
+}
+
+.help-details summary {
+  cursor: pointer;
+  padding: 0.65rem 0.85rem;
+  font-weight: 700;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 10px;
+  /* Both are needed to drop the default triangle: `list-style` covers Firefox
+     and modern Chrome, the pseudo-element covers older WebKit. `display: flex`
+     on its own also suppresses it, which is why the custom chevron below is the
+     only marker that survives. */
+  list-style: none;
+}
+
+.help-details summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A filled triangle, not '⌄'. That codepoint has no glyph in the default
+   Windows UI font and fell back to something indistinguishable from a lowercase
+   v — which reads as a typo rather than a control. */
+.help-details summary::after {
+  content: '▾';
+  margin-left: auto;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: var(--text-muted);
+  transition: transform 160ms ease;
+}
+
+.help-details[open] summary::after {
+  transform: rotate(180deg);
+}
+
+.help-details summary:hover,
+.help-details summary:focus-visible {
+  color: var(--accent);
+}
+
+.help-details-body {
+  padding: 0 0.85rem 0.8rem;
+}
+
+.help-details-body p {
+  margin: 0 0 0.6rem;
+  font-size: 0.86rem;
+}
+
+.help-details-body p:last-child {
+  margin-bottom: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .help-details summary::after {
+    transition: none;
+  }
+}
+
+/* Breathing room below the board's help controls (owner request) — they sat
+   flush against whatever followed, which on a finished run is the result
+   panel. */
+.board-help {
+  margin-bottom: 1.6rem;
+}

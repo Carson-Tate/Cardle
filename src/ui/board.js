@@ -524,6 +524,15 @@ export function initBoard(root) {
     lockInBtn.hidden = false;
     updateLockInButtonLabel();
     lockInBtn.disabled = true; // re-enabled once the deal animation finishes
+
+    // Start solving now, while the deal animates and the player thinks (§4h).
+    // Skipped on the two modifiers whose discard rules are not settled yet:
+    // Second Wind reassigns maxDiscards when round 2 begins, and Double or
+    // Nothing when the wager resolves. Both call beginSolve() themselves at the
+    // point their rules become final — solving here first would only queue work
+    // the key check must then throw away, delaying the solve that counts.
+    if (!isTwoRoundModifier() && !isPeekWagerModifier()) beginSolve();
+
     dealInitialHand(myToken);
   }
 
@@ -700,6 +709,10 @@ export function initBoard(root) {
     discardRound = 2;
     maxDiscards = dailyModifier.round2MaxDiscards;
 
+    // Round 2's hand and cap are the ones lockIn will actually solve against,
+    // so this is where a Second Wind day's head start begins (§4h).
+    beginSolve();
+
     renderHand(originalHand, selected);
     lockInBtn.disabled = false;
     updateLockInButtonLabel();
@@ -734,12 +747,67 @@ export function initBoard(root) {
       await lockIn(originalHand, drawPile, new Set());
     } else {
       maxDiscards = DEFAULT_MAX_DISCARDS;
+      // Declining the wager makes this an ordinary round, and the cap is now
+      // final — so the head start begins here (§4h). The other branch goes
+      // straight to lockIn with maxDiscards = 0, where the solve is one option
+      // and finishes instantly anyway.
+      beginSolve();
       renderHand(originalHand, selected);
       lockInBtn.hidden = false;
       lockInBtn.disabled = false;
       updateLockInButtonLabel();
       updateHint();
     }
+  }
+
+  // ── THE EV SOLVE STARTS AT THE DEAL, NOT AT LOCK-IN (§4h) ─────────────────
+  //
+  // solveOptimalDiscard computes the EV of EVERY legal discard option, so it
+  // depends only on the hand, the draw pile and the day's discard rules — never
+  // on which cards the player picks. It was nonetheless started at lock-in,
+  // which meant the whole exhaustive solve happened while the player sat
+  // watching "Crunching the odds…", and then the reveal ran. Starting it the
+  // moment the hand exists overlaps it with the seconds they spend deciding,
+  // which is time already being spent.
+  //
+  // The cache is KEYED ON ITS OWN INPUTS rather than on a token, so a stale
+  // solve cannot be served: `maxDiscards` is reassigned mid-run by Second Wind
+  // (round 2) and by both Double or Nothing outcomes, and any of those changes
+  // the key. A miss just solves at lock-in, exactly as before.
+  let pendingSolve = null;
+
+  function solveInputs() {
+    return {
+      hand: originalHand,
+      pile: drawPile,
+      options: {
+        minDiscards: 0,
+        maxDiscards,
+        excludedIndices: lockedIndex !== null ? [lockedIndex] : [],
+      },
+      key: [
+        maxDiscards,
+        lockedIndex ?? '-',
+        drawPile.length,
+        originalHand.map((c) => `${c.rank}${c.suit}${c.wild ? 'w' : ''}${c.rarity ?? ''}`).join(','),
+      ].join('|'),
+    };
+  }
+
+  // Fire-and-forget. Rejections are swallowed into null so an unavailable
+  // worker costs the head start and nothing else — lockIn re-solves on a miss.
+  function beginSolve() {
+    const { hand, pile, options, key } = solveInputs();
+    pendingSolve = { key, promise: solveOptimalDiscardAsync(hand, pile, options).catch(() => null) };
+  }
+
+  async function solveForCurrentHand() {
+    const { hand, pile, options, key } = solveInputs();
+    if (pendingSolve?.key === key) {
+      const early = await pendingSolve.promise;
+      if (early) return early;
+    }
+    return solveOptimalDiscardAsync(hand, pile, options);
   }
 
   async function lockIn(originalHand, drawPile, selectedSet) {
@@ -764,11 +832,8 @@ export function initBoard(root) {
     // actually animate. Falls back to solving inline if workers are
     // unavailable, which is exactly the old behavior.
     lockInBtn.textContent = 'Crunching the odds…';
-    const { evByDiscard, best, worst } = await solveOptimalDiscardAsync(originalHand, drawPile, {
-      minDiscards: 0,
-      maxDiscards,
-      excludedIndices: lockedIndex !== null ? [lockedIndex] : [],
-    });
+    // Usually already finished — it was started at the deal (see beginSolve).
+    const { evByDiscard, best, worst } = await solveForCurrentHand();
     if (token !== dealToken) return; // a redeal fired while the solve was in flight
     const chosenEV = findEV(evByDiscard, discardIndices);
     lockInBtn.hidden = true; // solve is done; nothing left for this button to do today

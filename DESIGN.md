@@ -411,6 +411,24 @@ Measured by observing how long each card kept the pulse class and whether it was
 
 ---
 
+### 4h. The EV Solve Starts at the Deal, Not at Lock-In ✅ built (owner: "only thing im concerned about is multi wild hands")
+
+**First, the numbers, because the reported worry turned out to be aimed at the rarest case.** Over 20,000 real deals: 0 wilds 91%, one wild 8.7%, two wilds 0.32%, **three or more: 0 of 20,000**. The 45-second figure quoted earlier was an all-wild hand from the admin panel's custom builder — reachable only in test mode. The cost that actually reaches players is the ONE-wild hand, at roughly one run in eleven.
+
+Measured end to end in a browser, from clicking Lock In to the score appearing: 0 wilds 2.9s, one wild 6.5s, two 11.5s, three 16.2s. The main thread never stalled beyond 64ms in any of them — the Web Worker (§11 solver.js) is doing its job, so nothing freezes. It is a WAIT, not a jank problem, and no amount of shaving the evaluator was going to fix six seconds.
+
+**The solve never depended on the player's choice.** `solveOptimalDiscard` computes the EV of *every* legal discard option — that is what makes a Decision Rating possible — so its only inputs are the hand, the draw pile and the day's discard rules. All three exist the moment the cards are dealt. It was nonetheless started at lock-in, so the entire exhaustive solve ran while the player watched "Crunching the odds…", after they had already spent several seconds deciding. Starting it at the deal overlaps it with thinking time that is being spent anyway.
+
+**The cache is keyed on its own inputs, not on a token.** `maxDiscards` is reassigned mid-run in three places — Second Wind entering round 2, and both Double or Nothing outcomes — and `lockedIndex` varies by day. A token would say "same deal"; only the inputs say "same question". A key built from the hand, the pile length, the cap and the locked index makes serving a stale solve structurally impossible: a miss simply solves at lock-in, exactly as before.
+
+**Two modifiers deliberately do not start early.** Second Wind and Double or Nothing both have provisional discard rules at deal time, so an early solve would queue work the key check must then discard — and worse, occupy the single worker while the solve that counts waits behind it. Each calls `beginSolve()` at the point its rules become final instead.
+
+**Result** (lock-in → score): one wild 6.5s → **3.9s**, two wilds 11.5s → **5.5s**, three 16.2s → **9.0s** with an instant lock-in. Give the player five seconds of real thinking time and two wilds drops again to 3.4s and three to 5.4s, while one wild is already fully covered by the deal animation alone. The remaining ~2.4s is the reveal animation, which is deliberate and unchanged.
+
+**Verified as a behaviour-preserving change, not just a faster one** (§11y's rule): the same eight seeds — spanning 0, 1, 2 and 3 wilds — played with identical discards before and after, comparing hand name, final total, Decision Rating and badge count read only after the reveal completes. Byte-identical on every one. The first attempt at that check read the panel mid-cascade and compared count-up values of "20" and "3"; waiting on the share button, which `renderStoryBlock` un-hides only when the whole reveal is done, is what made the comparison mean anything.
+
+---
+
 ### 3z. Multi-Wild Hands Were Solved by Hill-Climbing ✅ fixed (owner bug report: "i just had 5 wilds in a hand and technically the best hand would be a royal flush but it counted as a four of a kind of 2's instead")
 
 Exactly right, and worse than reported. Hands with three or more wilds used a greedy search: start every wild at 2♠, then improve ONE at a time, keeping a change only when it raised the score. From five 2s — already a Four of a Kind — every single-card step is downhill. Swapping one 2 for a T♠ breaks the quads and pays less, so the search refused it and stopped. A Royal Flush is five *simultaneous* changes away, and hill-climbing cannot cross a valley.
@@ -1802,6 +1820,13 @@ None of the three touch `dailySeed`/`hashSeed` or persistence — every redeal d
     - **World-readable is a property of the table, not of the data you put in it.** `game_config` was the obvious home and would have published the list. A table with RLS on and no policies at all is unreachable over REST for everyone, which is what a private list actually needs.
     - **Normalisation is where the difficulty lives, and it cuts both ways.** Folding leetspeak and padding is what stops `5L_UR`; the same folding is what makes `ASS` match `CLASSIC`. Tiered matching plus an explicit allow list is the price of folding aggressively.
     - **If two rules mean different things, they need different normalisation.** One folder served both tiers and was wrong for each in opposite directions — too aggressive for `exact` (`Card_le_99` became `CARDLE`), and the naive fix would have been too lax for `substring` (`N9I9G9G9E9R` stops matching). "Does this appear in here" and "is the whole thing this" are not the same question.
+89. **The EV solve starts at the deal** (§4h).
+    - **Measure the frequency before optimising the cost.** The worry was three-plus wilds; that is 0 of 20,000 real deals and only reachable from the admin panel. The case worth fixing was ONE wild, at one run in eleven.
+    - **A wait is not a freeze, and they need different fixes.** The worker already kept the main thread under 64ms. No amount of shaving the evaluator addresses six seconds of waiting; moving *when* it happens does.
+    - **Work that does not depend on the user's input can start before they give it.** The solve prices every discard option, so the player's choice was never an input — it was just being started at the moment they made one.
+    - **Key a cache on its inputs, not on a token.** A token answers "same deal"; only the inputs answer "same question", and `maxDiscards` is reassigned mid-run by three different modifiers.
+    - **A shared worker makes speculative work a cost, not a freebie.** Solving early on a day whose rules are still provisional would block the solve that counts behind it.
+    - **A differential test has to wait for the thing to finish.** The first run compared count-up values mid-animation and would have called any two runs identical.
 88. **Even Money was called that on odd days** (§4g).
     - **When a value becomes parameterised, every string that describes it has to follow.** `describe()` was updated for both halves and `label` was left behind, so the name contradicted the rule underneath it half the time.
     - **A parameterised thing has two labels, not one.** The resolved day names its actual half; the unresolved entry a picker lists cannot, and must not pretend to.

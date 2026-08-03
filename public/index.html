@@ -29,9 +29,18 @@
   <meta name="description"
         content="Cardle is a free daily poker puzzle. One five-card hand a day, dealt just for you — choose your discards, build the best hand you can, and see how your score stacks up." />
   <!-- The site is served from /public via a rewrite, so the same content is
-       reachable at more than one path. This names the one that counts and stops
-       the query-param routes (?profile, ?leaderboard, ?admin) being indexed as
-       separate thin pages competing with the homepage. -->
+       reachable at more than one path. This names the one that counts.
+
+       It is the HOMEPAGE's canonical and no longer every route's. It used to be
+       both, to stop the query-param routes (?profile, ?leaderboard, ?admin)
+       being indexed as thin pages competing with the homepage — correct while
+       they rendered an empty shell to anyone without a session, and no longer
+       true since §11ac opened the boards and profiles to signed-out visitors.
+       src/ui/page-meta.js now rewrites this per route (§11ad), and points the
+       ones that should stay out of the index at `noindex` instead, which is the
+       precise tool for that job. This static value is what a crawler's first,
+       pre-JavaScript pass sees, so it must stay correct FOR THE HOMEPAGE — that
+       is the page most first passes are actually looking at. -->
   <link rel="canonical" href="https://cardle.lol/" />
 
   <meta property="og:type" content="website" />

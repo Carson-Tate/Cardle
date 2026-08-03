@@ -15,4 +15,14 @@ Allow: /
 # it is a public file that advertises the path to anyone who reads it.
 Disallow: /?admin
 
+# Player profiles. Not secret — they render publicly since §11ac and are meant
+# to be shared — but kept out of the index: there is one per player and the set
+# is unbounded, which is the thin-content pattern that drags a small site's
+# whole quality signal down, they go stale within a day, and publishing real
+# players' usernames and stats to search results is a decision about people
+# other than the site owner. Also carries `noindex` from src/ui/page-meta.js,
+# which is the half that actually binds — a Disallow only asks a crawler not to
+# FETCH, and a URL it never fetched can still be indexed from inbound links.
+Disallow: /?profile
+
 Sitemap: https://cardle.lol/sitemap.xml

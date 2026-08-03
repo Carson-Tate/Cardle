@@ -3,6 +3,7 @@ import { initHeader } from './header.js';
 import { initProfile } from './profile.js';
 import { initAdmin } from './admin.js';
 import { initLeaderboard } from './leaderboard.js';
+import { setPageMeta, metaForRoute } from './page-meta.js';
 import { verifySignInLink } from '../state/auth.js';
 import { SupabaseUnavailableError } from '../state/supabase-client.js';
 
@@ -70,6 +71,13 @@ initHeader(document, { signInError });
 // database decides what any of its actions may do; see admin.js and
 // supabase/migrations/004-admin-foundation.sql.
 const app = document.getElementById('app');
+
+// Title, canonical and robots for this route (§11ad), set BEFORE the page
+// renders so the tab is never briefly labelled with the wrong page. Derived
+// from the same `params` the routing below reads, so a route can't gain a
+// branch here without gaining one there.
+setPageMeta(metaForRoute(params));
+
 if (params.has('admin')) {
   initAdmin(app);
 } else if (params.has('leaderboard')) {

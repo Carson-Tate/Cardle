@@ -127,3 +127,34 @@ export async function fetchLeaderboard({ boardId, friendsOnly = false, userId = 
 
   return rows.slice(0, BOARD_SIZE);
 }
+
+/**
+ * The full stored result for one finished run, for the click-to-view hand
+ * breakdown (§11ab).
+ *
+ * A SEPARATE request rather than a wider `leaderboard_top_scores`, because the
+ * blob is several KB — hands, every bonus, meters — and widening the RPC would
+ * put 25 of them on the wire on every tab switch to serve the at most one a
+ * player actually opens. That is the same arithmetic that put the daily
+ * standing in Postgres instead of the browser (§11aa), pointing the other way:
+ * there the answer was to send less, here it is to send it later.
+ *
+ * Readable under migration 006's `result is not null` policy, which is exactly
+ * the set of rows this can be asked for — an unfinished row is invisible here
+ * for the same reason it is invisible everywhere else.
+ *
+ * @returns {Promise<object|null>} null when the row is gone or unreadable.
+ */
+export async function fetchRunResult(userId, playDate) {
+  if (!userId || !playDate) return null;
+  const client = await requireSupabase();
+  const { data, error } = await client
+    .from('daily_plays')
+    .select('result')
+    .eq('user_id', userId)
+    .eq('play_date', playDate)
+    .not('result', 'is', null)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.result ?? null;
+}

@@ -41,12 +41,35 @@ function baseRun(playDate, decisionRating = 0) {
     playDate,
     result: {
       dayNumber: 0,
+      // The COMPLETE scoreRun() shape, all of it zeroed. It was previously
+      // trimmed to the handful of fields the profile's stat tiles read, which
+      // was enough until hands became clickable (§11ab) — buildScoreBadges
+      // walks every component, so a trimmed blob threw and the breakdown modal
+      // opened empty. §11u's rule: a dev tool has to actually move.
+      //
+      // Every value here is 0 or empty, so the XP arithmetic this file is built
+      // around is untouched — a base run is still worth exactly
+      // XP_BASE_PER_RUN, which is what lets a target XP be hit on the nose.
       score: {
         handResult: { id: 'HIGH_CARD', label: 'High Card' },
         total: 0,
         baseScore: 0,
+        additiveTotal: 0,
         extraBonuses: [],
         rarity: { items: [] },
+        discardedRarity: { items: [] },
+        flavor: { total: 0, aceIndices: [], faceIndices: [] },
+        suitSynergy: { total: 0, suit: null, count: 0, indices: [] },
+        cardValue: { total: 0 },
+        skillBonuses: {},
+        handSynergyBonus: 0,
+        multiplier: 1,
+        handContributingIndices: [],
+        runIndices: [],
+        pity: 0,
+        modifierBonusAmount: 0,
+        modifierMultiplier: 1,
+        logicalFinalHand: [],
       },
       decisionRating,
       personalityId: 'shark',

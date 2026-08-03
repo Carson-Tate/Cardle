@@ -28,6 +28,7 @@ import { PERSONALITIES } from '../core/personality.js';
 import { HAND_RANKS } from '../core/hand-evaluator.js';
 import { gradeForScore } from '../core/score-grade.js';
 import { openModal } from './modal.js';
+import { openHandBreakdown } from './hand-modal.js';
 
 // How many hands the recent-hands list shows at a time (owner request: "your
 // 5 recent hands (with a load more to show more)").
@@ -272,6 +273,32 @@ export async function initProfile(root, { username: viewingUsername = null } = {
         root.querySelector('#recent-hands')?.scrollIntoView({ block: 'end', behavior: 'smooth' });
       });
     }
+
+    // The Best Hand plaque opens the same modal. `stats.bestRun` IS a stored
+    // result blob, so nothing needs fetching or reshaping here either.
+    root.querySelector('#profile-best-run')?.addEventListener('click', () => {
+      if (!stats.bestRun) return;
+      openHandBreakdown({
+        title: profile?.username ?? 'Hand Breakdown',
+        playDate: stats.bestRunDate,
+        result: stats.bestRun,
+      });
+    });
+
+    // Click a past hand to see how it scored (§11ab). No fetch — this page
+    // already holds every row's full result, so the entry is read straight out
+    // of `history` by the index the row was rendered with.
+    root.querySelectorAll('.hand-history-open').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const entry = history[Number(btn.dataset.handIndex)];
+        if (!entry) return;
+        openHandBreakdown({
+          title: profile?.username ?? 'Hand Breakdown',
+          playDate: entry.playDate,
+          result: entry.result,
+        });
+      });
+    });
 
     root.querySelector('#profile-signout')?.addEventListener('click', async (event) => {
       const button = event.currentTarget;
@@ -589,8 +616,15 @@ function bestRunHtml(stats) {
   const grade = gradeForScore(stats.bestScore);
   const handLabel = run.score?.handResult?.label ?? null;
 
+  // A <button> for the same reason the history rows are (§11ab): this plaque is
+  // one destination, so the whole thing is the control. Unlike a leaderboard row
+  // it contains no nested link, which is why the entire plaque can be the target
+  // rather than just the cards.
   return `
-    <div class="best-run">
+    <button type="button" class="best-run best-run--open" id="profile-best-run"
+      aria-label="${escapeHtml(
+        `See how this ${handLabel ?? 'hand'} scored — ${stats.bestScore.toLocaleString()} points, your best`,
+      )}">
       <div class="best-run-head">
         <span class="best-run-label">Best Hand</span>
         ${handLabel ? `<span class="best-run-hand-name">${escapeHtml(handLabel)}</span>` : ''}
@@ -603,7 +637,7 @@ function bestRunHtml(stats) {
         </span>
         <span class="best-run-grade">${grade.emoji} ${escapeHtml(grade.label)}</span>
       </div>
-    </div>
+    </button>
   `;
 }
 
@@ -663,12 +697,21 @@ function recentHandsHtml(history, shown) {
   `;
 }
 
-function handRowHtml({ playDate, result }) {
+// `index` addresses the row back into `history` on click (§11ab). The whole
+// result blob is already in memory here — the profile fetches complete rows,
+// unlike the leaderboard — so opening a breakdown costs no request at all.
+// Passing the index rather than serialising the blob into a data attribute
+// keeps several KB of JSON out of the markup for every row on the page.
+function handRowHtml({ playDate, result }, index) {
   const score = result.score ?? {};
   const cards = Array.isArray(result.finalHand) ? result.finalHand : [];
   const personality = PERSONALITIES.find((p) => p.id === result.personalityId);
   return `
     <li class="hand-history-row">
+      <button type="button" class="hand-history-open" data-hand-index="${index}"
+        aria-label="${escapeHtml(
+          `See how this ${score.handResult?.label ?? 'hand'} scored — ${(score.total ?? 0).toLocaleString()} points on ${formatDate(playDate)}`,
+        )}">
       <div class="hand-history-meta">
         <span class="hand-history-date">${escapeHtml(formatDate(playDate))}</span>
         <span class="hand-history-label">${escapeHtml(score.handResult?.label ?? 'Unknown hand')}</span>
@@ -686,6 +729,7 @@ function handRowHtml({ playDate, result }) {
           personality ? ` · ${escapeHtml(personality.emoji)} ${escapeHtml(personality.label)}` : ''
         }</span>
       </div>
+      </button>
     </li>
   `;
 }

@@ -4,7 +4,7 @@
 // friends-only toggle, per the owner's spec.
 
 import { getSession } from '../state/auth.js';
-import { BOARDS, BOARD_SIZE, fetchLeaderboard } from '../state/leaderboard.js';
+import { BOARDS, BOARD_SIZE, fetchLeaderboard, fetchRunResult } from '../state/leaderboard.js';
 import { loadGameConfig } from '../state/game-config.js';
 import { getDailyModifier, modifierBoardIsAscending } from '../core/modifiers.js';
 import { modifierOverrideFor } from '../core/game-config.js';
@@ -12,6 +12,7 @@ import { nameplateHtml } from './nameplate.js';
 import { gradeForScore } from '../core/score-grade.js';
 import { evaluateHand } from '../core/hand-evaluator.js';
 import { miniHandHtml } from './mini-card.js';
+import { openHandBreakdown } from './hand-modal.js';
 
 function escapeHtml(value) {
   return String(value)
@@ -176,6 +177,20 @@ export async function initLeaderboard(root) {
         load();
       });
     });
+
+    // The board only holds a score and a final hand, so the breakdown is a
+    // second request — handed to the modal as a loader rather than awaited
+    // here, so the panel opens on the click instead of after the round trip.
+    root.querySelectorAll('.lb-hand--open').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const { runUser, runDate, runName } = btn.dataset;
+        openHandBreakdown({
+          title: runName || 'Hand Breakdown',
+          playDate: runDate,
+          loadResult: () => fetchRunResult(runUser, runDate),
+        });
+      });
+    });
   }
 
   function rowsHtml(board) {
@@ -209,7 +224,7 @@ export async function initLeaderboard(root) {
               <a class="lb-name" href="/?profile=${encodeURIComponent(row.profile.username ?? '')}">
                 ${nameplateHtml(row.profile, { custom })}
               </a>
-              <span class="lb-hand">${
+              ${
                 // The winning hand, on the score boards only — a career total
                 // isn't a single hand. The wrapper is always present so the grid
                 // column exists on every row and the hands line up (owner
@@ -219,11 +234,27 @@ export async function initLeaderboard(root) {
                 // this same wrapper rather than in a column of its own: it has to
                 // stay glued to the hand it describes, and a separate track would
                 // reserve width on the career board, which has no hand at all.
-                row.finalHand
-                  ? `${handName ? `<span class="lb-hand-name">${escapeHtml(handName)}</span>` : ''}
-                     <span class="lb-hand-cards">${miniHandHtml(row.finalHand)}</span>`
-                  : ''
-              }</span>
+                //
+                // A real <button> when the hand can be opened (§11ab), not a
+                // click handler on the <li>: the row already contains the profile
+                // anchor, so making the whole row activatable would have nested
+                // two different destinations in one control and left the keyboard
+                // with no way to choose. The hand IS the affordance — you click
+                // the thing you want to look at. Career rows keep the plain span
+                // so the grid track still exists but nothing invites a click.
+                row.finalHand && row.playDate
+                  ? `<button type="button" class="lb-hand lb-hand--open"
+                       data-run-user="${escapeHtml(row.userId)}"
+                       data-run-date="${escapeHtml(row.playDate)}"
+                       data-run-name="${escapeHtml(row.profile.username ?? '')}"
+                       aria-label="${escapeHtml(
+                         `See how ${row.profile.username ?? 'this player'}'s ${handName ?? 'hand'} scored — ${row.value.toLocaleString()} points`,
+                       )}">
+                       ${handName ? `<span class="lb-hand-name">${escapeHtml(handName)}</span>` : ''}
+                       <span class="lb-hand-cards">${miniHandHtml(row.finalHand)}</span>
+                     </button>`
+                  : `<span class="lb-hand"></span>`
+              }
               <span class="lb-value-cell">
                 <span class="lb-value${gradeClass ? ` grade-pill${gradeClass}` : ''}"${gradeTip}${
                   grade ? ` aria-label="${escapeHtml(`${grade.label}: ${row.value.toLocaleString()} points`)}"` : ''
@@ -243,7 +274,9 @@ export async function initLeaderboard(root) {
           // "Top 25" is a lie on an Upside Down day — these are the 25 LOWEST
           // scores, which is the whole point of the board.
           ascending && board.id === 'daily' ? 'Bottom' : 'Top'
-        } ${BOARD_SIZE}${friendsOnly ? ' among you and your friends' : ''}. Click any name to see their profile.
+        } ${BOARD_SIZE}${friendsOnly ? ' among you and your friends' : ''}. Click any name to see their profile${
+          board.career ? '' : ', or a hand to see how it scored'
+        }.
       </p>
     `;
   }

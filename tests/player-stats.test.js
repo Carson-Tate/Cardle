@@ -221,3 +221,35 @@ describe('achievements', () => {
     assert.ok(splitAchievements().every((a) => a.unlocked === false));
   });
 });
+
+// bestRunDate exists so the profile's clickable Best Hand plaque (§11ab) can
+// label its modal without matching the result object back against `history` by
+// reference. The failure it guards against is the assignment drifting outside
+// the `if`, which would leave it tracking the LATEST run instead of the best —
+// a bug that is invisible whenever the best run happens to be the most recent.
+describe('bestRunDate', () => {
+  test('names the day of the highest-scoring run, not the latest one', () => {
+    const s = derivePlayerStats([
+      entry('2026-07-01', { total: 100 }),
+      entry('2026-07-02', { total: 9000 }),
+      entry('2026-07-03', { total: 250 }),
+    ]);
+    assert.equal(s.bestScore, 9000);
+    assert.equal(s.bestRunDate, '2026-07-02');
+    assert.equal(s.bestRun.score.total, 9000);
+  });
+
+  test('is null when there is no history to have a best run in', () => {
+    assert.equal(derivePlayerStats([]).bestRunDate, null);
+  });
+
+  test('stays with the first run to reach the top score, matching bestRun', () => {
+    const s = derivePlayerStats([
+      entry('2026-07-01', { total: 500 }),
+      entry('2026-07-02', { total: 500 }),
+    ]);
+    // `>` not `>=`, so a later tie does not steal the title — and the date must
+    // agree with whichever run bestRun actually kept.
+    assert.equal(s.bestRunDate, '2026-07-01');
+  });
+});

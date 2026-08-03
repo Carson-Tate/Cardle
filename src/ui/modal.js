@@ -25,12 +25,17 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-export function openModal({ title, render, onClose }) {
+// `className` (optional) is added to the `.modal` box itself, for callers
+// whose content doesn't fit the default 420px — the hand breakdown (§11ab)
+// renders badge cards that are sized for the result panel. A modifier class
+// rather than a width option, so the sizing stays in the stylesheet with
+// every other measurement instead of being a number passed through JS.
+export function openModal({ title, render, onClose, className = '' }) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   const safeTitle = title ? escapeHtml(title) : '';
   overlay.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true" aria-label="${safeTitle}">
+    <div class="modal ${escapeHtml(className)}" role="dialog" aria-modal="true" aria-label="${safeTitle}">
       <button type="button" class="modal-close" aria-label="Close">&times;</button>
       ${title ? `<h2 class="modal-title">${safeTitle}</h2>` : ''}
       <div class="modal-body"></div>

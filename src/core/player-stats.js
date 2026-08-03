@@ -46,6 +46,7 @@ export function derivePlayerStats(history, { today } = {}) {
     totalPoints: 0,
     bestScore: 0,
     bestRun: null,
+    bestRunDate: null,
     bestHandId: null,
     bestHandLabel: null,
     totalXp: 0,
@@ -77,7 +78,7 @@ export function derivePlayerStats(history, { today } = {}) {
   let gamesPlayedSoFar = 0;
   let bestScoreSoFar = 0;
 
-  for (const { result } of entries) {
+  for (const { playDate, result } of entries) {
     const score = result.score ?? {};
     const total = Number.isFinite(score.total) ? score.total : 0;
 
@@ -89,6 +90,12 @@ export function derivePlayerStats(history, { today } = {}) {
     if (total > stats.bestScore) {
       stats.bestScore = total;
       stats.bestRun = result;
+      // Carried alongside the run rather than looked up again by the caller.
+      // The profile's Best Hand plaque is clickable (§11ab) and its modal wants
+      // a date; finding it by matching the result object back against `history`
+      // would work only because they are the same reference, which is exactly
+      // the kind of thing that silently stops being true.
+      stats.bestRunDate = playDate ?? null;
     }
 
     const handId = score.handResult?.id;

@@ -52,22 +52,18 @@ function handLabel(cards) {
 export async function initLeaderboard(root) {
   root.innerHTML = `<p class="profile-loading">Loading leaderboards…</p>`;
 
+  // No session required (§11ac, owner: "i want to make the leaderboard public
+  // and able to see without signing in"). This used to refuse outright, and the
+  // comment here said that was the policy's decision rather than a UI
+  // preference — true at the time, and migration 017 is what changed it. The
+  // boards now read through `security definer` functions an anonymous caller
+  // may execute.
+  //
+  // `userId` stays null when signed out. It is only used to highlight your own
+  // row and to filter to friends, and both of those degrade to "not applicable"
+  // rather than needing a branch.
   const session = await getSession().catch(() => null);
-  if (!session) {
-    // The boards read other players' scores, which the database only permits for
-    // a signed-in caller (§11j) — so this isn't a UI preference, it's what the
-    // policy allows.
-    root.innerHTML = `
-      <div class="profile-empty">
-        <h2>Leaderboards</h2>
-        <p>Log in to see how you stack up.</p>
-        <a class="profile-back-link" href="/">← Back to today's hand</a>
-      </div>
-    `;
-    return;
-  }
-
-  const userId = session.user.id;
+  const userId = session?.user?.id ?? null;
   const gameConfig = await loadGameConfig();
   const custom = gameConfig?.customCosmetics ?? null;
 
@@ -124,7 +120,14 @@ export async function initLeaderboard(root) {
                never said what unticking it actually showed. Marked up as a
                radiogroup because the two are mutually exclusive - aria-pressed
                buttons would announce as two independent toggles. -->
-          <div class="lb-scope" role="radiogroup" aria-label="Leaderboard scope">
+          ${
+            // Hidden entirely when signed out rather than shown disabled: with
+            // no account there is no friends list for it to describe, so a
+            // Global/Friends pair would be a control whose two states are the
+            // same board. The rest of the page is fully usable, which is the
+            // case for dropping it rather than explaining it (§11ac).
+            userId
+              ? `<div class="lb-scope" role="radiogroup" aria-label="Leaderboard scope">
             ${[
               { id: 'global', label: 'Global', on: !friendsOnly },
               { id: 'friends', label: 'Friends', on: friendsOnly },
@@ -136,7 +139,9 @@ export async function initLeaderboard(root) {
                 data-scope="${opt.id}">${opt.label}</button>`,
               )
               .join('')}
-          </div>
+          </div>`
+              : ''
+          }
         </div>
 
         ${
@@ -155,7 +160,14 @@ export async function initLeaderboard(root) {
             loading
               ? '<p class="profile-loading">Loading…</p>'
               : loadError
-                ? `<p class="profile-error">Couldn't load this board: ${escapeHtml(loadError.message ?? loadError)}</p>`
+                ? // A signed-out visitor sees the friendly version, because the
+                  // one failure they can actually hit is migration 017 not
+                  // having been run yet — in which case the boards are exactly
+                  // as private as they were before, and a raw Postgres error
+                  // would be both alarming and useless to them.
+                  userId
+                  ? `<p class="profile-error">Couldn't load this board: ${escapeHtml(loadError.message ?? loadError)}</p>`
+                  : `<p class="profile-empty-note">These boards aren't public yet. <strong>Log in</strong> to see how you stack up.</p>`
                 : rowsHtml(board)
           }
         </section>
@@ -276,7 +288,13 @@ export async function initLeaderboard(root) {
           ascending && board.id === 'daily' ? 'Bottom' : 'Top'
         } ${BOARD_SIZE}${friendsOnly ? ' among you and your friends' : ''}. Click any name to see their profile${
           board.career ? '' : ', or a hand to see how it scored'
-        }.
+        }.${
+          // The one thing a signed-out visitor genuinely cannot do here is
+          // appear on the board, so that is what the nudge says — rather than
+          // "log in for more", which would imply the page is withholding
+          // something it isn't.
+          userId ? '' : ' Play a hand and log in to get your own name up here.'
+        }
       </p>
     `;
   }

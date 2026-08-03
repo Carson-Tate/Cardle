@@ -28,6 +28,22 @@ export function announceProfileUpdate(profileRow) {
   window.dispatchEvent(new CustomEvent(PROFILE_UPDATED_EVENT, { detail: profileRow }));
 }
 
+// Asking the header to open its login modal (§11ac). The modal is a closure
+// inside initHeader — it owns the session, the username prompt and the
+// duplicate guard (§11b), none of which should get a second implementation just
+// so another page can offer a login button. This file is where the two already
+// meet, so the event lives here rather than adding an import in either
+// direction.
+export const LOGIN_REQUESTED_EVENT = 'cardle:login-requested';
+
+/**
+ * Ask the header to open the login modal.
+ * @param {string} [hint] - why the caller needs an account, shown in the modal.
+ */
+export function requestLogin(hint) {
+  window.dispatchEvent(new CustomEvent(LOGIN_REQUESTED_EVENT, { detail: { hint } }));
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll('&', '&amp;')

@@ -148,13 +148,30 @@ export async function fetchLeaderboard({ boardId, friendsOnly = false, userId = 
 export async function fetchRunResult(userId, playDate) {
   if (!userId || !playDate) return null;
   const client = await requireSupabase();
-  const { data, error } = await client
+  // Through the `security definer` function rather than the table (§11ac): the
+  // boards are readable signed-OUT now, and daily_plays deliberately stayed
+  // closed to anon so that `select=*` on it never becomes a public endpoint.
+  // The function returns the stored result and nothing else — no seed, no
+  // future column added to that table.
+  const { data, error } = await client.rpc('public_run_result', {
+    target_user_id: userId,
+    target_play_date: playDate,
+  });
+  if (!error) return data ?? null;
+
+  // Migration 017 may not have been run yet. Falling back to the direct read
+  // keeps a signed-in player's breakdowns working in the window between
+  // deploying this bundle and running the SQL, so the two can happen in either
+  // order — the same rollout rule §11z set when the submit-run function landed.
+  // A signed-OUT visitor gets nothing here either way, which is the state they
+  // were already in before this feature existed.
+  const fallback = await client
     .from('daily_plays')
     .select('result')
     .eq('user_id', userId)
     .eq('play_date', playDate)
     .not('result', 'is', null)
     .maybeSingle();
-  if (error) throw error;
-  return data?.result ?? null;
+  if (fallback.error) throw error; // report the RPC's error, which is the real one
+  return fallback.data?.result ?? null;
 }

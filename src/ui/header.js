@@ -6,7 +6,7 @@
 // into it.
 
 import { openModal } from './modal.js';
-import { nameplateHtml, PROFILE_UPDATED_EVENT } from './nameplate.js';
+import { nameplateHtml, PROFILE_UPDATED_EVENT, LOGIN_REQUESTED_EVENT } from './nameplate.js';
 import {
   getSession,
   onAuthStateChange,
@@ -242,6 +242,15 @@ export function initHeader(root, { signInError = null } = {}) {
       return;
     }
     openFriendsPanel(currentSession.user.id);
+  });
+
+  // Another page asking for the login modal — the profile's Add Friend button
+  // when a signed-out visitor arrives from the public leaderboard (§11ac).
+  // Ignored if a session turned up in the meantime, so a stale click cannot
+  // put a login prompt in front of somebody already signed in.
+  window.addEventListener(LOGIN_REQUESTED_EVENT, (event) => {
+    if (currentSession) return;
+    openLoginModal({ hint: event.detail?.hint });
   });
 
   // Whether to show the admin link. Deliberately asks the DATABASE (the same

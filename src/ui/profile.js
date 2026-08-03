@@ -11,7 +11,7 @@
 
 import { getSession, signOut, getProfile } from '../state/auth.js';
 import {
-  fetchPlayHistory,
+  fetchPublicPlayHistory,
   loadOwnHistory,
   deleteOwnAccount,
   saveEquippedCosmetics,
@@ -22,7 +22,7 @@ import { getFriendshipWith, sendFriendRequest, acceptFriendRequest } from '../st
 import { loadGameConfig } from '../state/game-config.js';
 import { derivePlayerStats, splitAchievements } from '../core/player-stats.js';
 import { resolveCosmetics, resolveEquipped, canEquip, DEFAULT_PAINT_ID } from '../core/cosmetics.js';
-import { nameplateHtml, announceProfileUpdate } from './nameplate.js';
+import { nameplateHtml, announceProfileUpdate, requestLogin } from './nameplate.js';
 import { miniCardHtml, miniHandHtml } from './mini-card.js';
 import { PERSONALITIES } from '../core/personality.js';
 import { HAND_RANKS } from '../core/hand-evaluator.js';
@@ -64,22 +64,14 @@ export async function initProfile(root, { username: viewingUsername = null } = {
 
   const session = await getSession().catch(() => null);
 
-  // Viewing another player: resolve their id from the username first. Kept
-  // separate from the signed-out branch below because a signed-in visitor
-  // viewing a stranger is a perfectly normal case, whereas being signed out is
-  // not — reading anyone's runs requires an authenticated caller (§11j).
+  // Viewing another player: resolve their id from the username first. This no
+  // longer requires a session (§11ac) — it used to, because reading anyone's
+  // runs meant an authenticated caller (§11j), and migration 017's
+  // `security definer` functions are what changed that. Being signed out is now
+  // an ordinary case here, not an error: a visitor clicking a name on the
+  // public leaderboard lands exactly here.
   let viewedProfile = null;
   if (viewingUsername) {
-    if (!session) {
-      root.innerHTML = `
-        <div class="profile-empty">
-          <h2>${escapeHtml(viewingUsername)}</h2>
-          <p>Log in to view other players' profiles.</p>
-          <a class="profile-back-link" href="/">← Back to today's hand</a>
-        </div>
-      `;
-      return;
-    }
     try {
       viewedProfile = await fetchProfileByUsername(viewingUsername);
     } catch {
@@ -97,13 +89,13 @@ export async function initProfile(root, { username: viewingUsername = null } = {
     }
     // Viewing your own username via the URL is just your own profile — don't
     // render a read-only copy of it with the controls stripped out.
-    if (session.user.id === viewedProfile.id) viewedProfile = null;
+    if (session?.user?.id === viewedProfile.id) viewedProfile = null;
   }
 
-  if (!session) {
-    // Reachable by typing the URL while signed out (the header only shows the
-    // username button when signed in), and also whenever accounts are
-    // unavailable at all — a blocked CDN or an unconfigured project.
+  // Signed out AND not looking at anybody in particular — i.e. `?profile` with
+  // no name, which only means "my profile" and there isn't one. Someone else's
+  // profile falls through and renders read-only.
+  if (!session && !viewedProfile) {
     root.innerHTML = `
       <div class="profile-empty">
         <h2>Your Profile</h2>
@@ -117,9 +109,11 @@ export async function initProfile(root, { username: viewingUsername = null } = {
   // `userId` is whose data is shown; `viewerId` is who is looking. They differ
   // when viewing someone else, and every write path below is gated on them
   // matching (`canEdit`).
-  const viewerId = session.user.id;
+  // `viewerId` is null for a signed-out visitor, who by definition is only ever
+  // looking at somebody else — the branch above already returned otherwise.
+  const viewerId = session?.user?.id ?? null;
   const userId = viewedProfile ? viewedProfile.id : viewerId;
-  const canEdit = !viewedProfile;
+  const canEdit = !viewedProfile && !!session;
   let profile = null;
   let history = [];
   let gameConfig = null;
@@ -135,11 +129,13 @@ export async function initProfile(root, { username: viewingUsername = null } = {
       // The header already loads YOUR history for its XP bar, so reuse that one
       // fetch rather than pulling the same few hundred rows twice on this page.
       // Someone else's profile has no cache to share and goes direct.
-      canEdit ? loadOwnHistory(userId) : fetchPlayHistory(userId),
+      canEdit ? loadOwnHistory(userId) : fetchPublicPlayHistory(userId),
       loadGameConfig(),
       // Tolerates failure: a friendship lookup that errors should cost the
-      // button, not the whole profile page.
-      canEdit ? Promise.resolve(null) : getFriendshipWith(viewerId, userId).catch(() => null),
+      // button, not the whole profile page. Skipped entirely with no viewer —
+      // friendships are readable only by their two participants, so asking as
+      // an anonymous caller could only ever return nothing.
+      canEdit || !viewerId ? Promise.resolve(null) : getFriendshipWith(viewerId, userId).catch(() => null),
     ]);
   } catch (error) {
     loadError = error;
@@ -315,6 +311,12 @@ export async function initProfile(root, { username: viewingUsername = null } = {
     root.querySelector('#profile-rename')?.addEventListener('click', confirmRename);
     root.querySelector('#profile-delete')?.addEventListener('click', confirmDelete);
     root.querySelector('#profile-friend-action')?.addEventListener('click', onFriendAction);
+    // The login modal lives inside initHeader's closure, so this asks for it by
+    // event rather than importing it — the same way §11e coupled the header to
+    // a cosmetic change without either module reaching into the other.
+    root.querySelector('#profile-friend-signin')?.addEventListener('click', () => {
+      requestLogin(`Log in to add ${profile?.username ?? 'players'} as a friend.`);
+    });
     if (canEdit) wireCustomizePickers();
   }
 
@@ -328,6 +330,16 @@ export async function initProfile(root, { username: viewingUsername = null } = {
   // YOU would try to create the reciprocal duplicate that migration 010 forbids.
   function friendActionHtml() {
     if (canEdit) return ''; // your own profile — nothing to add
+    // Signed out: shown, enabled, and it opens the login modal (§11ac, owner's
+    // choice). Hiding it would be a tidier read-only page but a visitor would
+    // never learn friends exist — and this is the moment they most want one,
+    // which makes it the best signup prompt on the site. It stays a real button
+    // rather than a disabled one so the click has somewhere to go.
+    if (!viewerId) {
+      return `<p class="profile-friend-row">
+        <button type="button" id="profile-friend-signin" class="profile-friend-btn">Add Friend</button>
+      </p>`;
+    }
     const label =
       friendship === null
         ? 'Add Friend'

@@ -45,6 +45,44 @@ export async function fetchPlayHistory(userId, { limit = HISTORY_LIMIT } = {}) {
   return (data ?? []).map((row) => ({ playDate: row.play_date, result: row.result }));
 }
 
+/**
+ * Every completed run for ANOTHER player, newest first — the same shape
+ * `fetchPlayHistory` returns, for the same consumers.
+ *
+ * A separate function rather than a flag on `fetchPlayHistory` because the two
+ * read through genuinely different doors. Your own rows come straight off the
+ * table under daily_plays' own-rows policy; somebody else's come through a
+ * `security definer` function (§11ac), because profiles are viewable signed-OUT
+ * now and the table stayed closed to anon on purpose. Collapsing them into one
+ * function with a boolean would hide that difference exactly where it matters.
+ *
+ * Returns play_date and result only. There is no way to ask this for a seed.
+ *
+ * @returns {Promise<Array<{playDate: string, result: object}>>}
+ */
+export async function fetchPublicPlayHistory(userId, { limit = HISTORY_LIMIT } = {}) {
+  const client = await requireSupabase();
+  const { data, error } = await client.rpc('public_player_runs', {
+    target_user_id: userId,
+    row_limit: limit,
+  });
+  if (!error) return (data ?? []).map((row) => ({ playDate: row.play_date, result: row.result }));
+
+  // Migration 017 may not have been run yet — fall back to the read this
+  // replaced so a signed-in visitor can still open somebody's profile in the
+  // window between deploying the bundle and running the SQL (§11z's rollout
+  // rule: deploy order must not be able to break anything).
+  const fallback = await client
+    .from('daily_plays')
+    .select('play_date, result')
+    .eq('user_id', userId)
+    .not('result', 'is', null)
+    .order('play_date', { ascending: false })
+    .limit(limit);
+  if (fallback.error) throw error; // the RPC's error is the informative one
+  return (fallback.data ?? []).map((row) => ({ playDate: row.play_date, result: row.result }));
+}
+
 // Shared, per-page-load cache of the signed-in player's own history.
 //
 // The header's XP bar and the profile page both need lifetime XP, and XP is
@@ -61,7 +99,8 @@ let ownHistory = null;
 
 /**
  * `fetchPlayHistory` for the signed-in player, fetched at most once per page
- * load. Use `fetchPlayHistory` directly for anyone else's profile.
+ * load. Anyone else's profile goes through `fetchPublicPlayHistory` instead —
+ * different door, see that function.
  */
 export function loadOwnHistory(userId, options) {
   if (ownHistory?.userId === userId) return ownHistory.promise;

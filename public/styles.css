@@ -4566,3 +4566,59 @@ header h1 {
   }
 }
 
+
+/* Discord invite beside the ? button (§11ah). Reuses .header-help for the
+   circular geometry so the two read as a matched pair, then adds only what an
+   anchor needs that a button does not. */
+.header-discord {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  /* An unstyled anchor inherits the UA's hyperlink blue, which is why the
+     friends panel's name links once rendered wrong (§4f). Say the colour. */
+  color: var(--text-muted);
+  flex: none;
+}
+
+/* CANCELS THE DESCENDER NUDGE, which this link inherits by reusing
+   .header-help. That nudge (`#site-header .header-help`, §11n) exists because a
+   lone "?" has no descender and therefore sits high in its line box, so it is
+   pushed down with top padding. An SVG has no line box and no descender gap, so
+   it inherited a correction for a problem it does not have and ended up exactly
+   half the padding — 1.12px — below centre.
+   `#site-header .header-discord` matches the nudge's own (1,1,0) specificity and
+   comes later in the file, which is what lets it win. A bare `.header-discord`
+   (0,1,0) loses silently — this stylesheet has been caught by that twice. */
+#site-header .header-discord {
+  padding: 0;
+}
+
+/* SIZED AGAINST THE "?" NEXT TO IT, not against the circle. At 0.95rem the
+   logo's ink measured 15px wide inside a 24px inner circle while the "?" was
+   7px — more than twice the visual weight, nearly touching the ring, which is
+   what reads as "not centred" even though the pixels said it was. The Discord
+   mark is also wide-and-short (a 4:3 viewBox in a square box), so its width is
+   what needs matching, not its height. */
+.header-discord svg {
+  width: 0.78rem;
+  height: 0.78rem;
+  display: block;
+}
+
+/* ORDER MATTERS HERE. The Discord link carries BOTH classes, so these two
+   selectors have identical specificity and the later one wins — with
+   .header-help:hover written second, the blurple below never applied and the
+   icon hovered to plain text colour instead. The generic rule goes first so the
+   specific one can override it. */
+.header-help:hover,
+.header-help:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.header-discord:hover,
+.header-discord:focus-visible {
+  color: #5865f2; /* Discord blurple — the one place a brand colour belongs */
+  border-color: #5865f2;
+}

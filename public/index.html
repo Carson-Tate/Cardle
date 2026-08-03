@@ -123,6 +123,27 @@
     <div class="site-header-left">
       <button type="button" id="header-logo" class="header-logo">Cardle</button>
       <button type="button" id="header-help" class="header-help" aria-label="How to play">?</button>
+      <!-- Discord invite (owner request). An <a>, not a button with a click
+           handler: it is navigation to another site, so middle-click,
+           open-in-new-tab and "copy link address" all work for free and the
+           browser shows the destination on hover.
+
+           `rel="noopener noreferrer"` — without noopener, target="_blank" hands
+           the opened tab a `window.opener` reference back to this one (§11v
+           learned this on the support link).
+
+           The mark is inlined SVG rather than an <img> or an icon font: this
+           project loads no third-party assets, and a remote logo is exactly the
+           request ad blockers stop by default — which would leave a hole in the
+           header rather than an icon. `currentColor` so it themes with the rest
+           of the bar in both light and dark. -->
+      <a id="header-discord" class="header-help header-discord"
+         href="https://discord.gg/guhashYrtd" target="_blank" rel="noopener noreferrer"
+         aria-label="Join the Cardle Discord (opens in a new tab)" title="Join the Cardle Discord">
+        <svg viewBox="0 0 24 18" aria-hidden="true" focusable="false">
+          <path fill="currentColor" d="M20.32 1.49A19.8 19.8 0 0 0 15.43 0c-.21.38-.46.89-.63 1.29a18.4 18.4 0 0 0-5.6 0C9.03.89 8.77.38 8.56 0A19.74 19.74 0 0 0 3.67 1.5C.57 6.11-.27 10.6.15 15.03a19.9 19.9 0 0 0 6.06 3.05c.49-.67.93-1.38 1.3-2.13-.71-.27-1.4-.6-2.04-.99.17-.13.34-.26.5-.4a14.2 14.2 0 0 0 12.07 0c.16.14.33.27.5.4-.65.39-1.33.72-2.05.99.38.75.81 1.46 1.3 2.13a19.87 19.87 0 0 0 6.07-3.05c.5-5.14-.85-9.58-3.54-13.54ZM8.02 12.33c-1.18 0-2.15-1.09-2.15-2.42 0-1.33.95-2.42 2.15-2.42 1.21 0 2.18 1.1 2.16 2.42 0 1.33-.95 2.42-2.16 2.42Zm7.96 0c-1.18 0-2.15-1.09-2.15-2.42 0-1.33.95-2.42 2.15-2.42 1.21 0 2.18 1.1 2.16 2.42 0 1.33-.95 2.42-2.16 2.42Z"/>
+        </svg>
+      </a>
     </div>
     <div class="site-header-right">
       <!-- Order matters: navigation first, then the player's own nameplate in

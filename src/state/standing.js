@@ -21,11 +21,26 @@ import { describeStanding } from '../core/standing.js';
  * logged-out visitor or a field too small to be meaningful should all cost the
  * chip and nothing else. It is the same rule the XP bar follows.
  */
-export async function fetchDailyStanding(playDate = null) {
+export async function fetchDailyStanding(playDate = null, score = null) {
   try {
     const client = await getSupabase();
     if (!client) return null;
-    const { data, error } = await client.rpc('daily_standing', { day: playDate });
+
+    // `for_score` ranks the run actually on screen (§11ag). Without it the
+    // function ranks whatever is in the caller's SAVED row, which is a
+    // different run entirely in test mode — where nothing is ever persisted —
+    // and produced a chip that described a real earlier run while sitting under
+    // a test score.
+    const args = Number.isFinite(score) ? { day: playDate, for_score: score } : { day: playDate };
+    let { data, error } = await client.rpc('daily_standing', args);
+
+    // Migration 018 may not have been run yet, in which case the two-argument
+    // form does not exist. Retrying without the score restores exactly the old
+    // behaviour rather than dropping the chip, so the bundle and the SQL can be
+    // deployed in either order (§11z's rule).
+    if (error && Number.isFinite(score)) {
+      ({ data, error } = await client.rpc('daily_standing', { day: playDate }));
+    }
     if (error) throw error;
     // A set-returning function comes back as an array, and an empty one is the
     // normal answer for "you have not finished today".

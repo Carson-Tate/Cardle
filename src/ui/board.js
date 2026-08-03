@@ -1480,7 +1480,11 @@ async function revealXpGain(result) {
 function renderStanding(resultPanel, total) {
   const el = resultPanel.querySelector('#score-standing');
   if (!el) return;
-  fetchDailyStanding()
+  // `total` is PASSED now. It has been an argument since §11aa and was silently
+  // dropped — so the chip ranked the caller's saved row rather than the run it
+  // sat under, which in test mode is a different run altogether (§11ag). A
+  // parameter that is accepted and ignored looks exactly like one that works.
+  fetchDailyStanding(null, Number.isFinite(total) ? total : null)
     .then((standing) => {
       if (!standing || !el.isConnected) return;
       el.className = `score-standing score-standing--${standing.tier}`;

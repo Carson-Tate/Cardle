@@ -168,8 +168,22 @@ export const MODIFIERS = [
   {
     id: 'parity',
     emoji: '🔢',
-    label: 'Even Money',
+    // The UNRESOLVED label, which is all the admin and test-mode pickers can
+    // show: they list MODIFIERS directly, and which half this lands on is not
+    // decided until resolveModifier() rolls it. `resolveLabel` below names the
+    // actual day.
+    //
+    // Owner bug report: "the modifier 'even money' while the even/odd being
+    // odd, should change the modifier name to 'odd money'". It read "Even
+    // Money" over a description that rewarded odd cards — the describe() had
+    // always handled both halves and only the label was hardcoded.
+    label: 'Even / Odd Money',
     type: 'scoring',
+    // Kept as ONE parameterised modifier rather than split into two entries.
+    // Two would double how often a parity day comes up in the rotation, which
+    // is a balance change nobody asked for — the same reasoning §4f used for
+    // Hot Hand ("one parameterised modifier beats twelve near-identical ones").
+    resolveLabel: (ctx) => (ctx.parity === 'odd' ? 'Odd Money' : 'Even Money'),
     describe: (ctx) =>
       `Every ${ctx.parity ?? 'even'}-ranked card in your final hand adds +${Math.round(
         PARITY_MULTIPLIER_PER_CARD * 100,
@@ -296,7 +310,16 @@ function resolveModifier(modifier, random) {
     context.hotHandId = pick.id;
     context.hotHandLabel = pick.label;
   }
-  return { ...modifier, ...context, description: modifier.describe(context) };
+  // `label` resolves the same way `description` always has. It stays a plain
+  // string on the returned object, so every consumer — the board banner, the
+  // leaderboard's flipped-day note, the admin preview — keeps reading
+  // `modifier.label` unchanged.
+  return {
+    ...modifier,
+    ...context,
+    label: modifier.resolveLabel ? modifier.resolveLabel(context) : modifier.label,
+    description: modifier.describe(context),
+  };
 }
 
 // The single entry point for real daily play: today's (or `date`'s) active

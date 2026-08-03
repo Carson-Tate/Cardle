@@ -2,6 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getDailyModifier,
+  buildModifierById,
   modifierScoringMultiplier,
   modifierBoardIsAscending,
   MODIFIERS,
@@ -373,6 +374,66 @@ describe('One Swap is gone', () => {
       const date = new Date('2026-07-27T12:00:00Z');
       date.setUTCDate(date.getUTCDate() + d);
       assert.notEqual(getDailyModifier(date).id, 'oneSwap');
+    }
+  });
+});
+
+// Owner bug report: the banner read "Even Money" while the description
+// (correctly) rewarded ODD cards. describe() had always handled both halves;
+// only `label` was hardcoded, so the name contradicted the rule underneath it
+// on roughly half of all parity days.
+describe('Even / Odd Money names the half it actually rolled', () => {
+  const build = (roll) => {
+    const real = Math.random;
+    Math.random = () => roll;
+    try {
+      return buildModifierById('parity');
+    } finally {
+      Math.random = real;
+    }
+  };
+
+  test('an odd day is called Odd Money', () => {
+    const m = build(0.9);
+    assert.equal(m.parity, 'odd');
+    assert.equal(m.label, 'Odd Money');
+    assert.match(m.description, /Every odd-ranked card/);
+  });
+
+  test('an even day is called Even Money', () => {
+    const m = build(0.1);
+    assert.equal(m.parity, 'even');
+    assert.equal(m.label, 'Even Money');
+    assert.match(m.description, /Every even-ranked card/);
+  });
+
+  // The actual defect, stated as a property: whatever the label claims and
+  // whatever the description rewards must be the same half. This is what a
+  // future third parity variant would have to keep true.
+  test('the label and the description never disagree', () => {
+    for (const roll of [0.0, 0.25, 0.49, 0.5, 0.75, 0.99]) {
+      const m = build(roll);
+      const labelSaysOdd = m.label.startsWith('Odd');
+      const descSaysOdd = /Every odd-ranked/.test(m.description);
+      assert.equal(labelSaysOdd, descSaysOdd, `roll ${roll}: "${m.label}" vs "${m.description}"`);
+      assert.equal(labelSaysOdd, m.parity === 'odd', `roll ${roll}: label disagrees with parity`);
+    }
+  });
+
+  // The pickers in admin.js and board.js list MODIFIERS directly, before any
+  // roll has happened, so the static entry must not claim one half.
+  test('the unresolved entry the pickers show commits to neither half', () => {
+    const entry = MODIFIERS.find((m) => m.id === 'parity');
+    assert.equal(entry.label, 'Even / Odd Money');
+  });
+
+  // Every other modifier keeps a plain static label — resolveLabel is opt-in,
+  // and a typo'd property name must not silently blank a label.
+  test('modifiers without resolveLabel keep their static label', () => {
+    for (const entry of MODIFIERS) {
+      if (entry.resolveLabel) continue;
+      const built = buildModifierById(entry.id);
+      assert.equal(built.label, entry.label, entry.id);
     }
   });
 });

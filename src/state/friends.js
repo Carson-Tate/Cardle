@@ -162,6 +162,25 @@ export async function getPendingRequests(userId) {
   }));
 }
 
+// Just how many incoming requests are waiting, for the header's notification
+// badge. Deliberately NOT getPendingRequests().length: that fetches every row
+// and then makes a SECOND round trip to profilesById() to attach usernames the
+// badge has no use for. `head: true` asks PostgREST for the count alone and
+// returns no rows at all, so the badge costs one cheap query on every page
+// load for a signed-in player instead of two rowful ones.
+export async function getPendingRequestCount(userId) {
+  const client = await requireSupabase();
+  const { count, error } = await client
+    .from('friendships')
+    .select('id', { count: 'exact', head: true })
+    .eq('addressee_id', userId)
+    .eq('status', 'pending');
+  if (error) throw error;
+  // PostgREST omits the count header on some error-free-but-empty responses,
+  // and `null` would render as a badge reading "null".
+  return count ?? 0;
+}
+
 // Requests YOU have sent that are still pending, each with the ADDRESSEE's
 // username attached. Without this, sending a request produced no visible
 // result anywhere — the request existed in the database but the sender's own

@@ -4734,3 +4734,74 @@ header h1 {
   color: var(--text-muted);
   font-size: 0.85em;
 }
+
+/* ── Friend-request notification badge (owner request) ──────────────────────
+   A count on the Friends button, and a dot on the hamburger that stands in for
+   it while the nav is collapsed.
+
+   DELIBERATELY NOT var(--red), which is the obvious choice and the wrong one.
+   That token is a FOREGROUND colour — the pips on a red card — so its dark-theme
+   value (#e0665c) is lightened to sit on a dark background. Used as a FILL under
+   white text it measures 3.37:1, below the 4.5:1 AA needs at this size. One
+   fixed colour instead, the same in both themes, because a notification is a
+   fixed signal rather than something that should restyle itself.
+
+   The value is boxed in from two directions and there is less room than it
+   looks: darker raises white-text contrast but sinks the pill into the dark
+   header, lighter does the reverse. #cf4436 clears both — white text 4.63:1
+   (AA at this size), and the pill against the header's own --surface 3.47:1 in
+   dark and 4.63:1 in light, over the 3:1 non-text minimum either way.
+
+   The first attempt at this, #c0392b, was measured against the PAGE background
+   and looked fine at 3.35:1. The badge does not sit on the page background — it
+   sits on #site-header's --surface, where the same colour is 2.96:1 and fails.
+   Measure against the surface the thing is actually on. */
+:root {
+  --notify: #cf4436;
+}
+
+.header-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  margin-left: 0.4rem;
+  padding: 0 0.28rem;
+  border-radius: 999px;
+  background: var(--notify);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  /* The header letter-spaces its text (§11m's all-caps bar); inside a 1-2
+     character pill that tracking is dead space on the right and pushes the
+     digit off centre — the same trap the ☰ and the help "?" both hit. */
+  letter-spacing: 0;
+  line-height: 1;
+  vertical-align: middle;
+  /* Sits on a button whose own font-size the count should not inherit. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* The dot is only meaningful while the nav is actually collapsed behind ☰.
+   Above the breakpoint the Friends button is visible and carries the real
+   count, so a second mark there would be duplicate noise. Declared inside the
+   media query below rather than hidden by an override, so it simply does not
+   exist at desktop widths. */
+@media (max-width: 560px) {
+  #site-header .header-menu-btn--flagged {
+    position: relative;
+  }
+
+  #site-header .header-menu-btn--flagged::after {
+    content: '';
+    position: absolute;
+    top: 0.15rem;
+    right: 0.15rem;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--notify);
+    /* Separates the dot from the ☰ strokes it overlaps, in both themes. */
+    box-shadow: 0 0 0 2px var(--bg);
+  }
+}

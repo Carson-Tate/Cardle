@@ -17,7 +17,7 @@ import {
   isValidUsername,
   isUsernameAvailable,
 } from '../state/auth.js';
-import { sendFriendRequest, getPendingRequests, getSentRequests, getFriends, acceptFriendRequest, removeFriendship, searchProfiles } from '../state/friends.js';
+import { sendFriendRequest, getPendingRequests, getPendingRequestCount, getSentRequests, getFriends, acceptFriendRequest, removeFriendship, searchProfiles } from '../state/friends.js';
 import { isSupabaseConfigured, SupabaseUnavailableError } from '../state/supabase-client.js';
 import { loadOwnHistory, invalidateOwnHistory, XP_UPDATED_EVENT } from '../state/profile.js';
 import { derivePlayerStats } from '../core/player-stats.js';
@@ -373,6 +373,60 @@ export function initHeader(root, { signInError = null } = {}) {
     adminBtn.hidden = !isAdmin;
   }
 
+  // --- Friend-request notification badge (owner request) ------------------
+  //
+  // How many incoming requests are waiting. 0 means "none", and null means
+  // "not known yet" — a distinction worth keeping, because both render as no
+  // badge but only one of them should ever become a number later. The count
+  // fails CLOSED: a blocked CDN, an offline player or an RLS surprise leaves
+  // this at 0 and the header simply looks like it did before this feature
+  // existed, rather than showing an error nobody can act on.
+  let pendingInvites = 0;
+
+  // Capped so the badge stays a circle. Someone with more than nine waiting
+  // requests does not need the exact number to know they should look.
+  const MAX_BADGE_COUNT = 9;
+
+  function renderFriendBadge() {
+    const count = pendingInvites;
+    const label = count > 0 ? `Friends, ${count} pending friend request${count === 1 ? '' : 's'}` : 'Friends';
+    friendsBtn.setAttribute('aria-label', label);
+    // aria-hidden on the badge because the count is already in the label
+    // above; without it a screen reader reads the number twice.
+    friendsBtn.innerHTML = count > 0
+      ? `Friends<span class="header-badge" aria-hidden="true">${count > MAX_BADGE_COUNT ? `${MAX_BADGE_COUNT}+` : count}</span>`
+      : 'Friends';
+
+    // THE HAMBURGER NEEDS ITS OWN MARK. Under the mobile breakpoint the whole
+    // nav — Friends button included — collapses behind ☰, so a badge only on
+    // the button is invisible on exactly the devices most of this game is
+    // played on. A dot rather than the number: the ☰ is a small square and a
+    // digit on it reads as clutter, and its job is only to say "there is
+    // something in here", which the number inside then answers.
+    menuBtn?.classList.toggle('header-menu-btn--flagged', count > 0);
+  }
+
+  async function refreshFriendBadge() {
+    if (!currentSession) {
+      pendingInvites = 0;
+      renderFriendBadge();
+      return;
+    }
+    try {
+      pendingInvites = await getPendingRequestCount(currentSession.user.id);
+    } catch {
+      pendingInvites = 0; // see the fail-closed note above
+    }
+    renderFriendBadge();
+  }
+
+  // A tab left open overnight should not still be claiming yesterday's state.
+  // Cheap enough to run on every return to the tab, and it is the moment a
+  // player is most likely to be looking at the header.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshFriendBadge();
+  });
+
   // Whether an XP bar animation currently owns the auth slot's DOM.
   //
   // renderAuthSlot() replaces the slot's innerHTML, which DESTROYS the element
@@ -465,11 +519,13 @@ export function initHeader(root, { signInError = null } = {}) {
     if (!currentSession) {
       currentProfile = null;
       renderAuthSlot();
+      refreshFriendBadge(); // clears any badge left over from the previous session
       return;
     }
     currentProfile = await loadProfileOnce(currentSession.user.id);
     renderAuthSlot();
     refreshAdminLink();
+    refreshFriendBadge();
     if (!currentProfile && usernamePromptOpenForUserId !== currentSession.user.id) {
       promptForUsername(currentSession.user.id);
     }
@@ -728,6 +784,11 @@ export function initHeader(root, { signInError = null } = {}) {
     openModal({
       title: 'Friends',
       render: (body) => renderFriendsPanel(body, userId),
+      // Accepting or declining inside the panel changes the count the badge is
+      // showing. Refreshing on close rather than after each action means one
+      // query for a whole session of tidying up, and it cannot leave a stale
+      // "2" sitting on the button behind a panel that now shows none.
+      onClose: () => refreshFriendBadge(),
     });
   }
 

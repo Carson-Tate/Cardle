@@ -11,7 +11,7 @@
 // frozen page for a few seconds), so the worst case here is no worse than
 // before this file existed, and the common case is a responsive one.
 
-import { solveOptimalDiscard } from '../core/ev-solver.js';
+import { solveOptimalDiscard, drawPercentile } from '../core/ev-solver.js';
 
 // null = not tried yet, false = unavailable (use the fallback), otherwise the
 // live Worker. One worker is reused for the whole session — constructing it
@@ -57,6 +57,28 @@ function getWorker() {
   return worker;
 }
 
+// Sends one job to the worker, falling back to `runInline` on every failure
+// path — no worker support, a worker that won't construct, a worker that dies
+// mid-job. Shared by both jobs so a new one cannot accidentally ship without
+// the fallback; the fallback IS the pre-existing behaviour (a frozen page for
+// a few seconds), so the worst case is never worse than not having a worker.
+async function runJob(message, runInline) {
+  const activeWorker = getWorker();
+  if (!activeWorker) return runInline();
+
+  const id = nextRequestId++;
+  try {
+    return await new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      activeWorker.postMessage({ id, ...message });
+    });
+  } catch (error) {
+    console.warn(`EV solver job "${message.task}" failed in the worker; retrying on the main thread:`, error);
+    pending.delete(id);
+    return runInline();
+  }
+}
+
 /**
  * Same contract as core/ev-solver.js's solveOptimalDiscard, but async and
  * (when possible) computed in a worker so the page stays responsive.
@@ -64,18 +86,22 @@ function getWorker() {
  * @returns {Promise<{evByDiscard: Array<{indices:number[], ev:number}>, best: {indices:number[], ev:number}, worst: {indices:number[], ev:number}}>}
  */
 export async function solveOptimalDiscardAsync(originalHand, drawPile, options = {}) {
-  const activeWorker = getWorker();
-  if (!activeWorker) return solveOptimalDiscard(originalHand, drawPile, options);
+  return runJob(
+    { task: 'solve', originalHand, drawPile, options },
+    () => solveOptimalDiscard(originalHand, drawPile, options)
+  );
+}
 
-  const id = nextRequestId++;
-  try {
-    return await new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      activeWorker.postMessage({ id, originalHand, drawPile, options });
-    });
-  } catch (error) {
-    console.warn('EV solve via worker failed; retrying on the main thread:', error);
-    pending.delete(id);
-    return solveOptimalDiscard(originalHand, drawPile, options);
-  }
+/**
+ * Same contract as core/ev-solver.js's drawPercentile, off the main thread.
+ * Runs after lock-in, while the drawn cards are still being revealed, so the
+ * enumeration is hidden behind an animation the player is already watching.
+ *
+ * @returns {Promise<number|null>} 0-1, or null when no cards were drawn.
+ */
+export async function drawPercentileAsync(originalHand, drawPile, discardIndices, actualScore) {
+  return runJob(
+    { task: 'percentile', originalHand, drawPile, discardIndices, actualScore },
+    () => drawPercentile(originalHand, drawPile, discardIndices, actualScore)
+  );
 }

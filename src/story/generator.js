@@ -212,7 +212,12 @@ export function buildFinalHandText(finalHand, logicalHand = null) {
 const SITE_URL = 'https://cardle.lol';
 
 export function buildShareText(result, finalHandText) {
-  const ratingPct = Number.isFinite(result.decisionRating) ? `${Math.round(result.decisionRating * 100)}%` : '—';
+  // Capped for the same reason hand-modal.js caps it: the share text can be
+  // rebuilt from a stored row written while the rating was unbounded above, and
+  // posting "Decision Rating: 1,400%" is worse than posting the 100% it means.
+  const ratingPct = Number.isFinite(result.decisionRating)
+    ? `${Math.round(Math.min(result.decisionRating, 1) * 100)}%`
+    : '—';
   return [
     `Cardle #${result.dayNumber} — ${result.score.handResult.label} — ${result.score.total.toLocaleString()} pts`,
     `Decision Rating: ${ratingPct}`,

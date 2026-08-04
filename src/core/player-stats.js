@@ -116,11 +116,21 @@ export function derivePlayerStats(history, { today } = {}) {
 
     if (result.personalityId) personalitiesSeen.add(result.personalityId);
 
+    // CAPPED AT 1 BECAUSE THE OLD ROWS ARE NOT ON THIS SCALE. Before the
+    // Decision Rating measured the choice, it was `actualScore / bestEV` and
+    // was explicitly not clamped — a lucky draw could store 3.4 or 14.0. Both
+    // aggregates below read the whole history, so without this cap a single
+    // fortunate run from the old formula would sit in "best decision rating"
+    // as an unbeatable 1,400% forever, and drag the average somewhere the new
+    // scale cannot reach. Capping is the honest reconciliation: on the old
+    // scale anything at or above 1 already meant "matched or beat the deal's
+    // expected value", which is the best that scale had to say.
     if (Number.isFinite(result.decisionRating)) {
-      ratingSum += result.decisionRating;
+      const rating = Math.min(result.decisionRating, 1);
+      ratingSum += rating;
       ratingCount += 1;
-      if (stats.bestDecisionRating === null || result.decisionRating > stats.bestDecisionRating) {
-        stats.bestDecisionRating = result.decisionRating;
+      if (stats.bestDecisionRating === null || rating > stats.bestDecisionRating) {
+        stats.bestDecisionRating = rating;
       }
     }
 

@@ -30,9 +30,25 @@ export const XP_BASE_PER_RUN = 150;
 // hand is worth more without the 274,000x spread the point table has.
 export const XP_PER_HAND_STRENGTH = 25;
 // Decision Rating (§3d) is the game's own "did you play this well" measure,
-// and it's the one term here that rewards skill over luck. Clamped to 0-1
-// even though the rating itself can exceed 1 on a lucky draw — the excess is
-// luck, which the hand-strength term already pays for.
+// and it's the one term here that rewards skill over luck.
+//
+// IT WAS NEARLY INERT AND NOBODY COULD HAVE SEEN IT. While the rating was
+// `actualScore / bestEV`, its clamped value averaged about 0.23 even for a
+// player making the mathematically optimal discard every single day, and its
+// MEDIAN was 0.069 — so a term advertising 100 XP for playing well actually
+// paid out around 7-20, a few percent of a typical run. Exactly the same class
+// of silent deadness as meters.js's RISK_CHASE_CEILING: a constant sized
+// against one scale, left behind when the scale moved, still looking correct.
+//
+// Now that the rating measures the choice (0-1, 1 = found the best discard),
+// this term pays roughly what it always claimed. That is a real increase in XP
+// for well-played runs — deliberately so, since differentiating them is the
+// entire reason the term exists — and it lands on skill rather than lifting
+// everyone, because a careless discard still scores near zero here.
+//
+// The clamp below is kept even though the rating can no longer exceed 1: rows
+// stored under the old formula are still read back by the profile page, and
+// some of them are 3.4, 14.0, or larger.
 export const XP_PER_DECISION_RATING = 100;
 // Small per-bonus nudge so a run stacked with named bonuses (§3f) feels like
 // it did something, even when the hand itself was modest.
@@ -122,8 +138,10 @@ export function xpForRun(result) {
   const handId = result.score?.handResult?.id;
   const strength = handId ? clamp(handStrengthIndex(handId), 0, MAX_HAND_STRENGTH) : 0;
 
-  // Number.isFinite rejects both Infinity (decisionRating's documented value
-  // for a zero-EV hand) and undefined/null from an older row.
+  // Number.isFinite rejects undefined/null from an older row, and null from a
+  // run where there was no discard decision to grade. The clamp additionally
+  // caps ratings stored under the pre-choiceQuality formula, which was
+  // unbounded above (see XP_PER_DECISION_RATING).
   const rating = Number.isFinite(result.decisionRating) ? clamp(result.decisionRating, 0, 1) : 0;
 
   const bonusCount = Array.isArray(result.score?.extraBonuses) ? result.score.extraBonuses.length : 0;

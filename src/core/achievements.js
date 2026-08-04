@@ -63,7 +63,16 @@ export const ACHIEVEMENTS = [
     id: 'flawless',
     emoji: '🎯',
     label: 'Flawless',
-    description: 'Hit a 100%+ Decision Rating.',
+    // "100%+" was accurate when the Decision Rating was actual score ÷ best EV
+    // and could overshoot on a lucky draw — which is precisely why the old
+    // version of this unlocked on LUCK, not play: the only way to clear 100%
+    // was to draw a hand bigger than the deal's own expected value. The rating
+    // now tops out at exactly 100% and means "no discard available to you had a
+    // higher expected value than the one you took", so this is finally the
+    // achievement its name always claimed. `>= 1` is unchanged and needs no
+    // epsilon: choiceQuality returns exactly 1 for the best option, because
+    // that option is what the numerator and denominator are both built from.
+    description: 'Pick the single best discard available.',
     check: (ctx) => Number.isFinite(ctx.decisionRating) && ctx.decisionRating >= 1,
   },
   {

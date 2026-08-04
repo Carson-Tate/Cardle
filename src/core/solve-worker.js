@@ -11,15 +11,29 @@
 // odds…" state board.js shows can actually animate while the work happens.
 // The math is identical — this file adds no logic of its own, it only moves
 // where the existing function runs.
-import { solveOptimalDiscard } from './ev-solver.js';
+import { solveOptimalDiscard, drawPercentile } from './ev-solver.js';
+
+// Two jobs, both enumerative and both belonging off the main thread:
+//   'solve'      — price every legal discard (started at the deal, §4h)
+//   'percentile' — rank the draw the player actually got against every draw
+//                  that could have come instead (Luck, after lock-in). This is
+//                  one option's worth of enumeration, at most 1/32nd of a full
+//                  solve, and it runs while the cards are still flipping over.
+const TASKS = {
+  solve: ({ originalHand, drawPile, options }) => solveOptimalDiscard(originalHand, drawPile, options),
+  percentile: ({ originalHand, drawPile, discardIndices, actualScore }) =>
+    drawPercentile(originalHand, drawPile, discardIndices, actualScore),
+};
 
 self.addEventListener('message', (event) => {
-  const { id, originalHand, drawPile, options } = event.data;
+  const { id, task = 'solve' } = event.data;
   try {
+    const run = TASKS[task];
+    if (!run) throw new Error(`unknown solver task: ${task}`);
     // Structured-cloned plain objects come back in, plain objects go out —
     // Card is `{rank, suit, rarity, jokerTier}` with no methods or identity
     // the caller depends on, so nothing is lost across the boundary.
-    self.postMessage({ id, result: solveOptimalDiscard(originalHand, drawPile, options) });
+    self.postMessage({ id, result: run(event.data) });
   } catch (error) {
     self.postMessage({ id, error: error?.message ?? String(error) });
   }

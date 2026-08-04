@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { solveOptimalDiscard, findEV, decisionRating } from '../src/core/ev-solver.js';
+import { solveOptimalDiscard, findEV, choiceQuality, drawPercentile } from '../src/core/ev-solver.js';
+import { optimalDiscardBonus, OPTIMAL_DISCARD_MAX_BONUS } from '../src/core/scoring.js';
 import { evaluateHand } from '../src/core/hand-evaluator.js';
 
 const c = (rank, suit) => ({ rank, suit });
@@ -121,21 +122,122 @@ describe('solveOptimalDiscard', () => {
   });
 });
 
-describe('decisionRating', () => {
-  test('is 1.0 when the actual score matches the best EV', () => {
-    assert.equal(decisionRating(110, 110), 1);
+describe('choiceQuality', () => {
+  test('is 1 for the best available discard', () => {
+    assert.equal(choiceQuality({ chosenEV: 110, bestEV: 110, worstEV: 40 }), 1);
   });
 
-  test('scales proportionally below the best EV', () => {
-    assert.equal(decisionRating(55, 110), 0.5);
+  test('is 0 for the worst available discard', () => {
+    assert.equal(choiceQuality({ chosenEV: 40, bestEV: 110, worstEV: 40 }), 0);
   });
 
-  test('can exceed 1.0 on a lucky draw beating the average', () => {
-    assert.equal(decisionRating(180, 110), 180 / 110);
+  test('places a middling choice between them', () => {
+    assert.equal(choiceQuality({ chosenEV: 75, bestEV: 110, worstEV: 40 }), 0.5);
   });
 
-  test('handles a zero-EV hand without dividing by zero', () => {
-    assert.equal(decisionRating(0, 0), 1);
+  test('is null when every option had the same EV — no decision to grade', () => {
+    assert.equal(choiceQuality({ chosenEV: 110, bestEV: 110, worstEV: 110 }), null);
+  });
+
+  test('is null rather than NaN on a missing or malformed context', () => {
+    assert.equal(choiceQuality(), null);
+    assert.equal(choiceQuality({ chosenEV: 1, bestEV: 2 }), null);
+    assert.equal(choiceQuality({ chosenEV: NaN, bestEV: 2, worstEV: 0 }), null);
+  });
+
+  test('clamps a chosen EV outside the solved range instead of leaving the meter over 100%', () => {
+    assert.equal(choiceQuality({ chosenEV: 200, bestEV: 110, worstEV: 40 }), 1);
+    assert.equal(choiceQuality({ chosenEV: 10, bestEV: 110, worstEV: 40 }), 0);
+  });
+
+  // THE DEFECT THE REWRITE EXISTED TO FIX, stated directly rather than as a
+  // set of cases. The old rating was actualScore / bestEV, so it moved with the
+  // draw; this asserts the property that replaced it — the rating is a function
+  // of the CHOICE alone, and no outcome can change it.
+  test('does not depend on what was actually drawn', () => {
+    const context = { chosenEV: 75, bestEV: 110, worstEV: 40 };
+    const rating = choiceQuality(context);
+    // There is nowhere to even pass an outcome, which is the point; the same
+    // context scored before and after a hypothetical draw must agree.
+    assert.equal(choiceQuality({ ...context }), rating);
+    assert.equal(rating, 0.5);
+  });
+
+  test('agrees with optimalDiscardBonus, which scores the same quantity', () => {
+    for (const chosenEV of [40, 57.5, 75, 92.5, 110]) {
+      const context = { chosenEV, bestEV: 110, worstEV: 40 };
+      assert.equal(
+        optimalDiscardBonus(context),
+        Math.round(choiceQuality(context) * OPTIMAL_DISCARD_MAX_BONUS),
+      );
+    }
+  });
+});
+
+describe('drawPercentile', () => {
+  // A tiny closed universe so the answer can be counted by hand: keep four
+  // cards, draw one from a three-card pile.
+  const kept = [c(9, 'S'), c(9, 'H'), c(4, 'C'), c(5, 'S')];
+  const pile = [c(9, 'D'), c(2, 'D'), c(7, 'C')];
+  const hand = [...kept, c(13, 'D')]; // the 5th card is the one discarded
+  const scoreWith = (card) => evaluateHand([...kept, card]).score;
+
+  test('is null when no cards were drawn — holding pat is not luck', () => {
+    assert.equal(drawPercentile(hand, pile, [], 1000), null);
+  });
+
+  // Derived from the real score multiset rather than hardcoded. Two of these
+  // three draws tie — a rank-scaled Pair is scored on the pair's rank, so
+  // drawing the 2 and drawing the 7 both leave a pair of nines worth exactly
+  // the same — and a hand-written 0.5/3 quietly encoded the assumption that
+  // they wouldn't. Counting is also the clearest statement of the mid-rank
+  // convention this function uses.
+  const expectedPercentile = (target) => {
+    const scores = pile.map(scoreWith);
+    const below = scores.filter((s) => s < target).length;
+    const equal = scores.filter((s) => s === target).length;
+    return (below + equal / 2) / scores.length;
+  };
+
+  test('ranks the best possible draw at the top', () => {
+    const best = Math.max(...pile.map(scoreWith));
+    // Mid-rank: the realised draw is itself one of the combinations counted,
+    // so even the outright best cannot read a flat 1 here.
+    assert.equal(drawPercentile(hand, pile, [4], best), expectedPercentile(best));
+    assert.ok(drawPercentile(hand, pile, [4], best) > 0.5);
+  });
+
+  test('ranks the worst possible draw at the bottom', () => {
+    const worst = Math.min(...pile.map(scoreWith));
+    assert.equal(drawPercentile(hand, pile, [4], worst), expectedPercentile(worst));
+    assert.ok(drawPercentile(hand, pile, [4], worst) < 0.5);
+  });
+
+  test('splits tied draws evenly rather than ranking one above the other', () => {
+    const scores = pile.map(scoreWith);
+    const tied = scores.find((s) => scores.filter((other) => other === s).length > 1);
+    assert.ok(tied !== undefined, 'fixture must contain a tie for this to test anything');
+    // Two of three tie at the bottom: (0 below + 2/2 equal) / 3.
+    assert.equal(drawPercentile(hand, pile, [4], tied), 1 / 3);
+  });
+
+  test('is a percentile, so it never leaves 0-1', () => {
+    for (const card of pile) {
+      const p = drawPercentile(hand, pile, [4], scoreWith(card));
+      assert.ok(p >= 0 && p <= 1, `${p} out of range`);
+    }
+  });
+
+  // Luck must not be movable by playing better or worse — the old drawFortune
+  // graded the result against the player's OWN chosen EV, so a deliberately
+  // bad discard lowered the bar and inflated the meter (measured correlation
+  // with choice quality: -0.49). A percentile has no such input.
+  test('does not read the chosen EV, so a worse choice cannot inflate it', () => {
+    const median = pile.map(scoreWith).sort((a, b) => a - b)[1];
+    // Same draw, same result, scored identically no matter what else was on
+    // the table — there is no EV parameter to pass.
+    assert.equal(drawPercentile(hand, pile, [4], median), drawPercentile(hand, pile, [4], median));
+    assert.equal(drawPercentile.length, 4); // (hand, pile, discardIndices, actualScore)
   });
 });
 

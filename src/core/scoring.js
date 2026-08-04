@@ -1,4 +1,5 @@
 import { evaluateHand, handStrengthIndex, contributingIndices, longestConsecutiveRunIndices } from './hand-evaluator.js';
+import { choiceQuality } from './ev-solver.js';
 import { evaluateBonuses } from './bonus-registry.js';
 import {
   RARITY_BY_ID,
@@ -99,10 +100,20 @@ export function cleanFinishBonus(finalHandResult) {
 
 // 🎯 Optimal Discard — scaled credit for how close the chosen discard's EV
 // was to the best possible EV among all discard choices for this hand.
+//
+// Derives from choiceQuality() rather than recomputing the percentile, so this
+// bonus and the Decision Rating / Skill meter can never disagree about the same
+// discard. They were always meant to be the same measurement; keeping two
+// copies of the formula is how "the scorer and the proof strip broke run ties
+// in opposite directions" happened once already.
 export function optimalDiscardBonus({ chosenEV, bestEV, worstEV }) {
-  if (bestEV === worstEV) return OPTIMAL_DISCARD_MAX_BONUS;
-  const percentile = (chosenEV - worstEV) / (bestEV - worstEV);
-  return Math.round(clamp(percentile, 0, 1) * OPTIMAL_DISCARD_MAX_BONUS);
+  const quality = choiceQuality({ chosenEV, bestEV, worstEV });
+  // null = every legal option had identical EV, so no choice could be wrong.
+  // Paying the max is the long-standing behaviour here; verify-run.js drops a
+  // degenerate context before it ever reaches this, and board.js suppresses the
+  // bonus outright when there was no decision to grade.
+  if (quality === null) return OPTIMAL_DISCARD_MAX_BONUS;
+  return Math.round(quality * OPTIMAL_DISCARD_MAX_BONUS);
 }
 
 function clamp(value, min, max) {

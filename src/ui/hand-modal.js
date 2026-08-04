@@ -95,7 +95,13 @@ function ratingHtml(result) {
   // null is meaningful, not missing: Double or Nothing removes the choice, so
   // there is nothing to rate and §11y decided to say so rather than show a 0%
   // that reads as a bad decision the player never made.
-  const ratingText = Number.isFinite(rating) ? `${Math.round(rating * 100)}%` : 'Not measured';
+  //
+  // Capped at 100% because this modal opens rows from any point in the game's
+  // history, including runs stored while the rating was actualScore/bestEV and
+  // deliberately unbounded above. Those rows really do hold 3.4 and 14.0, and
+  // "1,400%" beside a scale that now tops out at 100% reads as a rendering bug
+  // rather than as an old number. Same cap player-stats.js applies.
+  const ratingText = Number.isFinite(rating) ? `${Math.round(Math.min(rating, 1) * 100)}%` : 'Not measured';
   return `
     <p class="hand-modal-rating">
       <span>Decision Rating: <strong>${escapeHtml(ratingText)}</strong></span>

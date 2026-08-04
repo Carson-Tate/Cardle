@@ -1,9 +1,10 @@
 import { dealHand, suitGlyph, rankLabel, RANKS, SUITS, createDeck, createRng, shuffle, rarityForRoll, freshSeed } from '../core/deck.js';
 import { evaluateHand } from '../core/hand-evaluator.js';
 import { scoreRun } from '../core/scoring.js';
-import { findEV, decisionRating } from '../core/ev-solver.js';
-import { solveOptimalDiscardAsync } from '../state/solver.js';
-import { computeMeters } from '../core/meters.js';
+import { findEV, choiceQuality } from '../core/ev-solver.js';
+import { solveOptimalDiscardAsync, drawPercentileAsync } from '../state/solver.js';
+import { computeMeters, dealQualityPercent } from '../core/meters.js';
+import { openMetersHelp } from './meters-help.js';
 import { classifyPersonality, PERSONALITIES } from '../core/personality.js';
 import { evaluateAchievements, ACHIEVEMENTS } from '../core/achievements.js';
 import { getTodayResult, saveTodayResult, getOrCreateTodaySeed, dayNumber } from '../state/persistence.js';
@@ -852,9 +853,9 @@ export function initBoard(root) {
     //   - optimalDiscardBonus short-circuits on `bestEV === worstEV` and pays
     //     the full OPTIMAL_DISCARD_MAX_BONUS, with a badge reading "your discard
     //     matched the mathematically best play" — for a round with no discard.
-    //   - decisionRating compares the score against best.ev, which is the same
-    //     five cards, so it is exactly 1.0. That pins Skill at 100% and unlocks
-    //     `flawless` ("play a round with a perfect decision rating").
+    //   - the Decision Rating compared the score against best.ev, which is the
+    //     same five cards, so it was exactly 1.0. That pinned Skill at 100% and
+    //     unlocked `flawless` ("play a round with a perfect decision rating").
     // Roughly one day in thirteen handed every player who took the wager the
     // game's "you played perfectly" rewards for nothing.
     //
@@ -862,6 +863,8 @@ export function initBoard(root) {
     // either, and a 0% Skill reading would be just as untrue as 100%. Omitting
     // evContext drops the bonus and its badge, and a null rating is the shape
     // progression.js and player-stats.js already treat as "not measured".
+    // choiceQuality() now returns null for the same case on its own, so this
+    // flag and the function agree rather than one covering for the other.
     const hadAChoice = evByDiscard.length > 1;
 
     const score = scoreRun({
@@ -873,18 +876,66 @@ export function initBoard(root) {
       evContext: hadAChoice ? { chosenEV, bestEV: best.ev, worstEV: worst.ev } : undefined,
       modifierMultiplier: modifierScoringMultiplier(dailyModifier),
     });
-    const rating = hadAChoice ? decisionRating(score.baseScore, best.ev) : null;
+    const rating = hadAChoice ? choiceQuality({ chosenEV, bestEV: best.ev, worstEV: worst.ev }) : null;
+
+    // Luck's draw half. Ranks the hand that actually came against every hand
+    // that could have come off the pile for this same discard — exact, not
+    // sampled. Started here and awaited below so it overlaps the reveal
+    // animation instead of adding to it; it is one option's worth of
+    // enumeration (C(47,3) = 16,215 in the common case), and it resolves to
+    // null when the player held pat and there was no draw at all.
+    const drawLuckPromise = drawPercentileAsync(originalHand, drawPile, discardIndices, score.baseScore)
+      .catch(() => null);
 
     const originalHandResult = evaluateHand(originalHand);
+
+    // THE REVEAL RUNS FIRST, and the meters are computed against its result
+    // afterwards. Everything below needs the draw percentile, which is the one
+    // piece of this that costs real time — C(47,5) = 1.5M evaluations on a
+    // Clean Slate day. Flipping the cards over while the worker counts means
+    // that cost lands inside an animation the player is already watching
+    // rather than in front of it. Nothing the reveal touches reads meters,
+    // personality or achievements, so the reorder is invisible except for the
+    // wait it removes.
+    await revealDrawnCards(discardIndices, finalHand, token);
+    if (token !== dealToken) return; // a redeal fired mid-reveal — don't show a stale score for a hand that's no longer on screen
+
+    const drawLuck = await drawLuckPromise;
+    if (token !== dealToken) return; // awaiting the percentile is another chance for a redeal to land
+
     const meters = computeMeters({
       originalHandResult,
-      actualScore: score.baseScore,
-      chosenEV,
-      bestEV: best.ev,
       decisionRating: rating,
+      dealBestEV: best.ev,
+      drawPercentile: drawLuck,
       discardedCount: discardIndices.length,
       maxDiscards,
     });
+
+    // What the "?" panel reads (ui/meters-help.js). Stored with the run rather
+    // than recomputed, because renderAlreadyPlayed() rebuilds the whole result
+    // from the saved row and has no solver output to hand — and re-solving to
+    // explain a number is not worth seconds of a returning player's time.
+    // Derived figures only, no EV arrays: this rides along in daily_plays.result.
+    const metersExplain = {
+      ...meters,
+      choiceRank: hadAChoice ? evByDiscard.filter((entry) => entry.ev > chosenEV).length + 1 : null,
+      choiceCount: hadAChoice ? evByDiscard.length : null,
+      dealQuality: dealQualityPercent(best.ev, { maxDiscards }),
+      // The panel's wording for the deal changes with the yardstick: on a day
+      // that forbids discarding there is no "what a perfect player could get".
+      dealMeasuredPat: maxDiscards === 0,
+      // Risk counts discarded cards and a wager round discards none, so it
+      // reads 0% for the biggest bet in the game. The panel says so rather
+      // than claiming nothing was at stake.
+      wagered: dailyModifier.wagered === true,
+      drawPercentile: Number.isFinite(drawLuck) ? drawLuck * 100 : null,
+      discardedCount: discardIndices.length,
+      maxDiscards,
+      originalHandLabel: originalHandResult.label,
+      originalHandScore: originalHandResult.score,
+    };
+
     const personality = classifyPersonality({
       meters,
       discardedCount: discardIndices.length,
@@ -910,9 +961,6 @@ export function initBoard(root) {
       ({ newlyUnlocked } = markAchievementsUnlocked(stats, eligibleIds));
     }
 
-    await revealDrawnCards(discardIndices, finalHand, token);
-    if (token !== dealToken) return; // a redeal fired mid-reveal — don't show a stale score for a hand that's no longer on screen
-
     const result = {
       dayNumber: dayNumber(today),
       originalHand,
@@ -921,6 +969,7 @@ export function initBoard(root) {
       score,
       decisionRating: rating,
       meters,
+      metersExplain,
       personalityId: personality.id,
       newlyUnlocked,
       // THE SERVER'S INPUTS (§11z). submit-run ignores the score above and
@@ -1028,6 +1077,7 @@ export function initBoard(root) {
     lockInBtn.hidden = true;
     resultPanel.hidden = false;
     resultPanel.innerHTML = staticResultHtml(result);
+    wireMetersHelp(resultPanel, result.metersExplain);
     // The reload path needs it too — and this is where it earns its keep, since
     // the field has grown since the run was locked in.
     renderStanding(resultPanel, result.score?.total ?? 0);
@@ -1348,7 +1398,7 @@ async function revealScore(resultPanel, result, fragments, shareBtn = null) {
     <div class="score-grade" id="score-grade" hidden></div>
     <div class="score-standing" id="score-standing" hidden></div>
     <ul class="score-breakdown" id="score-breakdown"></ul>
-    <p class="decision-rating" id="decision-rating" hidden>Decision Rating: <strong id="decision-rating-value">0%</strong></p>
+    <p class="decision-rating" id="decision-rating" hidden>Decision Rating: <strong id="decision-rating-value">0%</strong>${metersHelpButtonHtml()}</p>
     <div class="meters" id="meters" hidden></div>
     <div class="personality-badge" id="personality-badge" hidden></div>
     <div class="story-block" id="story-block" hidden></div>
@@ -1434,14 +1484,24 @@ async function revealScore(resultPanel, result, fragments, shareBtn = null) {
 
   const ratingWrap = resultPanel.querySelector('#decision-rating');
   const ratingValueEl = resultPanel.querySelector('#decision-rating-value');
-  // HIDDEN when there was no decision to grade — a Double or Nothing round
+  // AN EM DASH when there was no decision to grade — a Double or Nothing round
   // locks in with zero discards, so there is no choice to rate. It used to show
-  // "0%" in that case (the `?? 0` below), which reads as "you played terribly"
-  // for a round the player was never allowed to play. Absent is the honest
-  // presentation: not measured, rather than measured badly.
+  // "0%" here (the `?? 0` below), which reads as "you played terribly" for a
+  // round the player was never allowed to play, and was then changed to hide
+  // the line outright.
+  //
+  // Hiding was right while there was nothing to explain, and stopped being
+  // right the moment the "?" existed: the Skill meter three lines below now
+  // shows "—" for the same run, so an absent Decision Rating left the panel
+  // contradicting itself, and it took away the button that answers the exact
+  // question a dash provokes. The help panel has a branch for this case that
+  // says why in a sentence. Show the dash, keep the "?".
   const ratingPct = Number.isFinite(rating) ? Math.round(rating * 100) : null;
-  ratingWrap.hidden = ratingPct === null;
-  if (ratingPct !== null) {
+  ratingWrap.hidden = false;
+  wireMetersHelp(resultPanel, result.metersExplain);
+  if (ratingPct === null) {
+    ratingValueEl.textContent = '—';
+  } else {
     await animateCountUp(ratingValueEl, 0, ratingPct, 500, { suffix: '%' });
   }
 
@@ -1627,9 +1687,48 @@ function wireTestAccountPanel(panel) {
 
 // Sets the fill width directly (CSS transitions the visual bar) while
 // animating the percentage text alongside it.
+// The "?" beside Decision Rating (owner request). A <button>, not an icon with
+// a click handler on a <span>: it opens a dialog in-page, so it needs to be
+// focusable, Enter/Space-activatable and announced as a control, none of which
+// come free — the opposite call from the Discord link in the header, which is
+// navigation and is therefore an <a>.
+function metersHelpButtonHtml() {
+  return ' <button type="button" class="meters-help-btn" id="meters-help-btn" aria-label="How this run was rated">?</button>';
+}
+
+// Both the live reveal and renderAlreadyPlayed() wire the same button against
+// the same stored block, so a replayed run explains itself identically to a
+// fresh one. `metersExplain` is absent on rows written before this shipped;
+// the panel is built to say less rather than to throw, but there is no reason
+// to offer a button that would open an empty box.
+function wireMetersHelp(resultPanel, explain) {
+  const btn = resultPanel.querySelector('#meters-help-btn');
+  if (!btn) return;
+  if (!explain) {
+    btn.remove();
+    return;
+  }
+  btn.addEventListener('click', () => openMetersHelp(explain));
+}
+
+// A meter can be null — "not measured" rather than zero. Skill is null on a
+// Double or Nothing round, where the wager locks in with no discard and there
+// was never a decision to grade. An empty bar and an em dash say that; a 0%
+// bar would accuse the player of playing badly in a round they were not
+// allowed to play, and the 100% this used to default to was worse still.
+function isMeasured(value) {
+  return Number.isFinite(value);
+}
+
 async function animateMeterFill(container, id, value) {
   const fillEl = container.querySelector(`#meter-fill-${id}`);
   const valueEl = container.querySelector(`#meter-value-${id}`);
+  if (!isMeasured(value)) {
+    fillEl.style.width = '0%';
+    valueEl.textContent = '—';
+    valueEl.closest('.meter')?.classList.add('meter--unmeasured');
+    return;
+  }
   fillEl.style.width = `${value}%`;
   await animateCountUp(valueEl, 0, value, 500, { suffix: '%' });
 }
@@ -1638,10 +1737,10 @@ function staticMetersHtml(meters) {
   return Object.entries(METER_META)
     .map(
       ([id, meta]) => `
-        <div class="meter">
+        <div class="meter${isMeasured(meters[id]) ? '' : ' meter--unmeasured'}">
           <span class="meter-label">${meta.emoji} ${meta.label}</span>
-          <div class="meter-track"><div class="meter-fill meter-fill--${id}" style="width:${meters[id]}%"></div></div>
-          <span class="meter-value">${meters[id]}%</span>
+          <div class="meter-track"><div class="meter-fill meter-fill--${id}" style="width:${isMeasured(meters[id]) ? meters[id] : 0}%"></div></div>
+          <span class="meter-value">${isMeasured(meters[id]) ? `${meters[id]}%` : '—'}</span>
         </div>
       `,
     )
@@ -1854,7 +1953,7 @@ function staticResultHtml(result) {
         <div class="score-standing" id="score-standing" hidden></div>`;
     })()}
     ${breakdownListHtml(result)}
-    <p class="decision-rating">Decision Rating: <strong>${ratingPct}</strong></p>
+    <p class="decision-rating">Decision Rating: <strong>${ratingPct}</strong>${metersHelpButtonHtml()}</p>
     <div class="meters">${staticMetersHtml(meters)}</div>
     <div class="personality-badge">${personalityHtml(personalityId)}</div>
     <div class="story-block" id="story-block"></div>

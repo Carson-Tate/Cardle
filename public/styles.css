@@ -4622,3 +4622,115 @@ header h1 {
   color: #5865f2; /* Discord blurple — the one place a brand colour belongs */
   border-color: #5865f2;
 }
+
+/* ── The "?" beside Decision Rating, and its panel ──────────────────────────
+   Sized against the value it sits next to rather than against the header's
+   help circle: this one is inline in a 1.1rem sentence, so a 26px ring like
+   the header's would tower over the text it annotates. 1.35em keeps it
+   proportional if .decision-rating is ever resized (defined at .decision-rating
+   above — deliberately not restated here, since two copies of a font-size is
+   how the last three cascade bugs in this file started). */
+.meters-help-btn {
+  width: 1.35em;
+  height: 1.35em;
+  padding: 0;
+  margin-left: 0.4em;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.72em;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  /* Grid rather than line-height centring for the same reason the Discord mark
+     needed its own nudge: a lone "?" has no descender, so it rides high in its
+     line box and any vertical padding tuned for text lands it off-centre. */
+  display: inline-grid;
+  place-items: center;
+  vertical-align: middle;
+  /* vertical-align: middle centres the BOX against the parent's baseline plus
+     half an x-height, which leaves the circle sitting low against digits — the
+     digits have no descender and so use the top of their line box, while the
+     circle uses all of its own. Measured from rendered pixels rather than the
+     box model (the box model was the thing that agreed with the bug last
+     time): -0.08em overcorrected to 0.50px high, -0.04em leaves 0.25px, which
+     is half a device pixel at dpr 2 and therefore at the antialiasing floor.
+     Identical in both themes. Ink heights 9.0px for the "?" against 9.5px for
+     the digits beside it — the Discord mark's fault was a glyph twice the
+     weight of its neighbour, and this is not that. */
+  transform: translateY(-0.04em);
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.meters-help-btn:hover,
+.meters-help-btn:focus-visible {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+/* "Not measured" — an empty track and an em dash. Dimmed so it reads as absent
+   rather than as a genuine zero, which is the distinction the whole null path
+   exists to preserve. */
+.meter--unmeasured .meter-value,
+.meter--unmeasured .meter-label {
+  opacity: 0.55;
+}
+
+.modal--meters-help {
+  max-width: 540px; /* matches .modal--help: same reading measure, same wall-of-text risk */
+}
+
+.meters-help-section {
+  margin: 0 0 1.2rem;
+}
+
+.meters-help-section:last-of-type {
+  margin-bottom: 0.9rem;
+}
+
+.meters-help-section h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+}
+
+.meters-help-section p {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.meters-help-section ul {
+  margin: 0 0 0.5rem;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+/* Scoped through .meters-help-section so this beats `.meters-help-section p`
+   (0,1,1) on specificity rather than on !important. A bare .meters-help-note
+   is (0,1,0) and would lose silently — the exact failure this stylesheet has
+   now been caught by three times. */
+.meters-help-section .meters-help-note,
+.meters-help-footer {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.meters-help-footer {
+  margin: 0;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+  line-height: 1.5;
+}
+
+/* "not measured" in a meters-help heading — regular weight and muted, so the
+   heading still reads as a heading and the absence reads as an absence. */
+.meters-help-section h3 .meters-help-absent {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}

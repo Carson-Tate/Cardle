@@ -55,6 +55,35 @@ export const HAND_DESCRIPTIONS = {
   ROYAL_FLUSH: '10 through Ace, all one suit — the best hand in poker.',
 };
 
+// Names a rarity/wild badge.
+//
+// A rare card is named by the card it IS. A wild is named by the card it
+// PLAYED AS — never by its own dealt rank and suit, which §3t established are
+// meaningless leftover data from wherever that card landed in the shuffle and
+// are "not something the player experiences directly".
+//
+// THIS READ `item.rarity === 'joker'`, WHICH IS THE LEGACY SHAPE ONLY. §3x made
+// wildness a card property, so a modern wild arrives here as `rarity: 'wild'`,
+// missed that check, and fell through to the ordinary rare-card branch — which
+// appends the card's own dealt rank and suit. The result was a badge titled
+// "Wild 4♣" sitting directly on top of its own proof strip showing 🃏5♦: the
+// same card named two different ways, two lines apart, which is exactly the
+// contradiction §3t existed to remove. It also handed the wild the wrong
+// description ("A rare card, worth extra points just for showing up").
+//
+// miniCardStripHtml, 200 lines below, had already been caught by this identical
+// legacy check and fixed with a comment explaining it. The check survived up
+// here because a wild that names no rank looks correct either way — the bug
+// only becomes visible once the wrong rank is printed beside a right one.
+function rarityBadgeLabel(item, logicalCard) {
+  const named = isWild(item.card) ? logicalCard : item.card;
+  // A wild with nowhere to point (discarded, or a row stored before
+  // logicalFinalHand existed) is just "Wild" / "Gold Wild", the pre-§3x
+  // rendering — no rank is better than a meaningless one.
+  if (!named) return item.label;
+  return `${item.label} ${rankLabel(named.rank)}${suitGlyph(named.suit)}`;
+}
+
 // Each badge carries everything the RNGDLE-style breakdown card needs
 // (owner request, "like the attached picture"): a category `tag`, a plain-
 // English `description` of why it fired, and `highlightIndices` — which of
@@ -132,31 +161,31 @@ export function buildScoreBadges(score, finalHand, discardIndices = []) {
     });
   }
 
+  // The logical hand, same fallback breakdownListHtml uses for the proof
+  // strips — so a badge's title and the strip directly beneath it are built
+  // from ONE source and cannot name two different cards.
+  const logicalFinalHand = score.logicalFinalHand ?? finalHand ?? [];
+
   for (const item of score.rarity.items) {
-    const label =
-      item.rarity === 'joker'
-        ? item.label // already "<Flavor> Wild", e.g. "Gold Wild" — see rarityBonus()
-        : `${item.label} ${rankLabel(item.card.rank)}${suitGlyph(item.card.suit)}`;
     const tierForTag = item.rarity === 'joker' ? (item.jokerTier ?? 'bronze') : item.rarity;
     badges.push({
       key: `rarity-${item.index}`,
       tag: tierForTag.toUpperCase(),
       emoji: item.emoji,
-      label,
+      label: rarityBadgeLabel(item, logicalFinalHand[item.index]),
       value: item.points,
-      description:
-        item.rarity === 'joker'
-          ? 'A wild card — completes the best possible hand, whatever that takes.'
-          : 'A rare card, worth extra points just for showing up.',
+      description: isWild(item.card)
+        ? 'A wild card — completes the best possible hand, whatever that takes.'
+        : 'A rare card, worth extra points just for showing up.',
       highlightIndices: [item.index],
     });
   }
 
   for (const item of score.discardedRarity.items) {
-    const label =
-      item.rarity === 'joker'
-        ? item.label // already "<Flavor> Wild", e.g. "Gold Wild" — see discardedRarityBonus()
-        : `${item.label} ${rankLabel(item.card.rank)}${suitGlyph(item.card.suit)}`;
+    // NO LOGICAL CARD FOR A DISCARD. `item.index` points into the discarded
+    // cards, not the final hand, and a wild that was thrown away never
+    // substituted for anything — so it is named "Wild" with no rank at all.
+    const label = rarityBadgeLabel(item, null);
     const tierForTag = item.rarity === 'joker' ? (item.jokerTier ?? 'bronze') : item.rarity;
     badges.push({
       key: `discard-rarity-${item.index}`,

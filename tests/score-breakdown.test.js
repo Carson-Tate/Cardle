@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildScoreBadges, badgeCardHtml, breakdownListHtml } from '../src/ui/score-breakdown.js';
 import { scoreRun } from '../src/core/scoring.js';
-import { dealHand, freshSeed } from '../src/core/deck.js';
+import { dealHand, freshSeed, rankLabel, suitGlyph } from '../src/core/deck.js';
 
 // score-breakdown.js is pure string building over a stored result, which is the
 // whole reason it could be lifted out of board.js — so it is testable in Node
@@ -125,5 +125,76 @@ describe('badgeCardHtml escapes what it renders', () => {
   test('a negative value renders with a minus, not a plus', () => {
     const badge = { key: 'modifier', tag: 'MODIFIER', emoji: '💥', label: 'Busted', value: -500, description: '', highlightIndices: [] };
     assert.ok(badgeCardHtml(badge, [], [], -500).includes('>-500<'));
+  });
+});
+
+// A WILD IS NAMED BY THE CARD IT PLAYED AS, NEVER BY ITS OWN DEALT ONE.
+//
+// Owner bug report, with a screenshot: "it says the wild counted as a 4 in the
+// breakdown but was actually a 5 in his hand." The badge read "Wild 4♣" — the
+// wild's own dealt rank and suit, which §3t established are meaningless
+// leftover data from the shuffle — while the proof strip printed directly
+// beneath that same badge read "🃏5♦", the card it actually played as.
+//
+// The cause was `item.rarity === 'joker'`, the LEGACY wild shape. §3x moved
+// wildness onto the card as `wild: true`, so a modern wild missed that branch
+// and fell through to the ordinary rare-card one, which appends the card's own
+// rank and suit. miniCardStripHtml had already been caught by the identical
+// check and fixed; this copy survived because a wild that prints no rank looks
+// right either way.
+describe('a wild badge names its substituted card, not its dealt one', () => {
+  const wild = (rank, suit, rarity = null) => ({ rank, suit, rarity, jokerTier: null, wild: true });
+  // The reported hand: dealt 2♥ 4♥ [wild printed as 4♣] Q♠ 3♥, threw the queen,
+  // drew the 9♣. The wild plays as a 5 to complete 2-3-4-5.
+  const original = [c(2, 'H'), c(4, 'H'), wild(4, 'C'), c(12, 'S'), c(3, 'H')];
+  const finalHand = [c(2, 'H'), c(4, 'H'), wild(4, 'C'), c(9, 'C'), c(3, 'H')];
+  const result = storedResult({ originalHand: original, discardIndices: [3], finalHand });
+  const wildBadge = () =>
+    buildScoreBadges(result.score, result.finalHand, result.discardIndices).find((b) => b.label.includes('Wild'));
+
+  test('the hand really is a Four Straight built on the wild', () => {
+    assert.equal(result.score.handResult.id, 'FOUR_STRAIGHT');
+    assert.equal(result.score.logicalFinalHand[2].rank, 5, 'the wild should play as a 5');
+  });
+
+  test('does not name the wild by its dealt rank', () => {
+    const badge = wildBadge();
+    assert.ok(badge, 'a wild badge should exist');
+    assert.ok(!badge.label.includes('4♣'), `badge named the dealt card: "${badge.label}"`);
+  });
+
+  // The defect stated directly: a badge and the proof strip under it are two
+  // renderings of one card and must never disagree. This survives any future
+  // change to which rank or suit the substitution search happens to pick,
+  // which two hardcoded assertions would not.
+  test('names the same card its own proof strip highlights', () => {
+    const badge = wildBadge();
+    const [index] = badge.highlightIndices;
+    const shown = result.score.logicalFinalHand[index];
+    assert.ok(
+      badge.label.endsWith(`${rankLabel(shown.rank)}${suitGlyph(shown.suit)}`),
+      `badge "${badge.label}" disagrees with its strip chip ${rankLabel(shown.rank)}${suitGlyph(shown.suit)}`,
+    );
+  });
+
+  test('gets the wild description, not the generic rare-card one', () => {
+    assert.match(wildBadge().description, /wild card/i);
+  });
+
+  test('an ordinary rare card is still named by the card it is', () => {
+    const rare = [c(13, 'S', 'gold'), c(13, 'H'), c(13, 'D'), c(8, 'C'), c(8, 'S')];
+    const res = storedResult({ originalHand: rare, finalHand: rare });
+    const badge = buildScoreBadges(res.score, res.finalHand, res.discardIndices).find((b) => b.tag === 'GOLD');
+    assert.ok(badge, 'a gold badge should exist');
+    assert.ok(badge.label.endsWith('K♠'), `expected the card's own rank, got "${badge.label}"`);
+  });
+
+  test('a DISCARDED wild carries no rank at all — it never substituted for anything', () => {
+    const dealt = [c(2, 'H'), c(4, 'H'), wild(4, 'C'), c(12, 'S'), c(3, 'H')];
+    const kept = [c(2, 'H'), c(4, 'H'), c(7, 'D'), c(12, 'S'), c(3, 'H')];
+    const res = storedResult({ originalHand: dealt, discardIndices: [2], finalHand: kept });
+    const badge = buildScoreBadges(res.score, res.finalHand, res.discardIndices).find((b) => b.label.includes('Wild'));
+    assert.ok(badge, 'a discarded-wild badge should exist');
+    assert.equal(badge.label, 'Discarded Wild', `got "${badge.label}"`);
   });
 });

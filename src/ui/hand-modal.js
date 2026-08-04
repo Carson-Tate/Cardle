@@ -19,6 +19,7 @@
 
 import { openModal } from './modal.js';
 import { breakdownListHtml } from './score-breakdown.js';
+import { logicalCardsFor } from '../core/scoring.js';
 import { gradeForScore } from '../core/score-grade.js';
 import { PERSONALITIES } from '../core/personality.js';
 import { isWild } from '../core/rarity.js';
@@ -44,12 +45,26 @@ function formatDate(isoDate) {
 // the profile/leaderboard's `.history-card` — inside this modal every other
 // card is a proof-strip chip, and two card sizes in one panel reads as a
 // mistake. `discarded` marks the ones that were thrown.
-function chipHtml(card, { discarded = false } = {}) {
+// A WILD IS NEVER LABELLED WITH ITS OWN DEALT RANK. §3t: those fields are
+// leftover data from wherever the card landed in the shuffle, and the board
+// never shows them either — a wild on the table renders as a jester face with
+// no rank at all. These rows were printing them anyway, so a wild that played
+// as a 5 appeared here as "4♣" while every proof strip lower down the same
+// modal showed "🃏5♦" (owner bug report).
+//
+// `playsAs` is the card it actually resolved to, which only exists for the
+// final hand. Without one, a wild shows the bare 🃏 the `.mini-card--wild`
+// style already supplies — matching the board and the profile's hand history,
+// and saying "this is a wildcard" without inventing an identity for it.
+function chipHtml(card, { discarded = false, playsAs = null } = {}) {
   if (!card || typeof card !== 'object') return '';
-  const color = card.suit === 'H' || card.suit === 'D' ? 'mini-card--red' : 'mini-card--black';
-  const wild = isWild(card) ? ' mini-card--wild' : '';
+  const wild = isWild(card);
+  const named = wild ? playsAs : card;
+  const color = named?.suit === 'H' || named?.suit === 'D' ? 'mini-card--red' : 'mini-card--black';
+  const wildClass = wild ? ' mini-card--wild' : '';
   const thrown = discarded ? ' mini-card--discarded' : '';
-  return `<span class="mini-card ${color}${wild}${thrown}">${rankLabel(card.rank)}${suitGlyph(card.suit)}</span>`;
+  const face = named ? `${rankLabel(named.rank)}${suitGlyph(named.suit)}` : '';
+  return `<span class="mini-card ${color}${wildClass}${thrown}">${face}</span>`;
 }
 
 // What they were dealt and what they did with it — the decision, which is the
@@ -60,11 +75,34 @@ function chipHtml(card, { discarded = false } = {}) {
 // that modifier rebinds the hand between rounds (§11z). So this shows the
 // last discard decision, which is the one `discardIndices` describes — the
 // two always agree with each other, which is what matters for the markers.
-function drawHtml(result) {
+function logicalFallback(finalHand, handResult) {
+  if (!handResult) return [];
+  try {
+    return logicalCardsFor(finalHand, handResult);
+  } catch {
+    return [];
+  }
+}
+
+// Exported for tests. Pure string building over a stored result, exactly like
+// score-breakdown.js — which was lifted out of board.js for this reason — so it
+// can be checked in Node even though the rest of this module needs a browser.
+export function drawHtml(result) {
   const original = Array.isArray(result.originalHand) ? result.originalHand : null;
   const finalHand = Array.isArray(result.finalHand) ? result.finalHand : [];
   if (!original || original.length === 0) return '';
 
+  // Same source as the badge labels and proof strips below, so all three
+  // renderings of the wild in this one modal name the same card.
+  //
+  // Rows written before §3t have no `logicalFinalHand`, and this modal opens
+  // rows from any point in the game's history. Recomputing beats falling back
+  // to `finalHand`, which for a wild is precisely the meaningless dealt card
+  // this is here to stop showing. If even that fails, an empty array leaves
+  // wilds rankless rather than wrong.
+  const logical = Array.isArray(result.score?.logicalFinalHand)
+    ? result.score.logicalFinalHand
+    : logicalFallback(finalHand, result.score?.handResult);
   const discarded = new Set(Array.isArray(result.discardIndices) ? result.discardIndices : []);
   const thrown = discarded.size;
   const caption =
@@ -82,7 +120,9 @@ function drawHtml(result) {
       </div>
       <div class="hand-modal-draw-row">
         <span class="hand-modal-draw-label">Kept</span>
-        <span class="hand-modal-draw-cards">${finalHand.map((card) => chipHtml(card)).join('')}</span>
+        <span class="hand-modal-draw-cards">${finalHand
+          .map((card, i) => chipHtml(card, { playsAs: logical[i] }))
+          .join('')}</span>
       </div>
       <p class="hand-modal-draw-caption">${escapeHtml(caption)}</p>
     </div>

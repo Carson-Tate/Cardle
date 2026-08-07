@@ -3251,6 +3251,19 @@ header h1 {
   background: color-mix(in srgb, var(--red) 10%, transparent);
 }
 
+/* The full day reset (§11aj). A section-level red tint rather than just a red
+   button, because the button is the same .profile-delete-btn used for deleting
+   one player and nothing else on the page distinguishes "this affects everyone".
+   Border and title only — a filled panel would read as an error state on a page
+   that already uses a red fill for exactly that (.admin-notice--error). */
+.admin-danger {
+  border-color: color-mix(in srgb, var(--red) 40%, var(--border));
+}
+
+.admin-danger .profile-section-title {
+  color: var(--red);
+}
+
 .admin-schedule {
   list-style: none;
   margin: 0;

@@ -18,6 +18,7 @@ import {
   adminSetCosmetics,
   adminSetUnlocks,
   adminResetDay,
+  adminResetTodayForEveryone,
   adminDeletePlayer,
   adminRenamePlayer,
   adminListBlockedWords,
@@ -254,9 +255,53 @@ export async function initAdmin(root) {
         ${customCosmeticsHtml()}
         ${searchHtml()}
         ${selected ? playerHtml() : ''}
+        ${dayResetHtml()}
       </div>
     `;
     wire();
+  }
+
+  // The full day reset (§11aj). Site-wide and destructive, so it is rendered
+  // LAST — below even the per-player panel. Everything above it acts on one
+  // account you had to go looking for; this one acts on everybody at once, and
+  // it should never be something a click lands on while heading somewhere else.
+  function dayResetHtml() {
+    const today = todayIso();
+    const claimed = overview?.claimed_today;
+    return `
+      <section class="profile-section admin-danger">
+        <h3 class="profile-section-title">Danger — Full Day Reset</h3>
+        <p class="admin-hint">
+          Clears <strong>every player's</strong> claimed hand for today
+          (${escapeHtml(formatDate(today))} · Cardle #${dayNumber()}) so the whole
+          site plays the day again from a brand-new deal. Deleting the claim is
+          what releases the seed — blanking the score would leave everyone stuck
+          on the same hand.
+          ${
+            // Omitted rather than guessed when the server predates migration 020,
+            // because a wrong number here is worse than no number.
+            typeof claimed === 'number'
+              ? `<strong>${claimed.toLocaleString()}</strong> ${claimed === 1 ? 'hand is' : 'hands are'} claimed right now, finished and in-progress together.`
+              : ''
+          }
+        </p>
+        <p class="admin-hint">
+          Today's leaderboard empties with them, and so do the XP, levels and
+          streaks earned today — all of that is derived from these rows, so it
+          moves the moment they do. Only today can be reset from here; a single
+          older day is a per-player reset, in the panel above.
+        </p>
+        <p class="admin-hint">
+          Two things it can't reach: a signed-out player's result lives in their
+          own browser's storage, so they will still be told they've played today;
+          and anyone with the game already open keeps their finished board until
+          they reload.
+        </p>
+        <button type="button" class="profile-delete-btn" id="admin-reset-everyone">
+          Reset Today For Everyone
+        </button>
+      </section>
+    `;
   }
 
   function overviewHtml() {
@@ -774,6 +819,8 @@ export async function initAdmin(root) {
 
     root.querySelector('#admin-delete-player')?.addEventListener('click', () => confirmDeletePlayer());
 
+    root.querySelector('#admin-reset-everyone')?.addEventListener('click', () => confirmResetToday());
+
     // Records a pick the moment it is made, so it survives any re-render before
     // Save is clicked. Re-rendering here instead would be simpler but would take
     // focus off the select mid-interaction, so the row's own preview text is
@@ -919,6 +966,77 @@ export async function initAdmin(root) {
         };
         saveConfig(CONFIG_KEYS.CUSTOM_COSMETICS, next, validateCustomCosmetics, `Removed "${id}".`);
       });
+    });
+  }
+
+  // Type-to-confirm, matching confirmDeletePlayer below — the established shape
+  // for anything unrecoverable here, and this is the only other button on the
+  // page that qualifies.
+  //
+  // The phrase to type is the DATE rather than a fixed word like RESET. A fixed
+  // word is muscle memory after the second use; the date forces the one fact
+  // worth re-reading before committing, and it is the fact that goes wrong when
+  // an admin leaves this tab open across the 19:00 rollover.
+  function confirmResetToday() {
+    const today = todayIso();
+    openModal({
+      title: 'Reset Today For Everyone',
+      render: (body, close) => {
+        const claimed = overview?.claimed_today;
+        body.innerHTML = `
+          <p>This deletes <strong>every player's</strong> hand for
+          <strong>${escapeHtml(formatDate(today))}</strong> (Cardle #${dayNumber()})${
+            typeof claimed === 'number'
+              ? ` — <strong>${claimed.toLocaleString()}</strong> ${claimed === 1 ? 'hand' : 'hands'}`
+              : ''
+          }. Everyone plays the day again from a new deal, today's leaderboard
+          empties, and the XP and streaks earned today go with it.
+          <strong>It cannot be undone.</strong></p>
+          <p>Type <strong>${escapeHtml(today)}</strong> to confirm.</p>
+          <form class="login-form" id="admin-reset-all-form">
+            <!-- Deliberately no inputmode="numeric": the phrase contains hyphens,
+                 and iOS's numeric keypad has no hyphen key — it would make the
+                 confirmation untypeable on a phone. -->
+            <input type="text" id="admin-reset-all-input" autocomplete="off" required />
+            <button type="submit" class="profile-delete-btn" id="admin-reset-all-btn" disabled>Reset The Day</button>
+          </form>
+          <p class="login-status" id="admin-reset-all-status" hidden></p>
+        `;
+        const input = body.querySelector('#admin-reset-all-input');
+        const btn = body.querySelector('#admin-reset-all-btn');
+        input.addEventListener('input', () => {
+          btn.disabled = input.value.trim() !== today;
+        });
+        body.querySelector('#admin-reset-all-form').addEventListener('submit', async (event) => {
+          event.preventDefault();
+          if (input.value.trim() !== today) return;
+          btn.disabled = true;
+          try {
+            // The day that was CONFIRMED, not the day at submit time — that's
+            // the whole point of the guard. If the rollover happened while this
+            // modal was open, the server refuses and says so, rather than
+            // clearing a day nobody agreed to.
+            const removed = await adminResetTodayForEveryone(today);
+            close();
+            // Not routed through withNotice: that re-reads the SELECTED player,
+            // whose panel is now showing a day that no longer exists. Reloading
+            // the overview and dropping the selection is what's actually true
+            // afterwards.
+            selected = null;
+            await loadOverview();
+            notice = {
+              kind: 'ok',
+              text: `Reset ${today} for everyone — ${removed.toLocaleString()} ${removed === 1 ? 'hand' : 'hands'} cleared.`,
+            };
+            render();
+          } catch (error) {
+            btn.disabled = false;
+            const status = body.querySelector('#admin-reset-all-status');
+            status.hidden = false;
+            status.textContent = `${error.message ?? error}`;
+          }
+        });
+      },
     });
   }
 

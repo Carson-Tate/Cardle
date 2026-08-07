@@ -108,6 +108,42 @@ export async function adminResetDay(targetId, playDate = null) {
   if (error) throw error;
 }
 
+/**
+ * Clears TODAY's claimed hand for every player, so the whole site replays the
+ * day with fresh deals (§11aj). Resolves to the number of rows removed.
+ *
+ * `expectedDay` DOES NOT CHOOSE THE DAY — `game_today()` decides that inside the
+ * function, and passing an older date aborts rather than reaching it. It is a
+ * rollover guard: the page computes the day when it draws the confirmation and
+ * the server computes it when the delete runs, so at 19:00 New York an admin can
+ * confirm one date and have the server clear the next one, with a row count and
+ * a success notice to match. Sending back the day that was actually confirmed
+ * turns that into an error. See migration 020 for why the restriction has to
+ * live there rather than here: this file is public JavaScript, so a date that
+ * SELECTED the day would put the "today only" rule in the one place that cannot
+ * enforce it.
+ *
+ * No deploy-order fallback (§11z), because there is no older path to fall back
+ * to — before 020 this feature did not exist. What it does instead is name the
+ * missing migration, since "Could not find the function" is otherwise the kind
+ * of error that reads like an outage.
+ */
+export async function adminResetTodayForEveryone(expectedDay = null) {
+  const client = await requireSupabase();
+  const { data, error } = await client.rpc('admin_reset_today_for_everyone', { expected_day: expectedDay });
+  if (error) {
+    // PGRST202: PostgREST could not find a function by that name.
+    if (error.code === 'PGRST202') {
+      throw new Error('Run supabase/migrations/020-full-day-reset.sql first — this function is not installed yet.');
+    }
+    throw error;
+  }
+  // The RPC returns an integer. Coerced rather than trusted, so a null from an
+  // unexpected shape reports "0 runs" instead of "null runs".
+  const removed = Number(data);
+  return Number.isFinite(removed) ? removed : 0;
+}
+
 export async function adminDeletePlayer(targetId) {
   const client = await requireSupabase();
   const { error } = await client.rpc('admin_delete_player', { target_id: targetId });

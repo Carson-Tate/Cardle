@@ -98,6 +98,24 @@ function sanitizeAdvisory(body: Record<string, unknown>) {
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: corsFor(req) });
+
+  // WHICH VERSION OF THIS FUNCTION IS LIVE (§11al). Two deployables have to
+  // move together — this file, and the SQL/bundle that queues stacked deals —
+  // and until now nothing could tell them apart from outside: old and new both
+  // answered every unauthenticated request identically. So "did you remember to
+  // redeploy?" was a documented instruction rather than a checkable fact, and
+  // forgetting it silently scores a rigged hand from the ordinary deal.
+  //
+  // Deliberately unauthenticated and deliberately contentless: it names
+  // capabilities, never data, never config, and nothing here is worth
+  // discovering. The admin page reads it to decide whether queueing a deal is
+  // safe yet (state/daily-play.js, fetchSubmitRunFeatures).
+  //
+  // ADD to `features` when a capability lands; never rename an existing entry,
+  // because an older reader treats an unknown name as absent — which is the
+  // correct failure direction and only stays correct if names are stable.
+  if (req.method === 'GET') return jsonFor(req, { ok: true, features: ['stacked-deals'] });
+
   if (req.method !== 'POST') return jsonFor(req, { error: 'POST only' }, 405);
 
   const authHeader = req.headers.get('Authorization') ?? '';
@@ -153,12 +171,30 @@ Deno.serve(async (req: Request) => {
   ).value;
   const modifier = getDailyModifier(instantWithinGameDay(today), modifierOverrideFor(overrides, today));
 
+  // A STACKED DEAL, if an admin queued one and the player's claim attached it
+  // to today (§11al). Read server-side from the caller's own row, exactly like
+  // the seed and the modifier — the client is never asked which cards it was
+  // dealt, only which ones it threw away. Read through the SERVICE client
+  // because this must work regardless of the table's policies.
+  //
+  // A read failure here is fatal rather than ignored: falling through to the
+  // ordinary deal would score five different cards from the ones the player is
+  // looking at, and pay them for a hand that was never on screen.
+  const { data: stackRow, error: stackError } = await service
+    .from('stacked_deals')
+    .select('cards')
+    .eq('user_id', userId)
+    .eq('play_date', today)
+    .maybeSingle();
+  if (stackError) return jsonFor(req, { error: stackError.message }, 500);
+
   const verified = verifyAndScoreRun({
     seed: Number(row.seed),
     discardRounds: body.discardRounds ?? [[]],
     modifier,
     wagered: body.wagered === true,
     evContext: body.evContext,
+    stackedDeal: stackRow?.cards ?? null,
   });
   if (!verified.ok) return jsonFor(req, { error: 'run rejected', details: verified.errors }, 422);
 

@@ -23,8 +23,16 @@ export async function claimTodaySeed(userId, date = new Date()) {
   const client = await requireSupabase();
   const playDate = isoDate(date);
 
-  const existing = await fetchRow(client, userId, playDate);
-  if (existing) return { seed: Number(existing.seed), result: existing.result };
+  // FETCHED IN PARALLEL WITH THE ROW, so the common path — a reload, or coming
+  // back after playing — costs no extra round trip for a feature that is
+  // almost never active (§11al). Only the first claim of the day has to look
+  // again, because the deal is attached to the row by a trigger DURING that
+  // insert and therefore cannot exist a moment earlier.
+  const [existing, stackedDeal] = await Promise.all([
+    fetchRow(client, userId, playDate),
+    fetchStackedDeal(client, userId, playDate),
+  ]);
+  if (existing) return { seed: Number(existing.seed), result: existing.result, stackedDeal };
 
   const seed = freshSeed();
   const { data: inserted, error: insertError } = await client
@@ -32,16 +40,43 @@ export async function claimTodaySeed(userId, date = new Date()) {
     .insert({ user_id: userId, play_date: playDate, seed })
     .select('seed, result')
     .single();
-  if (!insertError) return { seed: Number(inserted.seed), result: inserted.result };
+  if (!insertError) {
+    return { seed: Number(inserted.seed), result: inserted.result, stackedDeal: await fetchStackedDeal(client, userId, playDate) };
+  }
 
   // Lost a race to claim today's row (e.g. two tabs opened at once) — the
   // other insert won, so read back whatever it actually claimed rather than
   // erroring out.
   if (insertError.code === '23505') {
     const raced = await fetchRow(client, userId, playDate);
-    if (raced) return { seed: Number(raced.seed), result: raced.result };
+    if (raced) {
+      return { seed: Number(raced.seed), result: raced.result, stackedDeal: await fetchStackedDeal(client, userId, playDate) };
+    }
   }
   throw insertError;
+}
+
+// The cards an admin pinned for this player's hand today, or null (§11al).
+//
+// RESOLVES NULL ON ANY FAILURE, deliberately, and this is the one place in
+// this file that swallows an error. The table may not exist yet — migration
+// 021 is applied by hand — and a missing table must degrade to an ordinary
+// deal rather than making the board unplayable for everybody. The cost of
+// being wrong is bounded and self-correcting: the player gets a normal hand,
+// which the server will also score as a normal hand, because the row the
+// trigger never attached is the same row submit-run will not find.
+async function fetchStackedDeal(client, userId, playDate) {
+  const { data, error } = await client
+    .from('stacked_deals')
+    .select('cards')
+    .eq('user_id', userId)
+    .eq('play_date', playDate)
+    .maybeSingle();
+  if (error) {
+    console.warn('Could not read a stacked deal; dealing normally.', error?.message ?? error);
+    return null;
+  }
+  return data?.cards ?? null;
 }
 
 /**
@@ -183,6 +218,45 @@ export async function saveTodayResultForUser(userId, result, date = new Date()) 
   const { error } = await client.from('daily_plays').update({ result }).eq('user_id', userId).eq('play_date', isoDate(date));
   if (error) throw error;
   return null;
+}
+
+/**
+ * What the DEPLOYED submit-run says it can do (§11al).
+ *
+ * Exists because stacked deals need two deployables to move together — the
+ * Edge Function and the migration/bundle that queues them — and a forgotten
+ * `supabase functions deploy` is invisible: the old function accepts the run
+ * and scores it from the ordinary deal, so the player sees a hand nobody
+ * chose and the admin sees a success notice.
+ *
+ * THREE OUTCOMES, NOT TWO, and the third is the point (§11i's rule, and
+ * §11ak's): 'ready' means it advertised the capability, 'stale' means it
+ * answered and did not, 'unknown' means we could not ask. Collapsing unknown
+ * into either of the others is how a warning ends up on the wrong screen.
+ *
+ * @returns {Promise<{status: 'ready'|'stale'|'unknown', features: string[]}>}
+ */
+export async function fetchSubmitRunFeatures(feature = 'stacked-deals') {
+  const client = await requireSupabase();
+  try {
+    // GET, so it needs no body and no session — the function answers this one
+    // before it looks at Authorization at all.
+    const { data, error } = await client.functions.invoke('submit-run', { method: 'GET' });
+    if (error) throw error;
+    const features = Array.isArray(data?.features) ? data.features : [];
+    // An OLD function has no GET branch and answers 405 with `{error}`, which
+    // lands in the catch. A 200 with no `features` key is still an answer, and
+    // it means the capability is absent.
+    return { status: features.includes(feature) ? 'ready' : 'stale', features };
+  } catch (error) {
+    // 405 is a definitive answer from a function that predates this check —
+    // it is deployed, and it is old. Anything else (offline, 404, CORS) is
+    // genuinely unknown.
+    const status = error?.context?.status ?? error?.status;
+    if (status === 405) return { status: 'stale', features: [] };
+    console.warn('Could not read submit-run capabilities:', error?.message ?? error);
+    return { status: 'unknown', features: [] };
+  }
 }
 
 // The Edge Function's two refusals (supabase/functions/submit-run/index.ts)

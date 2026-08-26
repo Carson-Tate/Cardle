@@ -24,7 +24,21 @@ import {
   adminListBlockedWords,
   adminAddBlockedWords,
   adminRemoveBlockedWord,
+  adminQueueStackedDeal,
+  adminClearStackedDeal,
+  fetchStackedDeals,
 } from '../state/admin.js';
+import {
+  RANKS,
+  SUITS,
+  rankLabel,
+  suitGlyph,
+  normalizeStackedDeal,
+  STACK_HAND_SIZE,
+  STACK_MAX_DRAWS,
+} from '../core/deck.js';
+import { RARITIES } from '../core/rarity.js';
+import { fetchSubmitRunFeatures } from '../state/daily-play.js';
 import { derivePlayerStats } from '../core/player-stats.js';
 import { resolveCosmetics, resolveEquipped, DEFAULT_PAINT_ID } from '../core/cosmetics.js';
 import { nameplateHtml } from './nameplate.js';
@@ -57,6 +71,12 @@ function formatDate(isoDate) {
   return parsed.toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// Opening values for the Stack the Deck slots (§11al) — a recognisable
+// A-K-Q-J-10 spread, purely so the panel doesn't open on five identical 2♠'s.
+// Same reasoning, and the same numbers, as the test-mode builder's defaults.
+const STACK_DEFAULT_RANKS = [14, 13, 12, 11, 10];
+const STACK_DEFAULT_SUITS = ['S', 'H', 'D', 'C', 'S'];
+
 // The current GAME day (§11l), so an admin resetting "today" clears the day the
 // player is actually on rather than whatever the UTC calendar says.
 function todayIso() {
@@ -83,6 +103,14 @@ export async function initAdmin(root) {
   let overview = null;
   let results = [];
   let selected = null; // { profile, history, claimedDays, stats }
+  // The selected player's stacked deals (§11al) — the queued one plus every day
+  // already dealt from one. Kept beside `selected` rather than inside it
+  // because it comes from a different table and reloads on its own schedule.
+  let stackedDeals = [];
+  // Whether the DEPLOYED submit-run understands stacked deals: 'ready',
+  // 'stale' or 'unknown' (§11al). Probed once per page load rather than per
+  // player — it is a property of the deployment, not of who is selected.
+  let submitRunStatus = 'unknown';
   let searchTerm = '';
   let notice = null;
   let gameConfig = null;
@@ -105,7 +133,18 @@ export async function initAdmin(root) {
   let blocklistOpen = false;
   let blockedWords = null;
 
-  await Promise.all([loadOverview(), runSearch(''), loadConfig()]);
+  await Promise.all([
+    loadOverview(),
+    runSearch(''),
+    loadConfig(),
+    // Never rejects — it resolves to 'unknown' on any failure — so it cannot
+    // be the reason the admin page fails to open.
+    fetchSubmitRunFeatures()
+      .then(({ status }) => {
+        submitRunStatus = status;
+      })
+      .catch(() => {}),
+  ]);
   render();
   scheduleGameDayRefresh();
 
@@ -211,8 +250,12 @@ export async function initAdmin(root) {
 
   async function selectPlayer(userId) {
     try {
-      const detail = await fetchPlayerDetail(userId);
+      // Fetched together: the stacked-deal read resolves to [] on any failure
+      // (including the table not existing yet), so it can never be the reason a
+      // player fails to open.
+      const [detail, stacks] = await Promise.all([fetchPlayerDetail(userId), fetchStackedDeals(userId)]);
       selected = { ...detail, stats: derivePlayerStats(detail.history) };
+      stackedDeals = stacks;
     } catch (error) {
       notice = { kind: 'error', text: `Couldn't load that player: ${error.message ?? error}` };
     }
@@ -731,6 +774,8 @@ export async function initAdmin(root) {
           <button type="submit" class="admin-action-btn">Rename</button>
         </form>
 
+        ${stackedDealHtml()}
+
         <h4 class="profile-subheading">Danger</h4>
         <button type="button" class="profile-delete-btn" id="admin-delete-player"${profile.is_admin ? ' disabled' : ''}>
           Delete This Account
@@ -742,6 +787,136 @@ export async function initAdmin(root) {
         }
       </section>
     `;
+  }
+
+  // Stack the Deck (§11al) — choose the exact cards this player is dealt on
+  // their next hand, and the first few they draw if they discard.
+  //
+  // Placed above Danger and below every other per-player action, because it is
+  // the only one here that changes what someone EXPERIENCES rather than what
+  // their profile says — but it is fully reversible while queued, so it does
+  // not belong in Danger itself.
+  function stackedDealHtml() {
+    const queued = stackedDeals.find((d) => d.play_date === null) ?? null;
+    const attached = stackedDeals.filter((d) => d.play_date !== null);
+
+    return `
+      <h4 class="profile-subheading">Stack the Deck</h4>
+      <p class="admin-hint">
+        Sets the exact hand this player opens with on their <strong>next</strong> hand — whenever that is —
+        plus the first ${STACK_MAX_DRAWS} cards off the draw pile, which is what they get if they discard.
+        Leave a draw slot on <em>— random —</em> to let it roll normally. The run scores and appears on the
+        leaderboards like any other; only this panel records that it was stacked.
+        Their board and the server both build the deal from these cards, so the score is real either way.
+      </p>
+      ${
+        queued
+          ? `<p class="admin-notice admin-notice--ok">⚑ A deal is queued for their next hand: ${escapeHtml(
+              describeStack(queued.cards),
+            )}</p>`
+          : ''
+      }
+      <div class="admin-slots" id="admin-stack-hand">
+        ${stackSlotRows(STACK_HAND_SIZE, 'hand', queued?.cards?.hand ?? null)}
+      </div>
+      <p class="admin-hint">Draw pile — dealt in order as they discard.</p>
+      <div class="admin-slots" id="admin-stack-draws">
+        ${stackSlotRows(STACK_MAX_DRAWS, 'draw', queued?.cards?.draws ?? null, { allowEmpty: true })}
+      </div>
+      ${
+        // The deploy-order guard (§11al). A stacked deal queued while an OLD
+        // submit-run is live is scored from the ORDINARY deal — the player sees
+        // cards nobody chose, and every screen here says it worked. Blocked
+        // rather than warned, because there is no version of that outcome worth
+        // having. 'unknown' does NOT block: we could not ask, and refusing on a
+        // failed probe would make the panel unusable on a flaky connection
+        // without preventing anything.
+        submitRunStatus === 'stale'
+          ? `<p class="admin-notice admin-notice--error">The deployed <code>submit-run</code> doesn't know about stacked deals yet, so a queued hand would be scored from the ordinary deal. Run <code>supabase functions deploy submit-run</code>, then reload this page.</p>`
+          : submitRunStatus === 'unknown'
+            ? `<p class="admin-hint">⚠ Couldn't check whether <code>submit-run</code> is up to date. If you haven't run <code>supabase functions deploy submit-run</code> since adding this feature, do that first — otherwise the hand is dealt but scored from the ordinary deal.</p>`
+            : ''
+      }
+      <div class="admin-search">
+        <button type="button" class="admin-action-btn" id="admin-stack-save"${submitRunStatus === 'stale' ? ' disabled' : ''}>Queue This Deal</button>
+        ${queued ? `<button type="button" class="admin-remove-btn" id="admin-stack-clear">Cancel Queued Deal</button>` : ''}
+      </div>
+      ${
+        attached.length > 0
+          ? `<p class="admin-hint">⚑ Already dealt from a stack: ${attached
+              .map((d) => escapeHtml(formatDate(d.play_date)))
+              .join(', ')}. Those days can't be changed — the cards are already scored.</p>`
+          : ''
+      }
+    `;
+  }
+
+  // One row per slot, matching the test-mode Custom Hand Builder's shape
+  // (board.js) so the two look and read the same. A draw row gains a "— random
+  // —" rank, which is how a slot says "don't pin this one" — an empty option is
+  // clearer than a separate checkbox for a thing that is already a dropdown.
+  function stackSlotRows(count, kind, existing, { allowEmpty = false } = {}) {
+    return Array.from({ length: count }, (_, i) => {
+      const card = existing?.[i] ?? null;
+      const rank = card ? Number(card.rank) : STACK_DEFAULT_RANKS[i % STACK_DEFAULT_RANKS.length];
+      const suit = card ? card.suit : STACK_DEFAULT_SUITS[i % STACK_DEFAULT_SUITS.length];
+      return `
+        <div class="admin-slot" data-stack-kind="${kind}">
+          <span class="admin-slot-label">${i + 1}</span>
+          <select class="admin-slot-rank">
+            ${allowEmpty ? `<option value=""${card ? '' : ' selected'}>— random —</option>` : ''}
+            ${RANKS.map(
+              (r) => `<option value="${r}"${card && r === rank ? ' selected' : !allowEmpty && r === rank ? ' selected' : ''}>${rankLabel(r)}</option>`,
+            ).join('')}
+          </select>
+          <select class="admin-slot-suit">
+            ${SUITS.map((s) => `<option value="${s}"${s === suit ? ' selected' : ''}>${suitGlyph(s)}</option>`).join('')}
+          </select>
+          <select class="admin-slot-rarity">
+            <option value=""${card?.rarity ? '' : ' selected'}>— none —</option>
+            ${RARITIES.map(
+              (t) => `<option value="${t.id}"${card?.rarity === t.id ? ' selected' : ''}>${t.emoji} ${t.label}</option>`,
+            ).join('')}
+          </select>
+          <label class="admin-slot-wild">
+            <input type="checkbox" class="admin-slot-wild-input"${card?.wild ? ' checked' : ''} /> 🃏
+          </label>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Scraped from the DOM at click time, the same way the test-mode builder
+  // reads its slots. A draw row whose rank is blank is simply omitted — and
+  // because the pinned draws are consumed in order, a gap in the middle would
+  // be meaningless, so the first blank ends the list rather than leaving a hole.
+  function readStackFromDom() {
+    const readRow = (el) => {
+      const rawRank = el.querySelector('.admin-slot-rank').value;
+      if (rawRank === '') return null;
+      return {
+        rank: Number(rawRank),
+        suit: el.querySelector('.admin-slot-suit').value,
+        rarity: el.querySelector('.admin-slot-rarity').value || null,
+        wild: el.querySelector('.admin-slot-wild-input').checked,
+      };
+    };
+    const hand = [...root.querySelectorAll('#admin-stack-hand .admin-slot')].map(readRow);
+    const draws = [];
+    for (const el of root.querySelectorAll('#admin-stack-draws .admin-slot')) {
+      const card = readRow(el);
+      if (!card) break;
+      draws.push(card);
+    }
+    return { hand, draws };
+  }
+
+  function describeStack(cards) {
+    const check = normalizeStackedDeal(cards);
+    if (!check.ok) return 'malformed — re-save it';
+    const label = (c) => `${rankLabel(c.rank)}${suitGlyph(c.suit)}`;
+    const hand = check.deal.hand.map(label).join(' ');
+    return check.deal.draws.length > 0 ? `${hand}  →  draws ${check.deal.draws.map(label).join(' ')}` : hand;
   }
 
   function equipSelect(label, slot, items, current) {
@@ -802,6 +977,27 @@ export async function initAdmin(root) {
         else current.add(id);
         withNotice(() => adminSetUnlocks(selected.profile.id, [...current]), 'Grants updated.');
       });
+    });
+
+    root.querySelector('#admin-stack-save')?.addEventListener('click', () => {
+      const deal = readStackFromDom();
+      // VALIDATED HERE FIRST, with the same function the board and the Edge
+      // Function run, so a duplicate card is refused with a sentence naming the
+      // slot instead of a Postgres error naming a constraint.
+      const check = normalizeStackedDeal(deal);
+      if (!check.ok) {
+        notice = { kind: 'error', text: check.errors.join(' · ') };
+        render();
+        return;
+      }
+      withNotice(
+        () => adminQueueStackedDeal(selected.profile.id, check.deal),
+        `Queued for ${selected.profile.username}'s next hand: ${describeStack(check.deal)}`,
+      );
+    });
+
+    root.querySelector('#admin-stack-clear')?.addEventListener('click', () => {
+      withNotice(() => adminClearStackedDeal(selected.profile.id), 'Queued deal cancelled.');
     });
 
     root.querySelector('#admin-reset-form')?.addEventListener('submit', (event) => {

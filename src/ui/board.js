@@ -1,4 +1,17 @@
-import { dealHand, suitGlyph, rankLabel, RANKS, SUITS, createDeck, createRng, shuffle, rarityForRoll, freshSeed } from '../core/deck.js';
+import {
+  dealHand,
+  dealFromStack,
+  normalizeStackedDeal,
+  suitGlyph,
+  rankLabel,
+  RANKS,
+  SUITS,
+  createDeck,
+  createRng,
+  shuffle,
+  rarityForRoll,
+  freshSeed,
+} from '../core/deck.js';
 import { evaluateHand } from '../core/hand-evaluator.js';
 import { scoreRun } from '../core/scoring.js';
 import { findEV, choiceQuality } from '../core/ev-solver.js';
@@ -467,7 +480,7 @@ export function initBoard(root) {
       }
 
       currentUserId = session.user.id;
-      const { seed, result } = claimed;
+      const { seed, result, stackedDeal } = claimed;
       if (result) {
         renderAlreadyPlayed(result);
         // Belt and braces: the server has a result, so any local copy of this
@@ -484,7 +497,11 @@ export function initBoard(root) {
         renderAlreadyPlayed(recovered);
         return;
       }
-      beginWithDrawButton({ seed });
+      // A stacked deal (§11al) is passed straight through to startHand, which
+      // is the one place cards come from. Validated there rather than here, so
+      // a malformed row falls back to an ordinary deal instead of stopping the
+      // player from having a day at all.
+      beginWithDrawButton({ seed, stackedDeal });
       return;
     }
 
@@ -596,7 +613,15 @@ export function initBoard(root) {
   // omitting it on a later redeal just leaves whichever modifier is already
   // active, real or forced, rather than silently reverting — the special
   // value `'__today__'` is the explicit reset back to the real day's.
-  function startHand({ seed, luckMultiplier = 1, forceRarity = null, forceWild = false, customSlots = null, forceModifier = null } = {}) {
+  function startHand({
+    seed,
+    luckMultiplier = 1,
+    forceRarity = null,
+    forceWild = false,
+    customSlots = null,
+    forceModifier = null,
+    stackedDeal = null,
+  } = {}) {
     const myToken = ++dealToken;
     if (forceModifier === '__today__') {
       // The explicit reset back to the real day's modifier, so it also clears
@@ -625,7 +650,20 @@ export function initBoard(root) {
       // here, so this is the only place that knows it. The pending-run mirror
       // (§11ak) stores it to prove a recovered run belongs to this deal.
       currentSeed = usedSeed;
-      dealt = dealHand(usedSeed, 5, { luckMultiplier });
+      // A STACKED DEAL WINS OVER THE ROLL, but only if it survives validation
+      // (§11al). `dealFromStack` is the same function the Edge Function calls
+      // with the same seed and the same stack, which is what makes the score
+      // the player is shown and the score the server computes the same number.
+      //
+      // A malformed stack falls back to the ordinary deal rather than throwing:
+      // the failure is then merely "the surprise didn't happen", and — because
+      // verifyAndScoreRun refuses a malformed stack too — the two halves still
+      // agree, which is the property that actually matters.
+      const validStack = stackedDeal && normalizeStackedDeal(stackedDeal).ok;
+      if (stackedDeal && !validStack) {
+        console.warn('Ignoring a malformed stacked deal; dealing normally.', normalizeStackedDeal(stackedDeal).errors);
+      }
+      dealt = validStack ? dealFromStack(usedSeed, stackedDeal) : dealHand(usedSeed, 5, { luckMultiplier });
       if (forceRarity || forceWild) {
         const index = Math.floor(Math.random() * dealt.hand.length);
         dealt.hand[index] = {

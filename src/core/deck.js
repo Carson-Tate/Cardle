@@ -85,6 +85,106 @@ export function freshSeed() {
   return (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
 }
 
+/**
+ * The most cards a stacked deal may pin (DESIGN.md §11al) — 5 in the opening
+ * hand, 5 off the top of the draw pile. Five draws covers every single-round
+ * day including the modifiers that raise the cap to 4 or 5; a Second Look
+ * round two draws normally, which is stated in the admin panel rather than
+ * silently true.
+ */
+export const STACK_HAND_SIZE = 5;
+export const STACK_MAX_DRAWS = 5;
+
+const RARITY_IDS = new Set(RARITIES.map((tier) => tier.id));
+
+/**
+ * Validates and normalizes an admin-authored stacked deal.
+ *
+ * ADMIN-AUTHORED CONTENT IS UNTRUSTED CONTENT (§11y's rule, stated there for
+ * the word bank and true here for the same reason): this JSON is written by
+ * one privileged account and then flows into a scorer on the server and a
+ * renderer in someone else's browser. A malformed row must be REFUSED, not
+ * partly believed — a hand of four cards would throw inside evaluateHand and
+ * take the board down with it, and a duplicated card would let the same
+ * physical card exist twice in one deal.
+ *
+ * Validated on READ as well as on write, for the reason §11g gives: the row
+ * could predate a shape change or be hand-edited in the SQL editor, and both
+ * the board and the Edge Function read it at the worst possible moment.
+ *
+ * @returns {{ok: boolean, errors: string[], deal: {hand: object[], draws: object[]}|null}}
+ */
+export function normalizeStackedDeal(raw) {
+  const errors = [];
+  if (!raw || typeof raw !== 'object') return { ok: false, errors: ['no stacked deal'], deal: null };
+
+  const hand = Array.isArray(raw.hand) ? raw.hand : [];
+  const draws = Array.isArray(raw.draws) ? raw.draws : [];
+  if (hand.length !== STACK_HAND_SIZE) errors.push(`the opening hand must be exactly ${STACK_HAND_SIZE} cards`);
+  if (draws.length > STACK_MAX_DRAWS) errors.push(`at most ${STACK_MAX_DRAWS} draw cards can be pinned`);
+
+  const seen = new Set();
+  const clean = [...hand, ...draws].map((card, index) => {
+    const where = index < hand.length ? `hand slot ${index + 1}` : `draw slot ${index - hand.length + 1}`;
+    const rank = Number(card?.rank);
+    const suit = String(card?.suit ?? '');
+    if (!RANKS.includes(rank)) errors.push(`${where}: "${card?.rank}" is not a rank`);
+    if (!SUITS.includes(suit)) errors.push(`${where}: "${card?.suit}" is not a suit`);
+    // An unknown tier is refused rather than dropped to null: silently
+    // downgrading a card the admin deliberately made Diamond would change the
+    // score without saying so.
+    const rarity = card?.rarity == null || card.rarity === '' ? null : String(card.rarity);
+    if (rarity !== null && !RARITY_IDS.has(rarity)) errors.push(`${where}: "${rarity}" is not a rarity tier`);
+
+    const key = `${rank}${suit}`;
+    // ONE PHYSICAL DECK. A card pinned into the hand cannot also be pinned into
+    // the draw pile, or discarding it would deal it to you a second time.
+    if (seen.has(key)) errors.push(`${where}: ${rankLabel(rank)}${suitGlyph(suit) ?? suit} is used more than once`);
+    seen.add(key);
+    return { rank, suit, rarity, wild: card?.wild === true };
+  });
+
+  if (errors.length > 0) return { ok: false, errors, deal: null };
+  return { ok: true, errors: [], deal: { hand: clean.slice(0, hand.length), draws: clean.slice(hand.length) } };
+}
+
+/**
+ * Builds a deal whose opening hand — and the top of whose draw pile — were
+ * chosen by an admin instead of rolled (§11al).
+ *
+ * DETERMINISTIC FROM `seed`, WHICH IS THE ENTIRE POINT. The board and
+ * `verifyAndScoreRun` both call this with the same row's seed and the same
+ * stored stack, so they build the identical deal. Anything random in here that
+ * did not come from `seed` — `freshSeed()`, `Math.random()` — would make the
+ * server reject every rigged run as a mismatch, and it would do so only in
+ * production, where the two halves are actually different machines. (The
+ * test-mode Custom Hand Builder in board.js CAN use a fresh seed, because
+ * nothing ever verifies it.)
+ *
+ * Cards the admin did not pin are drawn from the rest of the deck, shuffled
+ * and rarity-rolled from that same seed, so an un-pinned draw is an ordinary
+ * random card rather than a blank.
+ */
+export function dealFromStack(seed, stack) {
+  const { ok, deal } = normalizeStackedDeal(stack);
+  if (!ok) throw new Error('dealFromStack needs a valid stacked deal');
+
+  const rng = createRng(seed);
+  const pinned = new Set([...deal.hand, ...deal.draws].map((card) => `${card.rank}${card.suit}`));
+  const rest = shuffle(
+    createDeck().filter((card) => !pinned.has(`${card.rank}${card.suit}`)),
+    rng,
+  ).map((card) => {
+    // Same two-calls-per-card shape dealHand uses, so the filler behaves like
+    // any other draw.
+    const rarity = rarityForRoll(rng());
+    const wild = rng() < WILD_CHANCE;
+    return { ...card, rarity, wild };
+  });
+
+  return { hand: deal.hand, drawPile: [...deal.draws, ...rest] };
+}
+
 export function shuffle(deck, rng) {
   const shuffled = deck.slice();
   for (let i = shuffled.length - 1; i > 0; i--) {

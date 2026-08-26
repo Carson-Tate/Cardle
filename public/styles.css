@@ -1244,6 +1244,16 @@ header h1 {
   flex-shrink: 0;
 }
 
+/* The checkbox and its 🃏 are ONE control, so they sit together rather than
+   reading as two columns — the default inline whitespace plus the row's own
+   0.4rem gap pushed them apart far enough to look unrelated. */
+.admin-slot-wild {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: pointer;
+}
+
 .admin-slot select {
   font-family: inherit;
   font-size: 0.75rem;

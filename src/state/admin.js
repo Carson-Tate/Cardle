@@ -144,6 +144,69 @@ export async function adminResetTodayForEveryone(expectedDay = null) {
   return Number.isFinite(removed) ? removed : 0;
 }
 
+/**
+ * Queues the exact cards a player will be dealt on their NEXT hand (§11al).
+ *
+ * `deal` is `{ hand: [5 cards], draws: [0-5 cards] }`, each card
+ * `{ rank, suit, rarity, wild }`. Validated by `normalizeStackedDeal`
+ * (core/deck.js) before it gets here and again by the database, because the
+ * same JSON is later read by the Edge Function that scores the run.
+ *
+ * REPLACES anything still queued, so saving twice is not a hidden pipeline of
+ * rigged days. It cannot touch a deal already ATTACHED to a claimed day —
+ * rewriting those cards would leave the player's board and the server's scorer
+ * building different deals, which is the one failure this design exists to
+ * prevent.
+ */
+export async function adminQueueStackedDeal(targetId, deal) {
+  const client = await requireSupabase();
+  const { error } = await client.rpc('admin_queue_stacked_deal', { target_id: targetId, deal });
+  if (error) {
+    if (error.code === 'PGRST202') {
+      throw new Error('Run supabase/migrations/021-stacked-deals.sql first — this function is not installed yet.');
+    }
+    throw error;
+  }
+}
+
+/** Cancels a queued (not yet claimed) stacked deal. Returns how many were removed. */
+export async function adminClearStackedDeal(targetId) {
+  const client = await requireSupabase();
+  const { data, error } = await client.rpc('admin_clear_stacked_deal', { target_id: targetId });
+  if (error) {
+    if (error.code === 'PGRST202') {
+      throw new Error('Run supabase/migrations/021-stacked-deals.sql first — this function is not installed yet.');
+    }
+    throw error;
+  }
+  const removed = Number(data);
+  return Number.isFinite(removed) ? removed : 0;
+}
+
+/**
+ * Every stacked deal for one player — the queued one, plus the days that have
+ * already been dealt from one. The second half is the "⚑ stacked" marker: it
+ * is the only record that a given run was rigged, since nothing is written to
+ * `daily_plays` itself (see migration 021 for why not).
+ *
+ * RESOLVES TO AN EMPTY LIST when the table does not exist yet, so the admin
+ * page still renders in full before migration 021 has been applied — the panel
+ * says so rather than the whole page failing.
+ */
+export async function fetchStackedDeals(targetId) {
+  const client = await requireSupabase();
+  const { data, error } = await client
+    .from('stacked_deals')
+    .select('id, play_date, cards, created_at, attached_at')
+    .eq('user_id', targetId)
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.warn('Could not read stacked deals:', error?.message ?? error);
+    return [];
+  }
+  return data ?? [];
+}
+
 export async function adminDeletePlayer(targetId) {
   const client = await requireSupabase();
   const { error } = await client.rpc('admin_delete_player', { target_id: targetId });

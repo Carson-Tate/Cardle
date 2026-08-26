@@ -23,7 +23,7 @@
 // Edge Function (supabase/functions/submit-run) is only an HTTP shell that reads
 // the seed, calls this, and writes the answer.
 
-import { dealHand } from './deck.js';
+import { dealHand, dealFromStack, normalizeStackedDeal } from './deck.js';
 import { scoreRun, OPTIMAL_DISCARD_MAX_BONUS } from './scoring.js';
 import { modifierScoringMultiplier } from './modifiers.js';
 
@@ -115,9 +115,24 @@ function sanitizeEvContext(evContext) {
  *   the START OF THE FINAL ROUND, which is what board.js stores and what
  *   scoreRun's discarded-card bonuses are computed against.
  */
-export function verifyAndScoreRun({ seed, discardRounds, modifier, wagered = false, evContext }) {
+export function verifyAndScoreRun({ seed, discardRounds, modifier, wagered = false, evContext, stackedDeal = null }) {
   if (!Number.isFinite(seed)) return { ok: false, errors: ['seed is missing or not a number'] };
   if (!modifier) return { ok: false, errors: ['modifier is required'] };
+
+  // A STACKED DEAL IS SERVER-HELD, exactly like the seed (§11al). It is read
+  // here from the caller's own row, never from the request body — the client
+  // sends discards and nothing else, which is the whole premise of §11z. If it
+  // is present and malformed, the run is REFUSED rather than silently scored
+  // from the ordinary deal: the player was shown the stacked cards, so scoring
+  // different ones would pay them for a hand they never saw.
+  let dealt;
+  if (stackedDeal) {
+    const check = normalizeStackedDeal(stackedDeal);
+    if (!check.ok) return { ok: false, errors: check.errors.map((e) => `stacked deal: ${e}`) };
+    dealt = dealFromStack(seed, stackedDeal);
+  } else {
+    dealt = dealHand(seed);
+  }
 
   const limits = discardRoundLimitsFor(modifier, { wagered });
   const rounds = Array.isArray(discardRounds) ? discardRounds : [discardRounds];
@@ -125,7 +140,6 @@ export function verifyAndScoreRun({ seed, discardRounds, modifier, wagered = fal
     return { ok: false, errors: [`${rounds.length} discard rounds claimed but the day allows ${limits.length}`] };
   }
 
-  const dealt = dealHand(seed);
   let hand = dealt.hand;
   let pile = dealt.drawPile;
   let finalRoundIndices = [];

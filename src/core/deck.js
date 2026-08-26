@@ -119,13 +119,24 @@ export function normalizeStackedDeal(raw) {
   if (!raw || typeof raw !== 'object') return { ok: false, errors: ['no stacked deal'], deal: null };
 
   const hand = Array.isArray(raw.hand) ? raw.hand : [];
-  const draws = Array.isArray(raw.draws) ? raw.draws : [];
+  // PER-SLOT, NOT IN DISCARD ORDER (owner: "i pick the third slot as what i
+  // want it because they will discard the third slot"). `slotDraws[i]` is the
+  // card that arrives if hand slot `i` is thrown away — so pinning a straight
+  // means putting the card you want opposite the card they will drop, and
+  // nothing depends on guessing how many cards they discard or in what order.
+  //
+  // The first shape stored an ORDERED draw pile, which only did what you
+  // wanted if the player discarded exactly the slots you expected. Old rows
+  // carry `draws` and no `slotDraws`; they normalize to "no pinned
+  // replacements" rather than being reinterpreted, because silently treating a
+  // positional list as a slot map would deal the right cards to the wrong
+  // slots — worse than not rigging at all.
+  const slots = Array.isArray(raw.slotDraws) ? raw.slotDraws : [];
   if (hand.length !== STACK_HAND_SIZE) errors.push(`the opening hand must be exactly ${STACK_HAND_SIZE} cards`);
-  if (draws.length > STACK_MAX_DRAWS) errors.push(`at most ${STACK_MAX_DRAWS} draw cards can be pinned`);
+  if (slots.length > STACK_HAND_SIZE) errors.push(`there are only ${STACK_HAND_SIZE} slots to pin a replacement for`);
 
   const seen = new Set();
-  const clean = [...hand, ...draws].map((card, index) => {
-    const where = index < hand.length ? `hand slot ${index + 1}` : `draw slot ${index - hand.length + 1}`;
+  const readCard = (card, where) => {
     const rank = Number(card?.rank);
     const suit = String(card?.suit ?? '');
     if (!RANKS.includes(rank)) errors.push(`${where}: "${card?.rank}" is not a rank`);
@@ -137,15 +148,59 @@ export function normalizeStackedDeal(raw) {
     if (rarity !== null && !RARITY_IDS.has(rarity)) errors.push(`${where}: "${rarity}" is not a rarity tier`);
 
     const key = `${rank}${suit}`;
-    // ONE PHYSICAL DECK. A card pinned into the hand cannot also be pinned into
-    // the draw pile, or discarding it would deal it to you a second time.
+    // ONE PHYSICAL DECK. A card pinned into the hand cannot also be pinned as a
+    // replacement, or discarding would deal you a card that is already on the
+    // table.
     if (seen.has(key)) errors.push(`${where}: ${rankLabel(rank)}${suitGlyph(suit) ?? suit} is used more than once`);
     seen.add(key);
     return { rank, suit, rarity, wild: card?.wild === true };
-  });
+  };
+
+  const cleanHand = hand.map((card, i) => readCard(card, `hand slot ${i + 1}`));
+  // Length-5 and sparse: index IS the hand slot, so a hole must stay a hole.
+  const cleanSlots = Array.from({ length: STACK_HAND_SIZE }, (_, i) =>
+    slots[i] == null ? null : readCard(slots[i], `slot ${i + 1} replacement`),
+  );
 
   if (errors.length > 0) return { ok: false, errors, deal: null };
-  return { ok: true, errors: [], deal: { hand: clean.slice(0, hand.length), draws: clean.slice(hand.length) } };
+  return { ok: true, errors: [], deal: { hand: cleanHand, slotDraws: cleanSlots } };
+}
+
+/**
+ * Applies one round of discards — the single definition of what replaces what.
+ *
+ * EXTRACTED BECAUSE THERE WERE FOUR COPIES: two in board.js (the live discard
+ * and the already-played re-render) and two in verify-run.js (the mid-round and
+ * final-round replays). Four copies of "which card lands where" is exactly the
+ * shape §11y warned about — two functions answering the same question will
+ * eventually disagree — and here a disagreement means the player is shown one
+ * hand and paid for another.
+ *
+ * WITHOUT `slotDraws` THIS IS BYTE-IDENTICAL to the logic it replaces. Both
+ * callers sort their indices ascending (board.js before scoring, normalizeRound
+ * on the server), and this consumes the pile in ascending slot order, so every
+ * ordinary deal maps exactly as before.
+ *
+ * A pinned replacement is dealt ONCE. Second Look discards twice, and a slot
+ * thrown away in both rounds takes its pinned card in round one and an ordinary
+ * one in round two — the alternative is the same card arriving twice, which no
+ * deck can do.
+ *
+ * @returns {{hand: object[], pile: object[], slotDraws: (object|null)[]|null}}
+ */
+export function applyDiscards({ hand, pile, indices, slotDraws = null }) {
+  let taken = 0;
+  const remaining = slotDraws ? [...slotDraws] : null;
+  const nextHand = hand.map((card, index) => {
+    if (!indices.includes(index)) return card;
+    const pinned = remaining?.[index] ?? null;
+    if (pinned) {
+      remaining[index] = null;
+      return pinned;
+    }
+    return pile[taken++];
+  });
+  return { hand: nextHand, pile: pile.slice(taken), slotDraws: remaining };
 }
 
 /**
@@ -170,7 +225,8 @@ export function dealFromStack(seed, stack) {
   if (!ok) throw new Error('dealFromStack needs a valid stacked deal');
 
   const rng = createRng(seed);
-  const pinned = new Set([...deal.hand, ...deal.draws].map((card) => `${card.rank}${card.suit}`));
+  const pinnedCards = [...deal.hand, ...deal.slotDraws.filter(Boolean)];
+  const pinned = new Set(pinnedCards.map((card) => `${card.rank}${card.suit}`));
   const rest = shuffle(
     createDeck().filter((card) => !pinned.has(`${card.rank}${card.suit}`)),
     rng,
@@ -182,7 +238,10 @@ export function dealFromStack(seed, stack) {
     return { ...card, rarity, wild };
   });
 
-  return { hand: deal.hand, drawPile: [...deal.draws, ...rest] };
+  // The pinned replacements are NOT pushed onto the front of the pile — they
+  // are handed back separately and consulted by slot (see applyDiscards). The
+  // pile holds only the cards an un-pinned discard draws from.
+  return { hand: deal.hand, drawPile: rest, slotDraws: deal.slotDraws };
 }
 
 export function shuffle(deck, rng) {

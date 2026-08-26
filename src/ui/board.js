@@ -2,6 +2,7 @@ import {
   dealHand,
   dealFromStack,
   normalizeStackedDeal,
+  applyDiscards,
   suitGlyph,
   rankLabel,
   RANKS,
@@ -408,6 +409,11 @@ export function initBoard(root) {
   // except the admin panel's custom hand builder, which has no seed at all).
   let currentSeed = null;
 
+  // Per-slot pinned replacements for a stacked deal (§11al), or null. Indexed
+  // by HAND SLOT: discarding slot 2 deals `currentSlotDraws[2]` if one was
+  // pinned there. Mutable across rounds because a pinned card is dealt once.
+  let currentSlotDraws = null;
+
   // Real daily play needs to know whether the player is signed in before it
   // can even pick a seed (an account-backed one via daily-play.js, or a
   // local one via persistence.js — see test-mode.js's resolveRunConfig
@@ -675,6 +681,10 @@ export function initBoard(root) {
     }
     originalHand = dealt.hand;
     drawPile = dealt.drawPile;
+    // Reset for EVERY deal, including the admin panel's custom hand builder,
+    // which produces no slot draws — leaving a previous deal's pinned cards in
+    // place would deal them into an unrelated hand.
+    currentSlotDraws = dealt.slotDraws ?? null;
     selected.clear();
     discardRound = 1;
     roundOneDiscards = null;
@@ -854,17 +864,24 @@ export function initBoard(root) {
     if (token !== dealToken) return; // a redeal fired before this even started
 
     const discardIndices = [...selected].sort((a, b) => a - b);
-    const replacements = drawPile.slice(0, discardIndices.length);
-    const roundTwoHand = originalHand.map((card, index) => {
-      const discardPosition = discardIndices.indexOf(index);
-      return discardPosition === -1 ? card : replacements[discardPosition];
+    // Shared with verify-run.js (core/deck.js), so the hand the player watches
+    // land and the hand the server scores are built by one function.
+    const roundTwo = applyDiscards({
+      hand: originalHand,
+      pile: drawPile,
+      indices: discardIndices,
+      slotDraws: currentSlotDraws,
     });
+    const roundTwoHand = roundTwo.hand;
 
     await revealDrawnCards(discardIndices, roundTwoHand, token);
     if (token !== dealToken) return; // a redeal fired mid-reveal
 
     originalHand = roundTwoHand;
-    drawPile = drawPile.slice(discardIndices.length);
+    drawPile = roundTwo.pile;
+    // A pinned replacement is dealt once; round two draws normally from a slot
+    // that already spent its card.
+    currentSlotDraws = roundTwo.slotDraws;
     selected.clear();
     roundOneDiscards = discardIndices;
     discardRound = 2;
@@ -999,10 +1016,11 @@ export function initBoard(root) {
     const chosenEV = findEV(evByDiscard, discardIndices);
     lockInBtn.hidden = true; // solve is done; nothing left for this button to do today
 
-    const replacements = drawPile.slice(0, discardIndices.length);
-    const finalHand = originalHand.map((card, index) => {
-      const discardPosition = discardIndices.indexOf(index);
-      return discardPosition === -1 ? card : replacements[discardPosition];
+    const { hand: finalHand } = applyDiscards({
+      hand: originalHand,
+      pile: drawPile,
+      indices: discardIndices,
+      slotDraws: currentSlotDraws,
     });
 
     // WAS THERE A DECISION TO GRADE AT ALL?

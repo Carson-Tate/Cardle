@@ -1244,6 +1244,52 @@ header h1 {
   flex-shrink: 0;
 }
 
+/* Stack the Deck (§11al): "dealt card → replacement" on one line, because the
+   question the panel answers is "what do they get if they throw THIS away".
+   Wraps rather than scrolling on narrow screens — the admin page is used on a
+   phone often enough that a horizontally-scrolling form row would be worse
+   than a taller one. */
+.admin-stack-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem 0.4rem;
+  flex-wrap: wrap;
+  /* Each slot is its own visual block, because the row wraps to two lines and
+     without a separator it is genuinely ambiguous which replacement belongs to
+     which card. */
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-stack-row:last-child {
+  border-bottom: none;
+}
+
+.admin-stack-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+/* Indents the wrapped replacement line so it reads as belonging to the card
+   above it rather than as a sixth slot. */
+.admin-stack-card--draw {
+  margin-left: 1.4rem;
+}
+
+.admin-stack-arrow {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.admin-stack-draw-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 /* The checkbox and its 🃏 are ONE control, so they sit together rather than
    reading as two columns — the default inline whitespace plus the row's own
    0.4rem gap pushed them apart far enough to look unrelated. */

@@ -803,11 +803,13 @@ export async function initAdmin(root) {
     return `
       <h4 class="profile-subheading">Stack the Deck</h4>
       <p class="admin-hint">
-        Sets the exact hand this player opens with on their <strong>next</strong> hand — whenever that is —
-        plus the first ${STACK_MAX_DRAWS} cards off the draw pile, which is what they get if they discard.
-        Leave a draw slot on <em>— random —</em> to let it roll normally. The run scores and appears on the
-        leaderboards like any other; only this panel records that it was stacked.
-        Their board and the server both build the deal from these cards, so the score is real either way.
+        Sets the exact hand this player opens with on their <strong>next</strong> hand — whenever that is.
+        Each row is one slot: the card they're dealt, and the card they draw <strong>if they throw that
+        slot away</strong>. So to hand someone a straight from 2 3 Q 5 6, put the 4 opposite the Q — it
+        arrives only if the Q is the card they drop. Leave a replacement on <em>— random —</em> to let it
+        roll normally. The run scores and appears on the leaderboards like any other; only this panel
+        records that it was stacked. Their board and the server both build the deal from these cards, so
+        the score is real either way.
       </p>
       ${
         queued
@@ -817,11 +819,7 @@ export async function initAdmin(root) {
           : ''
       }
       <div class="admin-slots" id="admin-stack-hand">
-        ${stackSlotRows(STACK_HAND_SIZE, 'hand', queued?.cards?.hand ?? null)}
-      </div>
-      <p class="admin-hint">Draw pile — dealt in order as they discard.</p>
-      <div class="admin-slots" id="admin-stack-draws">
-        ${stackSlotRows(STACK_MAX_DRAWS, 'draw', queued?.cards?.draws ?? null, { allowEmpty: true })}
+        ${stackSlotRows(queued?.cards?.hand ?? null, queued?.cards?.slotDraws ?? null)}
       </div>
       ${
         // The deploy-order guard (§11al). A stacked deal queued while an OLD
@@ -851,72 +849,101 @@ export async function initAdmin(root) {
     `;
   }
 
-  // One row per slot, matching the test-mode Custom Hand Builder's shape
-  // (board.js) so the two look and read the same. A draw row gains a "— random
-  // —" rank, which is how a slot says "don't pin this one" — an empty option is
-  // clearer than a separate checkbox for a thing that is already a dropdown.
-  function stackSlotRows(count, kind, existing, { allowEmpty = false } = {}) {
-    return Array.from({ length: count }, (_, i) => {
-      const card = existing?.[i] ?? null;
+  // ONE ROW PER SLOT, carrying both cards — the dealt card and the card that
+  // replaces it. Putting them on the same line is the whole point of the
+  // rework: the question being answered is "what do they get if they throw
+  // THIS away", and a separate draw-pile list made that a matter of predicting
+  // how many cards they discard and in what order.
+  function stackSlotRows(existingHand, existingDraws) {
+    return Array.from({ length: STACK_HAND_SIZE }, (_, i) => {
+      const card = existingHand?.[i] ?? null;
       const rank = card ? Number(card.rank) : STACK_DEFAULT_RANKS[i % STACK_DEFAULT_RANKS.length];
       const suit = card ? card.suit : STACK_DEFAULT_SUITS[i % STACK_DEFAULT_SUITS.length];
       return `
-        <div class="admin-slot" data-stack-kind="${kind}">
+        <div class="admin-slot admin-stack-row">
           <span class="admin-slot-label">${i + 1}</span>
-          <select class="admin-slot-rank">
-            ${allowEmpty ? `<option value=""${card ? '' : ' selected'}>— random —</option>` : ''}
-            ${RANKS.map(
-              (r) => `<option value="${r}"${card && r === rank ? ' selected' : !allowEmpty && r === rank ? ' selected' : ''}>${rankLabel(r)}</option>`,
-            ).join('')}
-          </select>
-          <select class="admin-slot-suit">
-            ${SUITS.map((s) => `<option value="${s}"${s === suit ? ' selected' : ''}>${suitGlyph(s)}</option>`).join('')}
-          </select>
-          <select class="admin-slot-rarity">
-            <option value=""${card?.rarity ? '' : ' selected'}>— none —</option>
-            ${RARITIES.map(
-              (t) => `<option value="${t.id}"${card?.rarity === t.id ? ' selected' : ''}>${t.emoji} ${t.label}</option>`,
-            ).join('')}
-          </select>
-          <label class="admin-slot-wild">
-            <input type="checkbox" class="admin-slot-wild-input"${card?.wild ? ' checked' : ''} /> 🃏
-          </label>
+          <span class="admin-stack-card">
+            ${cardPickerHtml('deal', i, { rank, suit, rarity: card?.rarity ?? null, wild: card?.wild === true }, false)}
+          </span>
+          <span class="admin-stack-card admin-stack-card--draw">
+            <!-- The arrow LEADS the replacement group rather than sitting
+                 between the two, so when the row wraps — which it does at any
+                 realistic admin width, eight controls being too many for one
+                 line — it starts the second line instead of being stranded at
+                 the end of the first, where it read as pointing at nothing. -->
+            <span class="admin-stack-arrow" aria-hidden="true">→</span>
+            <span class="admin-stack-draw-label">if discarded</span>
+            ${cardPickerHtml('draw', i, existingDraws?.[i] ?? null, true)}
+          </span>
         </div>
       `;
     }).join('');
   }
 
-  // Scraped from the DOM at click time, the same way the test-mode builder
-  // reads its slots. A draw row whose rank is blank is simply omitted — and
-  // because the pinned draws are consumed in order, a gap in the middle would
-  // be meaningless, so the first blank ends the list rather than leaving a hole.
-  function readStackFromDom() {
-    const readRow = (el) => {
-      const rawRank = el.querySelector('.admin-slot-rank').value;
-      if (rawRank === '') return null;
-      return {
-        rank: Number(rawRank),
-        suit: el.querySelector('.admin-slot-suit').value,
-        rarity: el.querySelector('.admin-slot-rarity').value || null,
-        wild: el.querySelector('.admin-slot-wild-input').checked,
-      };
-    };
-    const hand = [...root.querySelectorAll('#admin-stack-hand .admin-slot')].map(readRow);
-    const draws = [];
-    for (const el of root.querySelectorAll('#admin-stack-draws .admin-slot')) {
-      const card = readRow(el);
-      if (!card) break;
-      draws.push(card);
-    }
-    return { hand, draws };
+  // A rank/suit/rarity/wild picker. `allowRandom` adds the empty rank option,
+  // which is how a replacement slot says "don't pin this one" — clearer than a
+  // separate checkbox beside a control that is already a dropdown.
+  function cardPickerHtml(kind, index, card, allowRandom) {
+    const rank = card ? Number(card.rank) : STACK_DEFAULT_RANKS[index % STACK_DEFAULT_RANKS.length];
+    const suit = card ? card.suit : STACK_DEFAULT_SUITS[index % STACK_DEFAULT_SUITS.length];
+    const pinned = Boolean(card);
+    return `
+      <select class="admin-slot-rank" data-stack="${kind}" data-slot="${index}">
+        ${allowRandom ? `<option value=""${pinned ? '' : ' selected'}>— random —</option>` : ''}
+        ${RANKS.map(
+          (r) => `<option value="${r}"${(pinned || !allowRandom) && r === rank ? ' selected' : ''}>${rankLabel(r)}</option>`,
+        ).join('')}
+      </select>
+      <select class="admin-slot-suit">
+        ${SUITS.map((s) => `<option value="${s}"${s === suit ? ' selected' : ''}>${suitGlyph(s)}</option>`).join('')}
+      </select>
+      <select class="admin-slot-rarity">
+        <option value=""${card?.rarity ? '' : ' selected'}>— none —</option>
+        ${RARITIES.map(
+          (t) => `<option value="${t.id}"${card?.rarity === t.id ? ' selected' : ''}>${t.emoji} ${t.label}</option>`,
+        ).join('')}
+      </select>
+      <label class="admin-slot-wild">
+        <input type="checkbox" class="admin-slot-wild-input"${card?.wild ? ' checked' : ''} /> 🃏
+      </label>
+    `;
   }
 
+  // Scraped from the DOM at click time, the same way the test-mode builder
+  // reads its slots. `slotDraws` is a LENGTH-5 SPARSE array — index is the hand
+  // slot — so a blank leaves a hole rather than shifting the ones after it,
+  // which is exactly the difference between this and the ordered pile it
+  // replaces.
+  function readStackFromDom() {
+    const readPicker = (rankEl) => {
+      if (rankEl.value === '') return null;
+      const row = rankEl.closest('.admin-stack-card');
+      return {
+        rank: Number(rankEl.value),
+        suit: row.querySelector('.admin-slot-suit').value,
+        rarity: row.querySelector('.admin-slot-rarity').value || null,
+        wild: row.querySelector('.admin-slot-wild-input').checked,
+      };
+    };
+    const pick = (kind) =>
+      [...root.querySelectorAll(`#admin-stack-hand .admin-slot-rank[data-stack="${kind}"]`)]
+        .sort((a, b) => Number(a.dataset.slot) - Number(b.dataset.slot))
+        .map(readPicker);
+    return { hand: pick('deal'), slotDraws: pick('draw') };
+  }
+
+  // Reads back as slot pairs, not as a hand plus a pile, so a glance confirms
+  // the thing that actually matters: which replacement is opposite which card.
   function describeStack(cards) {
     const check = normalizeStackedDeal(cards);
     if (!check.ok) return 'malformed — re-save it';
     const label = (c) => `${rankLabel(c.rank)}${suitGlyph(c.suit)}`;
-    const hand = check.deal.hand.map(label).join(' ');
-    return check.deal.draws.length > 0 ? `${hand}  →  draws ${check.deal.draws.map(label).join(' ')}` : hand;
+    return check.deal.hand
+      .map((card, i) => {
+        const draw = check.deal.slotDraws[i];
+        return draw ? `${label(card)}→${label(draw)}` : label(card);
+      })
+      .join(' ');
   }
 
   function equipSelect(label, slot, items, current) {

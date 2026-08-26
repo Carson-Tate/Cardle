@@ -23,7 +23,7 @@
 // Edge Function (supabase/functions/submit-run) is only an HTTP shell that reads
 // the seed, calls this, and writes the answer.
 
-import { dealHand, dealFromStack, normalizeStackedDeal } from './deck.js';
+import { dealHand, dealFromStack, normalizeStackedDeal, applyDiscards } from './deck.js';
 import { scoreRun, OPTIMAL_DISCARD_MAX_BONUS } from './scoring.js';
 import { modifierScoringMultiplier } from './modifiers.js';
 
@@ -121,18 +121,18 @@ export function verifyAndScoreRun({ seed, discardRounds, modifier, wagered = fal
 
   // A STACKED DEAL IS SERVER-HELD, exactly like the seed (§11al). It is read
   // here from the caller's own row, never from the request body — the client
-  // sends discards and nothing else, which is the whole premise of §11z. If it
-  // is present and malformed, the run is REFUSED rather than silently scored
-  // from the ordinary deal: the player was shown the stacked cards, so scoring
-  // different ones would pay them for a hand they never saw.
-  let dealt;
-  if (stackedDeal) {
-    const check = normalizeStackedDeal(stackedDeal);
-    if (!check.ok) return { ok: false, errors: check.errors.map((e) => `stacked deal: ${e}`) };
-    dealt = dealFromStack(seed, stackedDeal);
-  } else {
-    dealt = dealHand(seed);
-  }
+  // sends discards and nothing else, which is the whole premise of §11z.
+  //
+  // A MALFORMED STACK FALLS BACK TO THE ORDINARY DEAL, matching board.js
+  // exactly. The first version REFUSED the run instead, which was wrong in a
+  // way worth recording: the board falls back and deals an ordinary hand, so
+  // refusing here meant the player played a perfectly normal hand and then had
+  // it rejected — they lose the day to a bad admin row they never saw. Both
+  // halves ignoring the same unreadable stack is the only pairing where they
+  // agree AND nobody is punished.
+  const stack = stackedDeal ? normalizeStackedDeal(stackedDeal) : { ok: false };
+  const dealt = stack.ok ? dealFromStack(seed, stackedDeal) : dealHand(seed);
+  let slotDraws = stack.ok ? dealt.slotDraws : null;
 
   const limits = discardRoundLimitsFor(modifier, { wagered });
   const rounds = Array.isArray(discardRounds) ? discardRounds : [discardRounds];
@@ -154,19 +154,14 @@ export function verifyAndScoreRun({ seed, discardRounds, modifier, wagered = fal
     // was looking at when they locked in.
     if (round === limits.length - 1) break;
 
-    const replacements = pile.slice(0, normalized.indices.length);
-    hand = hand.map((card, index) => {
-      const position = normalized.indices.indexOf(index);
-      return position === -1 ? card : replacements[position];
-    });
-    pile = pile.slice(normalized.indices.length);
+    // Shared with board.js (core/deck.js) so the two can never disagree about
+    // which card lands where — the failure mode being "shown one hand, paid
+    // for another". `slotDraws` is carried forward because a pinned
+    // replacement is dealt at most once across both rounds.
+    ({ hand, pile, slotDraws } = applyDiscards({ hand, pile, indices: normalized.indices, slotDraws }));
   }
 
-  const replacements = pile.slice(0, finalRoundIndices.length);
-  const finalHand = hand.map((card, index) => {
-    const position = finalRoundIndices.indexOf(index);
-    return position === -1 ? card : replacements[position];
-  });
+  const { hand: finalHand } = applyDiscards({ hand, pile, indices: finalRoundIndices, slotDraws });
 
   const maxDiscards = limits[limits.length - 1];
   const score = scoreRun({

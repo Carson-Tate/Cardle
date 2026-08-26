@@ -7,7 +7,17 @@ import { computeMeters, dealQualityPercent } from '../core/meters.js';
 import { openMetersHelp } from './meters-help.js';
 import { classifyPersonality, PERSONALITIES } from '../core/personality.js';
 import { evaluateAchievements, ACHIEVEMENTS } from '../core/achievements.js';
-import { getTodayResult, saveTodayResult, getOrCreateTodaySeed, dayNumber } from '../state/persistence.js';
+import {
+  getTodayResult,
+  saveTodayResult,
+  getOrCreateTodaySeed,
+  dayNumber,
+  savePendingRun,
+  getPendingRun,
+  clearPendingRun,
+  hasKnownAccount,
+  isStorageWritable,
+} from '../state/persistence.js';
 import { resolveRunConfig } from '../state/test-mode.js';
 import { loadGameConfig } from '../state/game-config.js';
 import { modifierOverrideFor } from '../core/game-config.js';
@@ -24,8 +34,8 @@ import {
   TEST_ACCOUNT_USERNAME,
 } from '../state/test-account.js';
 import { announceXpUpdate } from '../state/profile.js';
-import { getSession } from '../state/auth.js';
-import { claimTodaySeed, saveTodayResultForUser } from '../state/daily-play.js';
+import { getSession, resolveSession } from '../state/auth.js';
+import { claimTodaySeed, saveTodayResultForUser, pendingRunMatches } from '../state/daily-play.js';
 import { generateStory, getStoryOptions, getDefaultSelections } from '../story/generator.js';
 import { SLOT_META } from '../story/templates.js';
 import { RARITIES, TOTAL_SPECIAL_CHANCE, WILD_CHANCE, isWild } from '../core/rarity.js';
@@ -170,6 +180,11 @@ const TURN_OVER_SETTLE_MS = 220;
 // to show an intro must never stop the game loading, so every branch here fails
 // toward "just play".
 const INTRO_SEEN_KEY = 'cardle-intro-seen';
+
+// How long the board will wait for an unsent run to be accepted before giving
+// up and dealing normally (§11ak). Generous enough to cover an Edge Function
+// cold start, short enough that a dead backend is not an indefinite spinner.
+const RECOVERY_TIMEOUT_MS = 8000;
 
 function showIntroOnFirstVisit() {
   let seen = true;
@@ -376,6 +391,10 @@ export function initBoard(root) {
   // the same 5 card slots at once.
   let dealToken = 0;
 
+  // Set by startHand() for every deal that came from a seed (so, everything
+  // except the admin panel's custom hand builder, which has no seed at all).
+  let currentSeed = null;
+
   // Real daily play needs to know whether the player is signed in before it
   // can even pick a seed (an account-backed one via daily-play.js, or a
   // local one via persistence.js — see test-mode.js's resolveRunConfig
@@ -429,29 +448,126 @@ export function initBoard(root) {
   // session AND if the account-backed claim fails for any reason (a
   // Supabase hiccup shouldn't be able to block the game entirely).
   async function beginRealPlay() {
-    const session = await getSession().catch(() => null);
-    if (session) {
+    const { status, session } = await resolveSession();
+
+    if (status === 'signed-in') {
+      let claimed;
       try {
-        const { seed, result } = await claimTodaySeed(session.user.id, today);
-        currentUserId = session.user.id;
-        if (result) {
-          renderAlreadyPlayed(result);
-        } else {
-          beginWithDrawButton({ seed });
-        }
-        return;
+        claimed = await claimTodaySeed(session.user.id, today);
       } catch (error) {
-        console.error('Falling back to local anonymous play — daily_plays claim failed:', error);
+        // NEVER FALLS THROUGH TO A FRESH LOCAL HAND (§11ak). This used to, and
+        // the consequence was the worst kind: the server is holding a claimed
+        // seed for this player, and dealing them `getOrCreateTodaySeed()`
+        // instead hands them a DIFFERENT five cards with nothing on screen
+        // saying so. We know who they are and we know their hand exists — the
+        // only honest move is to say we could not fetch it.
+        console.error("Couldn't load today's claimed hand:", error);
+        renderConnectionFailure("We couldn't load today's hand.");
+        return;
       }
+
+      currentUserId = session.user.id;
+      const { seed, result } = claimed;
+      if (result) {
+        renderAlreadyPlayed(result);
+        // Belt and braces: the server has a result, so any local copy of this
+        // day's run has done its job and should not outlive it.
+        clearPendingRun(today);
+        return;
+      }
+
+      // A null result means "seed claimed, not finished" — but it ALSO means
+      // "the submission was cancelled before it landed", and those two look
+      // identical from here. A pending run for this exact seed settles it.
+      const recovered = await recoverPendingRun(session.user.id, seed);
+      if (recovered) {
+        renderAlreadyPlayed(recovered);
+        return;
+      }
+      beginWithDrawButton({ seed });
+      return;
     }
+
+    if (status === 'unavailable' && hasKnownAccount()) {
+      // We could not reach the backend, and this browser has signed in before,
+      // so there is probably an account hand waiting. Dealing a local one now
+      // is how a player loses the run they already played.
+      renderConnectionFailure("We couldn't check whether you're signed in.");
+      return;
+    }
+
     const existingResult = getTodayResult(today);
     if (existingResult) {
       renderAnonHint("This one wasn't saved — sign up to save future scores.");
       renderAlreadyPlayed(existingResult);
+      return;
+    }
+    if (!isStorageWritable()) {
+      // Signed out AND unable to store anything: getOrCreateTodaySeed cannot
+      // keep the seed it mints, so every reload would deal a brand-new hand
+      // and no result would ever be remembered. Playable, but say so — an
+      // unexplained re-deal reads as the game being broken.
+      renderAnonHint(
+        "Your browser is blocking site storage, so this hand can't be saved — a reload will deal a new one. Sign in, or allow storage, to keep your run.",
+      );
     } else {
       renderAnonHint("Sign up before drawing to save your score — otherwise this one won't be saved.");
-      beginWithDrawButton({ seed: getOrCreateTodaySeed(today) });
     }
+    beginWithDrawButton({ seed: getOrCreateTodaySeed(today) });
+  }
+
+  // Resubmits a run that was scored locally but never accepted by the server
+  // (§11ak) — the navigation-during-the-reveal case. Returns the finished
+  // result to display, or null if there was nothing to recover.
+  //
+  // GATED ON THE SEED MATCHING, which is what makes this safe to do without
+  // asking: the pending run was computed from the same deal the server is
+  // still holding, so resubmitting it is the identical request that was
+  // already in flight, not a second bite. Anything else — a stale run from a
+  // day that rolled over, a hand an admin has since reset — is discarded.
+  async function recoverPendingRun(userId, seed) {
+    const pending = getPendingRun(today);
+    if (!pending) return null;
+    if (!pendingRunMatches(pending, seed)) {
+      clearPendingRun(today);
+      return null;
+    }
+    try {
+      // BOUNDED, because this one sits between the player and their board.
+      // The submission it is retrying was cancelled by a navigation, and the
+      // most likely reason the retry is slow is the same cold start that made
+      // the original slow — but a request that never settles would leave the
+      // page on "Loading today's hand…" indefinitely, which is a worse failure
+      // than the one being fixed. On a timeout the mirror is deliberately KEPT
+      // and the player falls through to the hand they were going to be offered
+      // anyway; the next load tries again.
+      const serverResult = await Promise.race([
+        saveTodayResultForUser(userId, pending.result, today),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), RECOVERY_TIMEOUT_MS)),
+      ]);
+      clearPendingRun(today);
+      return serverResult ?? pending.result;
+    } catch (error) {
+      // Kept, not cleared: a transient failure should get another chance on
+      // the next load. The player falls through to replaying the same deal,
+      // which is where they were before this existed — no worse off.
+      console.error("Couldn't restore an unsent run:", error);
+      return null;
+    }
+  }
+
+  // Shown instead of dealing, whenever dealing would mean dealing the WRONG
+  // hand. Deliberately offers only a reload: there is nothing useful the page
+  // can do without the backend, and a Draw button here is the bug.
+  function renderConnectionFailure(what) {
+    drawBtn.hidden = true;
+    renderAnonHint(`${what} Check your connection — or pause any content blocker — and reload. Your hand is safe.`);
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'draw-btn';
+    retry.textContent = 'Try again';
+    retry.addEventListener('click', () => window.location.reload());
+    drawBtn.insertAdjacentElement('afterend', retry);
   }
 
   lockInBtn.addEventListener('click', () => {
@@ -503,6 +619,12 @@ export function initBoard(root) {
         dayLabel.textContent = `🧪 Test hand (admin redeal${luckNote})`;
       }
 
+      // The seed the hand on screen was ACTUALLY dealt from. `config.seed` is
+      // only ever set in test mode; real daily play resolves its seed
+      // asynchronously (the account claim, or local storage) and hands it in
+      // here, so this is the only place that knows it. The pending-run mirror
+      // (§11ak) stores it to prove a recovered run belongs to this deal.
+      currentSeed = usedSeed;
       dealt = dealHand(usedSeed, 5, { luckMultiplier });
       if (forceRarity || forceWild) {
         const index = Math.floor(Math.random() * dealt.hand.length);
@@ -992,9 +1114,23 @@ export function initBoard(root) {
     };
     if (config.persist) {
       if (currentUserId) {
-        saveTodayResultForUser(currentUserId, result, today).catch((error) =>
-          console.error("Today's result wasn't saved to the account:", error),
-        );
+        // MIRRORED LOCALLY FIRST, and synchronously (§11ak). The call below is
+        // deliberately not awaited — the score reveal should start the instant
+        // the hand is scored, not after a round trip to an Edge Function that
+        // may be cold-starting. But the reveal then runs for the better part
+        // of ten seconds with a fully clickable header above it, and clicking
+        // Leaderboards is a full page navigation, which cancels the request.
+        // That is how a finished Flush ended up with no leaderboard row and a
+        // board that offered the hand again on the way back.
+        //
+        // The mirror is what makes the un-awaited call safe: if the request
+        // dies with the page, the run is still on disk and the next load
+        // resubmits it (recoverPendingRun above). Cleared only once the server
+        // has actually said yes.
+        savePendingRun({ seed: currentSeed, result }, today);
+        saveTodayResultForUser(currentUserId, result, today)
+          .then(() => clearPendingRun(today))
+          .catch((error) => console.error("Today's result wasn't saved to the account:", error));
       } else {
         saveTodayResult(result, today);
         renderAnonHint("This one wasn't saved — sign up to save future scores.");

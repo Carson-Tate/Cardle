@@ -7,6 +7,11 @@
 
 import { getSupabase, requireSupabase } from './supabase-client.js';
 import { isTestAccountActive, testAccountSession, testAccountProfile } from './test-account.js';
+// Only the two account-marker helpers, and only from resolveSession() below —
+// they are the one piece of session state that has to survive a page load the
+// SDK could not complete. Every localStorage touch in there is guarded, so
+// importing this under plain Node (where there is no `localStorage`) is safe.
+import { rememberAccount, forgetAccount } from './persistence.js';
 
 export { SupabaseNotConfiguredError } from './supabase-client.js';
 
@@ -98,24 +103,65 @@ export async function signOut() {
   if (error) throw error;
 }
 
+/**
+ * Who is playing, AND how confident we are about the answer.
+ *
+ * THE THIRD STATE IS THE WHOLE POINT. getSession() below collapses "the
+ * backend says nobody is signed in" and "we could not reach the backend to
+ * ask" into the same `null`, which is right for the header (paint the
+ * logged-out chrome; §11i already fixed the flash) and WRONG for the board.
+ * board.js reads that null as "play anonymously", mints a fresh local seed,
+ * and deals a completely different hand — while the account hand the server
+ * is holding sits untouched with `result: null`. The player sees their run
+ * replaced by a worse one with no error, no hint and nothing to retry.
+ *
+ * Same shape, and the same lesson, as §11i's login flash: an unknown value
+ * must not default to one of the two known ones.
+ *
+ * @returns {Promise<{status: 'signed-in'|'signed-out'|'unavailable', session: object|null, error?: Error}>}
+ */
+export async function resolveSession() {
+  if (isTestAccountActive()) return { status: 'signed-in', session: testAccountSession() };
+
+  let client;
+  try {
+    client = await getSupabase();
+  } catch (error) {
+    return { status: 'unavailable', session: null, error };
+  }
+  // Not configured at all is a genuine, permanent "signed out" — there is no
+  // backend to be unavailable, so retrying would never help.
+  if (!client) return { status: 'signed-out', session: null };
+
+  try {
+    const {
+      data: { session },
+    } = await client.auth.getSession();
+    if (session) {
+      rememberAccount();
+      return { status: 'signed-in', session };
+    }
+    // A real answer from a reachable backend — this browser is signed out,
+    // and stays that way until someone signs in again.
+    forgetAccount();
+    return { status: 'signed-out', session: null };
+  } catch (error) {
+    // The SDK loaded but could not answer — an expired refresh token whose
+    // refresh call failed, a storage lock timeout, a corrupt session blob.
+    // Still "we don't know", not "nobody".
+    return { status: 'unavailable', session: null, error };
+  }
+}
+
 // Null when Supabase isn't configured yet — callers that only need to know
 // "is anyone logged in" (e.g. the header's initial render) can use this
 // without needing to handle the not-configured case as an error.
+//
+// Deliberately still collapses `unavailable` to null: for chrome, "show the
+// logged-out header" is the correct response to both. Anything that DEALS A
+// HAND or writes a result must use resolveSession() instead.
 export async function getSession() {
-  // Local test account (state/test-account.js) — only ever active with `?test`
-  // in the URL AND a deliberately-set flag, and it never touches Supabase, so
-  // it confers no database access. Checked first so every caller sees a
-  // consistent identity without any of them knowing this exists.
-  if (isTestAccountActive()) return testAccountSession();
-  // Also null (rather than a throw) when the Supabase SDK itself can't be
-  // reached — a CDN/network failure should read as "nobody is logged in,"
-  // which the whole anonymous-play path already handles, not as an error
-  // that propagates into board.js's init.
-  const client = await getSupabase().catch(() => null);
-  if (!client) return null;
-  const {
-    data: { session },
-  } = await client.auth.getSession();
+  const { session } = await resolveSession();
   return session;
 }
 

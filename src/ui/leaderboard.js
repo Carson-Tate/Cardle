@@ -3,7 +3,7 @@
 // Four boards behind tabs (Today / This Week / All-Time / Career Points) with a
 // friends-only toggle, per the owner's spec.
 
-import { getSession } from '../state/auth.js';
+import { resolveSession } from '../state/auth.js';
 import { BOARDS, BOARD_SIZE, fetchLeaderboard, fetchRunResult } from '../state/leaderboard.js';
 import { loadGameConfig } from '../state/game-config.js';
 import { getDailyModifier, modifierBoardIsAscending } from '../core/modifiers.js';
@@ -62,8 +62,15 @@ export async function initLeaderboard(root) {
   // `userId` stays null when signed out. It is only used to highlight your own
   // row and to filter to friends, and both of those degrade to "not applicable"
   // rather than needing a branch.
-  const session = await getSession().catch(() => null);
+  // `status` matters as well as the session (§11ak): when the SDK itself
+  // cannot be loaded, `userId` is null for a player who IS signed in, and the
+  // error copy below used to read that as "signed out" and tell them the
+  // boards aren't public yet. That is the sentence a player sees when their
+  // run is missing from the board — it says the wrong thing about the wrong
+  // problem, at the exact moment they are trying to find out what happened.
+  const { status, session } = await resolveSession();
   const userId = session?.user?.id ?? null;
+  const sessionUnknown = status === 'unavailable';
   const gameConfig = await loadGameConfig();
   const custom = gameConfig?.customCosmetics ?? null;
 
@@ -165,9 +172,16 @@ export async function initLeaderboard(root) {
                   // having been run yet — in which case the boards are exactly
                   // as private as they were before, and a raw Postgres error
                   // would be both alarming and useless to them.
-                  userId
-                  ? `<p class="profile-error">Couldn't load this board: ${escapeHtml(loadError.message ?? loadError)}</p>`
-                  : `<p class="profile-empty-note">These boards aren't public yet. <strong>Log in</strong> to see how you stack up.</p>`
+                  //
+                  // `sessionUnknown` has to be checked FIRST, because in that
+                  // state `userId` is null for signed-in and signed-out players
+                  // alike — so the signed-out copy would be shown to someone
+                  // whose only real problem is that they cannot reach us.
+                  sessionUnknown
+                  ? `<p class="profile-error">Couldn't reach the leaderboards — check your connection, or try again with any content blocker paused.</p>`
+                  : userId
+                    ? `<p class="profile-error">Couldn't load this board: ${escapeHtml(loadError.message ?? loadError)}</p>`
+                    : `<p class="profile-empty-note">These boards aren't public yet. <strong>Log in</strong> to see how you stack up.</p>`
                 : rowsHtml(board)
           }
         </section>

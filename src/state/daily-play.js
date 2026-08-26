@@ -44,6 +44,48 @@ export async function claimTodaySeed(userId, date = new Date()) {
   throw insertError;
 }
 
+/**
+ * Whether a locally-mirrored run (persistence.js's pending-run storage, §11ak)
+ * may be resubmitted against the seed the server is currently holding.
+ *
+ * THIS IS THE WHOLE SAFETY ARGUMENT for resubmitting without asking the
+ * player. A pending run is a finished hand that was scored locally and whose
+ * POST never landed — resending it is the identical request that was already
+ * in flight, not a second attempt at the day, but ONLY if it was computed
+ * from the same deal. `daily_plays.seed` is re-rolled whenever the row is
+ * deleted (an admin day reset, §11aj) and is different on a new game day, so
+ * a stale mirror could otherwise be replayed onto a hand it never saw.
+ *
+ * Pure and exported so the rule is testable in Node: the storage it reads
+ * from is localStorage-bound and the caller is a DOM module, which between
+ * them would have left the one genuinely dangerous line covered only by a
+ * browser test.
+ *
+ * Compares as numbers, not identities: the seed makes a round trip through
+ * both JSON and a Postgres `bigint`, and PostgREST is entitled to hand back a
+ * string for the latter. `claimTodaySeed` already coerces for exactly that
+ * reason, and a strict `!==` here against a string would silently discard
+ * every recoverable run instead of restoring it — a failure that looks
+ * identical to this feature not existing.
+ */
+export function pendingRunMatches(pending, seed) {
+  if (!pending || typeof pending !== 'object' || !pending.result) return false;
+  const stored = numericSeed(pending.seed);
+  const claimed = numericSeed(seed);
+  return stored !== null && claimed !== null && stored === claimed;
+}
+
+// `Number()` is too generous to use directly here: it maps null, undefined and
+// '' all to 0, so an absent stored seed would compare EQUAL to an absent
+// claimed one and a run with no provenance would be resubmitted against a hand
+// it has no relationship to. Null means "not a seed", and two of those are not
+// a match.
+function numericSeed(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 async function fetchRow(client, userId, playDate) {
   const { data, error } = await client
     .from('daily_plays')
@@ -105,9 +147,25 @@ export async function saveTodayResultForUser(userId, result, date = new Date()) 
     // client's own number, which would defeat the entire exercise.
     throw new Error(data?.error ?? 'the run was not accepted');
   } catch (error) {
+    // ALREADY FINISHED IS A SUCCESS, NOT A FAILURE — and getting this wrong is
+    // what made a dropped submission unrecoverable (§11ak). The function
+    // answers 409 both for "no hand claimed today" and for "today is already
+    // finished", and the second one is precisely what a RETRY of a submission
+    // that actually landed looks like: the POST was cancelled by a navigation
+    // before its response came back, so the client never learned it had won.
+    // Treating that as fatal meant the only safe recovery was no recovery.
+    //
+    // Reading the row back is what disambiguates the two — a stored result
+    // means the run is in, and it is the SERVER'S result, which is the one the
+    // player should be shown either way (§11z). Nothing is trusted from the
+    // client here; this is a read.
+    if (isConflict(error)) {
+      const finished = await fetchRow(client, userId, isoDate(date)).catch(() => null);
+      if (finished?.result) return finished.result;
+    }
     // Only the "function is not deployed yet" case may fall through. Anything
-    // else — a rejected run, a 409, a 422 — must surface, or a cheat would be
-    // quietly retried through the unverified path.
+    // else — a rejected run, a genuinely unclaimed day, a 422 — must surface,
+    // or a cheat would be quietly retried through the unverified path.
     if (!isFunctionMissing(error)) throw error;
     // NAMES CORS EXPLICITLY, because a blocked preflight is indistinguishable
     // from a missing function here — both surface as "failed to fetch" — and
@@ -125,6 +183,13 @@ export async function saveTodayResultForUser(userId, result, date = new Date()) 
   const { error } = await client.from('daily_plays').update({ result }).eq('user_id', userId).eq('play_date', isoDate(date));
   if (error) throw error;
   return null;
+}
+
+// The Edge Function's two refusals (supabase/functions/submit-run/index.ts)
+// both come back as 409. Only the caller above can tell them apart, and only
+// by looking at what is actually stored.
+function isConflict(error) {
+  return (error?.context?.status ?? error?.status) === 409;
 }
 
 // Distinguishes "the Edge Function has not been deployed" from "it ran and said

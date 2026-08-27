@@ -4,9 +4,18 @@
 // `seed` — and scores it independently of whatever the client claimed.
 //
 // WHY THIS IS POSSIBLE AT ALL. Three properties line up:
-//   1. `daily_plays.seed` is claimed before a card is touched and is write-once
-//      (schema.sql revokes UPDATE on every column but `result`), so the server
-//      already knows exactly which cards the player was dealt.
+//   1. `daily_plays.seed` is MINTED BY THE SERVER and is write-once, so the
+//      server already knows exactly which cards the player was dealt.
+//
+//      ⚠️ WRITE-ONCE IS NOT THE LOAD-BEARING HALF, and this comment used to say
+//      it was — it cited only schema.sql's column grants, which stop a REROLL
+//      and do nothing about the FIRST write. The seed was supplied by the
+//      browser's INSERT until migration 024, and the first write is the only
+//      one an attacker wants: grind seeds offline for a Royal Flush, claim it,
+//      and this verifier faithfully certifies the hand you picked. It was
+//      exploited in production exactly that way (§11am). What makes the
+//      sentence true now is `enforce_server_dealt_hand`, which overwrites
+//      whatever the client sends. If that trigger ever goes, so does §11z.
 //   2. `dealHand(seed)` is a pure function of that seed — same seed, same 52
 //      cards in the same order, same rarity and wild flags.
 //   3. src/core/ never touches the network or the DOM, so this module and
@@ -171,7 +180,15 @@ export function verifyAndScoreRun({ seed, discardRounds, modifier, wagered = fal
     discardIndices: finalRoundIndices,
     maxDiscards,
     evContext: sanitizeEvContext(evContext),
-    modifierMultiplier: modifierScoringMultiplier(modifier),
+    // `wagered` has to be STAMPED ONTO the modifier, not passed alongside it.
+    // modifierScoringMultiplier reads `dailyModifier.wagered` (modifiers.js),
+    // and resolveModifier() never sets that field — board.js assigns it in
+    // place the moment the player picks a side. Calling this with the bare
+    // resolved modifier therefore returned 1 on EVERY Double or Nothing day:
+    // a busted wager kept its full undoubled score (the screen said 0), and a
+    // won wager silently lost its 2x. `wagered` was already threaded into this
+    // function, but only as far as discardRoundLimitsFor() above.
+    modifierMultiplier: modifierScoringMultiplier({ ...modifier, wagered }),
   });
 
   return {

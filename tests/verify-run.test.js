@@ -149,3 +149,48 @@ describe('discardRoundLimitsFor', () => {
     assert.deepEqual(result.finalHand[4], hand[4]);
   });
 });
+
+// §11am. `wagered` was threaded into verifyAndScoreRun and stopped at
+// discardRoundLimitsFor, so the server's multiplier was 1 on EVERY Double or
+// Nothing day — a busted wager kept its full undoubled score while the screen
+// showed 0, and a won wager silently lost its 2x. These assert the two
+// directions separately, because a fix that stamps the field but reads the
+// wrong side of the threshold would still pass one of them.
+describe('Double or Nothing is resolved server-side, not just client-side', () => {
+  const wager = MODIFIERS.find((m) => m.id === 'doubleOrNothing');
+  const BUST_SEED = 3; // deals a High Card — below the Pair threshold
+  const WIN_SEED = 1;  // deals a Pair — exactly at it
+
+  const verifyWager = (seed, wagered) =>
+    verifyAndScoreRun({ seed, discardRounds: [[]], modifier: wager, wagered });
+
+  test('a busted wager is wiped to the pity floor, not paid in full', () => {
+    const declined = verifyWager(BUST_SEED, false);
+    const busted = verifyWager(BUST_SEED, true);
+    assert.ok(declined.ok && busted.ok, 'both runs should verify');
+    // Guards the fixture itself: if this ever deals something worth 0 anyway,
+    // the assertion below would pass against the broken code too.
+    assert.ok(declined.score.total > 0, `fixture must be worth something (got ${declined.score.total})`);
+    // NOT zero — Pity Points (§3i) are added AFTER the modifier multiplier, so
+    // a wipe floors at the pity award rather than at nothing. Asserting 0 here
+    // would be asserting a rule the game does not have.
+    assert.equal(busted.score.total, busted.score.pity, 'everything except pity should be wiped');
+    assert.ok(busted.score.total < declined.score.total, 'the server paid out a losing wager');
+  });
+
+  test('a won wager is actually doubled', () => {
+    const declined = verifyWager(WIN_SEED, false);
+    const won = verifyWager(WIN_SEED, true);
+    assert.ok(declined.ok && won.ok, 'both runs should verify');
+    // ±1: the multiplier is applied inside scoreRun before rounding, so
+    // doubling the rounded total is not exactly the rounded doubled total.
+    assert.ok(
+      Math.abs(won.score.total - declined.score.total * 2) <= 1,
+      `expected ~${declined.score.total * 2}, got ${won.score.total}`,
+    );
+  });
+
+  test('the wager reaches the multiplier at all', () => {
+    assert.notEqual(verifyWager(BUST_SEED, true).score.total, verifyWager(BUST_SEED, false).score.total);
+  });
+});

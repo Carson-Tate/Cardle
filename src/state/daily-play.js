@@ -34,6 +34,16 @@ export async function claimTodaySeed(userId, date = new Date()) {
   ]);
   if (existing) return { seed: Number(existing.seed), result: existing.result, stackedDeal };
 
+  // THIS VALUE IS DISCARDED SERVER-SIDE and is kept only so the claim works
+  // against a database that has not run migration 024 yet (the column is NOT
+  // NULL, so dropping it here would make every claim fail on an un-migrated
+  // project — the deploy-order trap §11al already paid for once).
+  //
+  // Post-024, `enforce_server_dealt_hand` overwrites it with a CSPRNG value
+  // before the row lands, because a seed the browser chooses is a hand the
+  // browser chooses: `dealHand` is pure, so grinding for a Royal Flush and
+  // claiming that seed is a few seconds of work. Exploited in production
+  // (§11am). Do not add a code path that depends on this number surviving.
   const seed = freshSeed();
   const { data: inserted, error: insertError } = await client
     .from('daily_plays')

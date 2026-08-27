@@ -1810,6 +1810,28 @@ The parity modifier is parameterised — `resolveModifier` rolls `ctx.parity` as
 
 **What this does NOT buy, said out loud.** Minified code is not obfuscated and the game's logic is still fully readable to anyone who wants it; the deck, the scorer and the EV solver are all still there under short variable names. This is a presentation fix. Nothing about the security posture changed, and nothing should be built on the assumption that the client is now opaque — §11z's server-side re-derivation remains the only thing that matters, and §11am is what makes it true.
 
+### 11ao. A Claim Is For Today, Exactly ✅ built (owner: "my friend is still setting his seeds for days in the future but i think they are random this time, can you make it so he cant do that")
+
+**"I think they are random this time" is the diagnostic half of that sentence.** Random seeds mean the 024 trigger is firing, and the date check lives in the same function — so he could not be reaching past `game_today() + 1`. That narrowed it to one possibility before anything was read: he was claiming exactly tomorrow, through the window I deliberately left open.
+
+**THIS WAS MY DECISION, NOT A HOLE HE FOUND.** 024 allowed ±1 day because `gameDayFor` derives the game day from the BROWSER's clock, so client and server disagree for a few seconds either side of the 19:00 boundary — the busiest moment of the day — and an exact match would turn ordinary skew into a lockout right then. The reasoning was sound; the remedy was wrong. It paid for skew tolerance with a day of pre-claiming, and the price was visible within a day.
+
+**Remove the disagreement rather than picking a side of it.** The date is pinned exactly now, and `claimTodaySeed` catches that specific rejection, asks the server what day it is via the already-granted `game_today()` RPC, and retries once. The normal path is untouched and costs no extra round trip; only a client whose clock genuinely disagrees pays for one, and it self-heals instead of failing. Both halves now read the same definition of the game day, so there is no second one to drift.
+
+**Still REJECT rather than rewrite**, for 024's reason: the client reads its row back with `.eq('play_date', <its own answer>)`, so silently storing a different date means the next load finds nothing, claims again, collides on the primary key, and serves §11ak's screen. Loud and recoverable beats silent and wrong.
+
+**Worth being honest about the stakes: this was not exploitable.** With server-minted seeds there is no reroll, and knowing a seed early buys nothing the in-game EV solver does not already hand you. It is the schema permitting something the game does not mean to offer, and "not exploitable yet" is a bad place to leave a boundary — but it is a tightening, not a breach.
+
+**`isWrongGameDay` is exported and pure**, the §11ak pattern again: the one line that decides between "retry on a different day" and "rethrow" would otherwise have been covered nowhere, since its caller needs a live Supabase client. **Too broad is the dangerous direction** — a 23505 is the two-tabs race, which already has its own recovery, and retrying that against a server-supplied day would re-enter the claim for a row that already exists.
+
+**The predicate compares as a string, and the first test pinned the wrong thing.** It originally asserted that a NUMERIC code returns false, which documented an incidental behaviour rather than a desired one and would have failed anyone who made the check more robust. The check now accepts either wire shape and the test asserts that, plus that 23505 still is not a match. A recovery path that fails closed on a shape change looks exactly like a feature that was never built.
+
+**DEPLOY ORDER: client first, then the migration.** Run 025 before the retry is live and a player whose clock is off has no recovery at all. The old client fails closed rather than dangerously, so this is about avoiding a bad few minutes rather than about correctness — but it is the wrong order.
+
+**Verified.** 678 unit tests (4 new), confirmed RED against a predicate reverted to the wrong SQLSTATE. The migration self-tests behaviourally as `authenticated` with the JWT claim set: tomorrow is refused AND today is still claimable, because a pin that is too tight locks everybody out and a structural check cannot tell those apart. It deliberately skips the today-half if the account already has a real claimed row, since a self-test must not be able to destroy somebody's run.
+
+**A pre-existing issue this surfaced but did not fix:** a player who claims at 18:59 and locks in at 19:01 has their run submitted against a game day that has already rolled, and `submit-run` will not find the row. Unrelated to the pin, older than it, and worth its own pass.
+
 ---
 
 ## 12. Implementation Status
@@ -2038,6 +2060,17 @@ None of the three touch `dailySeed`/`hashSeed` or persistence — every redeal d
     - **World-readable is a property of the table, not of the data you put in it.** `game_config` was the obvious home and would have published the list. A table with RLS on and no policies at all is unreachable over REST for everyone, which is what a private list actually needs.
     - **Normalisation is where the difficulty lives, and it cuts both ways.** Folding leetspeak and padding is what stops `5L_UR`; the same folding is what makes `ASS` match `CLASSIC`. Tiered matching plus an explicit allow list is the price of folding aggressively.
     - **If two rules mean different things, they need different normalisation.** One folder served both tiers and was wrong for each in opposite directions — too aggressive for `exact` (`Card_le_99` became `CARDLE`), and the naive fix would have been too lax for `substring` (`N9I9G9G9E9R` stops matching). "Does this appear in here" and "is the whole thing this" are not the same question.
+97. **A claim is for today, exactly** (§11ao).
+    - **Read the reporter's aside as evidence.** "I think they are random this time" said the seed trigger was firing, and the date check lives in the same function — which narrowed the cause to one possibility before a line was read.
+    - **A tolerance window is a feature you are shipping, whether you meant to or not.** 024 bought clock-skew safety with a day of pre-claiming. The reasoning was right and the remedy was wrong, and somebody stood in the gap within a day of it existing.
+    - **Remove the disagreement instead of choosing a side.** Client and server each computed the game day from their own clock. Pinning exactly is only safe once the client can ask the server; then there is one definition and nothing to reconcile.
+    - **Put the recovery on the failure path, not the common path.** The RPC fires only after a claim has already been refused for that specific reason, so the cost lands on the broken clock rather than on every player every day.
+    - **Rethrow the original error, not the one the recovery hit.** The caller has to handle "the claim failed"; a secondary lookup failure just makes the message worse.
+    - **Too broad is the dangerous direction for a retry predicate.** A 23505 is the two-tabs race with its own recovery; treating it as a wrong-day would re-enter the claim for a row that already exists.
+    - **A test can pin an incidental behaviour and punish an improvement.** Asserting that a numeric error code returns false documented an accident, not an intent — and would have gone red for anyone hardening the check. Assert what you want to be true.
+    - **A pin that is too tight and one that is too loose fail in opposite directions**, so the self-test asserts BOTH: tomorrow is refused, and today is still claimable. Only checking the first ships a game nobody can play.
+    - **A self-test must not be able to destroy real state.** It skips the today-half entirely when the account it borrowed already has a claimed row.
+    - **Say when a tightening is not a breach.** With server-minted seeds this bought an attacker nothing; calling it an exploit would have misrepresented both the risk and the fix.
 96. **Comments off the wire, not out of the repo** (§11an).
     - **A literal reading of a request can destroy the thing that makes the project maintainable.** "Remove all the comments" and "stop shipping the comments" look like the same ask and are opposites. The build step answers it; deleting them from source would have thrown away the record that a trigger holds §11z up.
     - **A no-build project has no separation between source and bundle, and that is a publishing decision nobody made.** Serving `src/` directly meant every internal note was a devtools click away. It was never decided, it was inherited from `outputDirectory: "."`.

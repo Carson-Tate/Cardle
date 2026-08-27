@@ -21,8 +21,62 @@ function isoDate(date) {
 // `{ seed, result }` — `result` is null until they've locked in a hand.
 export async function claimTodaySeed(userId, date = new Date()) {
   const client = await requireSupabase();
-  const playDate = isoDate(date);
+  try {
+    return await claimForDay(client, userId, isoDate(date));
+  } catch (error) {
+    // OUR CLOCK DISAGREES WITH THE SERVER'S (§11ao). `gameDayFor` reads the
+    // BROWSER's clock, so a machine that is wrong — or merely a few seconds
+    // either side of the 19:00 New York boundary — computes a different game
+    // day than `game_today()` does, and migration 025 pins the claim to
+    // exactly today. Rather than widen the pin (which is what let somebody sit
+    // on tomorrow's row in the first place), ask the server what day it is and
+    // try once more.
+    //
+    // Costs nothing on the path everyone takes: this runs only after a claim
+    // has already been refused for this specific reason.
+    if (!isWrongGameDay(error)) throw error;
+    const serverDay = await fetchServerGameDay(client);
+    // Rethrow the ORIGINAL error, not whatever the lookup did. The claim
+    // failing is what the caller has to handle, and §11ak's screen reads better
+    // for it than a confusing secondary failure would.
+    if (!serverDay) throw error;
+    return await claimForDay(client, userId, serverDay);
+  }
+}
 
+// `check_violation`, raised by name in migration 025 so this is a stable
+// contract rather than string-matching the message. PostgREST surfaces the
+// SQLSTATE as `code`.
+//
+// EXPORTED AND PURE so the one dangerous line here is unit-tested rather than
+// left to a browser test — the same reasoning as `pendingRunMatches` below
+// (§11ak). It decides between "retry the claim on a different day" and
+// "rethrow", and too BROAD is the dangerous direction: a 23505 is the two-tabs
+// race, which already has its own recovery, and retrying THAT against a
+// server-supplied day would re-enter the claim for a row that already exists.
+//
+// Compared as a STRING rather than with `===` against one, because the code
+// crosses HTTP and JSON to get here and "fails closed" is the bad direction for
+// a recovery path: it would silently never fire and look exactly like a feature
+// that was never built (§11ak, where the seed compare had this precise bug).
+// `String(undefined)` and `String(null)` are harmlessly not '23514'.
+export function isWrongGameDay(error) {
+  return String(error?.code) === '23514';
+}
+
+// `game_today()` is already granted to `authenticated` and `anon` (migration
+// 007) — the same function the trigger checks against, so there is exactly one
+// definition of the game day and no second one to drift.
+async function fetchServerGameDay(client) {
+  const { data, error } = await client.rpc('game_today');
+  if (error) {
+    console.warn('Could not read the server game day:', error?.message ?? error);
+    return null;
+  }
+  return typeof data === 'string' ? data : null;
+}
+
+async function claimForDay(client, userId, playDate) {
   // FETCHED IN PARALLEL WITH THE ROW, so the common path — a reload, or coming
   // back after playing — costs no extra round trip for a feature that is
   // almost never active (§11al). Only the first claim of the day has to look

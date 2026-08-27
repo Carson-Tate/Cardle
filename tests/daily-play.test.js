@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { claimTodaySeed, saveTodayResultForUser, pendingRunMatches } from '../src/state/daily-play.js';
+import { claimTodaySeed, saveTodayResultForUser, pendingRunMatches, isWrongGameDay } from '../src/state/daily-play.js';
 import { SupabaseNotConfiguredError } from '../src/state/supabase-client.js';
 
 // Same reasoning as auth.test.js/friends.test.js: no live Supabase project
@@ -66,5 +66,36 @@ describe('pendingRunMatches', () => {
   test('an unknown claimed seed matches nothing', () => {
     assert.equal(pendingRunMatches({ seed: 12345, result: run }, null), false);
     assert.equal(pendingRunMatches({ seed: null, result: run }, null), false);
+  });
+});
+
+// §11ao. Migration 025 pins a claim to exactly `game_today()`, and the client
+// recovers from a clock disagreement by asking the server and retrying once.
+// This predicate is what separates "retry on another day" from "rethrow", and
+// too BROAD is the dangerous direction — a 23505 is the two-tabs race, which
+// has its own recovery path, and retrying it would re-enter the claim for a row
+// that already exists.
+describe('isWrongGameDay', () => {
+  test('recognises the check_violation migration 025 raises', () => {
+    assert.equal(isWrongGameDay({ code: '23514' }), true);
+  });
+
+  test('does NOT claim the two-tabs unique-violation race', () => {
+    assert.equal(isWrongGameDay({ code: '23505' }), false);
+  });
+
+  test('an error with no code, or no error at all, is not a wrong day', () => {
+    assert.equal(isWrongGameDay({ message: 'Failed to fetch' }), false);
+    assert.equal(isWrongGameDay(null), false);
+    assert.equal(isWrongGameDay(undefined), false);
+  });
+
+  // The code crosses HTTP and JSON to get here. Failing closed on a shape
+  // change would make the recovery silently never fire and look exactly like a
+  // feature that was never built — §11ak's seed compare had this exact bug — so
+  // both wire shapes are accepted, and the near-miss still is not.
+  test('tolerates the code arriving as a number without widening to 23505', () => {
+    assert.equal(isWrongGameDay({ code: 23514 }), true);
+    assert.equal(isWrongGameDay({ code: 23505 }), false);
   });
 });

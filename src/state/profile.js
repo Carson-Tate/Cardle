@@ -251,7 +251,19 @@ export async function updateUsername(userId, rawUsername) {
 export async function deleteOwnAccount() {
   const client = await requireSupabase();
   const { error } = await client.rpc('delete_own_account');
-  if (error) throw error;
+  if (error) {
+    // Migration 027 refuses deletion while suspended, because every trace of
+    // the account — including the suspension — cascades from the auth.users
+    // row, making Delete Account a one-click pardon (§11aq). Raised by errcode
+    // rather than matched on message, and rewritten here because the raw
+    // Postgres sentence does not say what to do about it.
+    if (String(error.code) === '42501') {
+      throw new Error(
+        'Your account is suspended, so it cannot be deleted right now. It can be deleted once the suspension ends.',
+      );
+    }
+    throw error;
+  }
   // The local session is now backed by a user that no longer exists; sign out
   // so the app doesn't keep presenting a stale logged-in header.
   await client.auth.signOut().catch(() => {});

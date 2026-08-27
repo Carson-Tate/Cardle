@@ -105,6 +105,18 @@ describe('formatSuspensionEnd', () => {
     assert.match(formatted, /EDT|EST/);
   });
 
+  test('always includes the year', () => {
+    assert.match(formatSuspensionEnd(new Date('2026-09-01T23:30:00Z')), /2026/);
+  });
+
+  // The case the year exists FOR: a ban issued in December lifts in January,
+  // and "Sat, Jan 3" alone is ambiguous precisely when certainty matters most.
+  test('a suspension crossing into the next year is unambiguous', () => {
+    const formatted = formatSuspensionEnd(new Date('2027-01-03T18:00:00Z'));
+    assert.match(formatted, /Jan 3/);
+    assert.match(formatted, /2027/);
+  });
+
   test('a bad date formats to nothing rather than "Invalid Date"', () => {
     assert.equal(formatSuspensionEnd(new Date('nope')), null);
     assert.equal(formatSuspensionEnd(null), null);

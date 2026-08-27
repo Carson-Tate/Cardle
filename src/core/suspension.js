@@ -82,6 +82,12 @@ export function formatSuspensionEnd(date) {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
+    // THE YEAR IS ALWAYS SHOWN, never conditionally on it differing from the
+    // current one (owner request). A 30-day ban issued in December lifts next
+    // year, and "Sat, Jan 3" is ambiguous in exactly the case where the player
+    // most wants certainty. Showing it always also means the string cannot
+    // change shape depending on when it is read.
+    year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
     timeZoneName: 'short',

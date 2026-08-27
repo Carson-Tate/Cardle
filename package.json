@@ -6,9 +6,13 @@
   "private": true,
   "scripts": {
     "test": "node --test",
-    "dev": "node tools/dev-server.js"
+    "dev": "node tools/dev-server.js",
+    "build": "node build.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

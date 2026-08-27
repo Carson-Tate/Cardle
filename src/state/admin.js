@@ -265,3 +265,63 @@ export async function adminRemoveBlockedWord(wordId) {
   const { error } = await client.rpc('admin_remove_blocked_word', { word_id: wordId });
   if (error) throw error;
 }
+
+// ---------------------------------------------------------------------------
+// Suspensions (DESIGN.md §11ap)
+// ---------------------------------------------------------------------------
+// All three go through security-definer RPCs that re-check `is_admin()` in the
+// database. The client gate on the admin page decides what to RENDER, never
+// what is permitted — §11f's standing rule, proved there by patching the client
+// gate away and confirming every action still failed.
+
+const NEEDS_026 = 'Run supabase/migrations/026-suspensions.sql first — this function is not installed yet.';
+
+/**
+ * Suspends a player until `until` (a Date), or permanently when `until` is null.
+ *
+ * The database refuses an end date in the past, an unknown player, and any
+ * admin — so none of those are re-checked here. Duplicating a rule the server
+ * owns is how the two drift (§11x).
+ */
+export async function adminSuspendPlayer(targetId, until, reason) {
+  const client = await requireSupabase();
+  const { error } = await client.rpc('admin_suspend_player', {
+    target_id: targetId,
+    until: until ? new Date(until).toISOString() : null,
+    reason: reason ?? null,
+  });
+  if (error) {
+    if (error.code === 'PGRST202') throw new Error(NEEDS_026);
+    throw error;
+  }
+}
+
+/** Ends a suspension early. A no-op if they are not currently suspended. */
+export async function adminLiftSuspension(targetId) {
+  const client = await requireSupabase();
+  const { error } = await client.rpc('admin_lift_suspension', { target_id: targetId });
+  if (error) {
+    if (error.code === 'PGRST202') throw new Error(NEEDS_026);
+    throw error;
+  }
+}
+
+/**
+ * The selected player's active suspension, or null.
+ *
+ * RESOLVES NULL WHEN THE FUNCTION IS MISSING rather than throwing, so an
+ * unapplied 026 leaves the rest of the admin page working — the same degrade
+ * `fetchStackedDeal` makes, and for the same reason: a not-yet-installed
+ * feature should be absent, not fatal.
+ */
+export async function fetchPlayerSuspension(targetId) {
+  const client = await requireSupabase();
+  const { data, error } = await client.rpc('admin_player_suspension', { target_id: targetId });
+  if (error) {
+    if (error.code !== 'PGRST202') {
+      console.warn('Could not read the suspension:', error?.message ?? error);
+    }
+    return null;
+  }
+  return Array.isArray(data) ? (data[0] ?? null) : (data ?? null);
+}

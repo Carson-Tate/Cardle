@@ -27,6 +27,9 @@ import {
   adminQueueStackedDeal,
   adminClearStackedDeal,
   fetchStackedDeals,
+  adminSuspendPlayer,
+  adminLiftSuspension,
+  fetchPlayerSuspension,
 } from '../state/admin.js';
 import {
   RANKS,
@@ -38,6 +41,7 @@ import {
   STACK_MAX_DRAWS,
 } from '../core/deck.js';
 import { RARITIES } from '../core/rarity.js';
+import { describeSuspension, formatSuspensionEnd, SUSPENSION_PRESETS } from '../core/suspension.js';
 import { fetchSubmitRunFeatures } from '../state/daily-play.js';
 import { derivePlayerStats } from '../core/player-stats.js';
 import { resolveCosmetics, resolveEquipped, DEFAULT_PAINT_ID } from '../core/cosmetics.js';
@@ -107,6 +111,11 @@ export async function initAdmin(root) {
   // already dealt from one. Kept beside `selected` rather than inside it
   // because it comes from a different table and reloads on its own schedule.
   let stackedDeals = [];
+  // The selected player's active suspension (§11ap), or null. Read through the
+  // admin RPC rather than the table, because the table's select policy is
+  // own-rows-only by design — an admin is not exempt from RLS, they have an
+  // elevated function.
+  let suspension = null;
   // Whether the DEPLOYED submit-run understands stacked deals: 'ready',
   // 'stale' or 'unknown' (§11al). Probed once per page load rather than per
   // player — it is a property of the deployment, not of who is selected.
@@ -253,9 +262,14 @@ export async function initAdmin(root) {
       // Fetched together: the stacked-deal read resolves to [] on any failure
       // (including the table not existing yet), so it can never be the reason a
       // player fails to open.
-      const [detail, stacks] = await Promise.all([fetchPlayerDetail(userId), fetchStackedDeals(userId)]);
+      const [detail, stacks, ban] = await Promise.all([
+        fetchPlayerDetail(userId),
+        fetchStackedDeals(userId),
+        fetchPlayerSuspension(userId),
+      ]);
       selected = { ...detail, stats: derivePlayerStats(detail.history) };
       stackedDeals = stacks;
+      suspension = ban;
     } catch (error) {
       notice = { kind: 'error', text: `Couldn't load that player: ${error.message ?? error}` };
     }
@@ -776,6 +790,8 @@ export async function initAdmin(root) {
 
         ${stackedDealHtml()}
 
+        ${suspensionHtml(profile)}
+
         <h4 class="profile-subheading">Danger</h4>
         <button type="button" class="profile-delete-btn" id="admin-delete-player"${profile.is_admin ? ' disabled' : ''}>
           Delete This Account
@@ -786,6 +802,59 @@ export async function initAdmin(root) {
             : ''
         }
       </section>
+    `;
+  }
+
+  // Suspensions (§11ap) — stop someone playing for a chosen length of time.
+  //
+  // Sits between Stack the Deck and Danger: it changes what a player can DO
+  // rather than what their profile says, but every suspension is reversible
+  // with one click, so it is not destructive in the way deleting an account is.
+  function suspensionHtml(profile) {
+    if (profile.is_admin) {
+      return `
+        <h4 class="profile-subheading">Suspension</h4>
+        <p class="admin-hint">Admin accounts can't be suspended — the database refuses it. That's a guard against locking yourself out of your own game.</p>
+      `;
+    }
+
+    const active = suspension
+      ? describeSuspension({ suspended_until: suspension.suspended_until, reason: suspension.reason })
+      : null;
+
+    const presets = SUSPENSION_PRESETS.map(
+      (p) =>
+        `<button type="button" class="admin-action-btn admin-suspend-preset" data-hours="${
+          p.hours === null ? '' : p.hours
+        }">${escapeHtml(p.label)}</button>`,
+    ).join('');
+
+    return `
+      <h4 class="profile-subheading">Suspension</h4>
+      ${
+        active
+          ? `<p class="admin-notice admin-notice--error">⛔ Suspended ${
+              active.permanent
+                ? 'permanently'
+                : `until ${escapeHtml(formatSuspensionEnd(active.until) ?? 'an unknown date')}`
+            }${active.reason ? ` — ${escapeHtml(active.reason)}` : ''}</p>
+             <button type="button" class="admin-action-btn" id="admin-lift-suspension">Lift Suspension</button>`
+          : `<p class="admin-hint">
+               Blocks them from claiming or submitting a hand. They can still sign in and browse; only
+               playing stops. They see a red notice with the date it ends. Nobody else can see that they're
+               suspended. Issuing a new suspension replaces any current one.
+             </p>
+             <label class="admin-field">
+               <span>Reason (optional, shown to them)</span>
+               <input type="text" id="admin-suspend-reason" maxlength="200" autocomplete="off"
+                      placeholder="e.g. Manipulating the daily deal" />
+             </label>
+             <div class="admin-suspend-presets">${presets}</div>
+             <form class="admin-search" id="admin-suspend-custom">
+               <input type="datetime-local" id="admin-suspend-until" aria-label="Suspend until" />
+               <button type="submit" class="admin-action-btn">Suspend Until</button>
+             </form>`
+      }
     `;
   }
 
@@ -1025,6 +1094,57 @@ export async function initAdmin(root) {
 
     root.querySelector('#admin-stack-clear')?.addEventListener('click', () => {
       withNotice(() => adminClearStackedDeal(selected.profile.id), 'Queued deal cancelled.');
+    });
+
+    // Suspensions (§11ap). The reason field is read at CLICK time rather than
+    // being tracked in state, so typing in it never triggers a re-render — the
+    // same reason the stack builder reads its DOM on save.
+    root.querySelectorAll('.admin-suspend-preset').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const raw = btn.dataset.hours;
+        const permanent = raw === '';
+        const until = permanent ? null : new Date(Date.now() + Number(raw) * 3600_000);
+        const reason = root.querySelector('#admin-suspend-reason')?.value ?? '';
+        withNotice(
+          () => adminSuspendPlayer(selected.profile.id, until, reason),
+          permanent
+            ? `${selected.profile.username} is suspended permanently.`
+            : `${selected.profile.username} is suspended until ${formatSuspensionEnd(until)}.`,
+        );
+      });
+    });
+
+    root.querySelector('#admin-suspend-custom')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const raw = root.querySelector('#admin-suspend-until')?.value;
+      if (!raw) {
+        notice = { kind: 'error', text: 'Pick a date and time first, or use one of the preset lengths.' };
+        render();
+        return;
+      }
+      // A <input type="datetime-local"> value has no timezone, so `new Date()`
+      // reads it as the ADMIN's local time — which is what they meant when they
+      // typed it. It is sent as an absolute ISO instant, and the database is the
+      // one that refuses a date in the past, so that rule lives in exactly one
+      // place (§11x).
+      const until = new Date(raw);
+      if (Number.isNaN(until.getTime())) {
+        notice = { kind: 'error', text: "That date didn't parse." };
+        render();
+        return;
+      }
+      const reason = root.querySelector('#admin-suspend-reason')?.value ?? '';
+      withNotice(
+        () => adminSuspendPlayer(selected.profile.id, until, reason),
+        `${selected.profile.username} is suspended until ${formatSuspensionEnd(until)}.`,
+      );
+    });
+
+    root.querySelector('#admin-lift-suspension')?.addEventListener('click', () => {
+      withNotice(
+        () => adminLiftSuspension(selected.profile.id),
+        `${selected.profile.username} can play again.`,
+      );
     });
 
     root.querySelector('#admin-reset-form')?.addEventListener('submit', (event) => {

@@ -146,6 +146,32 @@ Deno.serve(async (req: Request) => {
   // let a player re-submit against an old row, or claim tomorrow's.
   const today = gameDayFor(new Date());
 
+  // THE SECOND ENFORCEMENT POINT FOR A SUSPENSION (DESIGN.md §11ap). The insert
+  // trigger stops a suspended player CLAIMING a hand, which covers the normal
+  // case — but somebody suspended after they claimed still holds an unfinished
+  // row, and without this they could bank it. Checked with the service client,
+  // which bypasses RLS, so it sees the row regardless of the own-rows-only
+  // select policy.
+  //
+  // FAILS CLOSED, unlike the client's read. This decides whether a score is
+  // recorded rather than what a banner says, and an unreadable suspensions
+  // table is not a reason to accept a run from someone who may be banned. An
+  // unapplied migration 026 surfaces as a missing relation, which is the one
+  // case allowed through — otherwise deploy order alone would reject everybody.
+  const { data: bans, error: banError } = await service
+    .from('suspensions')
+    .select('suspended_until')
+    .eq('user_id', userId)
+    .is('lifted_at', null);
+  if (banError && banError.code !== '42P01' && banError.code !== 'PGRST205') {
+    return jsonFor(req, { error: 'could not verify account status' }, 503);
+  }
+  const suspended = (bans ?? []).some(
+    (b: { suspended_until: string | null }) =>
+      b.suspended_until === null || new Date(b.suspended_until).getTime() > Date.now(),
+  );
+  if (suspended) return jsonFor(req, { error: 'account is suspended' }, 403);
+
   const { data: row, error: rowError } = await service
     .from('daily_plays')
     .select('seed, result')

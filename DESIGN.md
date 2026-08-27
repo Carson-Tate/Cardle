@@ -1832,6 +1832,38 @@ The parity modifier is parameterised — `resolveModifier` rolls `ctx.parity` as
 
 **A pre-existing issue this surfaced but did not fix:** a player who claims at 18:59 and locks in at 19:01 has their run submitted against a game day that has already rolled, and `submit-run` will not find the row. Unrelated to the pin, older than it, and worth its own pass.
 
+### 11ap. Suspensions ✅ built (owner: "i want to make a suspension/ban feature on the admin page where i can suspend people from playing for a certain amount of time of me choosing and also lift the ban/timeout, it will say in like big red text something like you have received a temporary suspension for a certain amount of time and give the date of when they will be unbanned")
+
+**NOT A COLUMN ON `profiles`, and that is the privacy decision rather than a schema one.** That table's select policy is `using (true)` — world-readable to every signed-in player — so a `suspended_until` column would have published who is banned to anyone who opened devtools. §11ac's lesson for the third time, and the third distinct shape of it: this time the permissive policy and the new column were both pre-existing decisions that only became a leak when combined. Its own table with an own-rows-only select policy means the suspended player is told and nobody else learns anything, which is what the owner chose when asked.
+
+**ENFORCED IN THE DATABASE, BECAUSE THE PERSON BEING SUSPENDED IS THE ONE WHO WOULD BYPASS IT.** Claiming a hand is a plain browser INSERT, so a client-side check is worth nothing against exactly the audience this feature exists for — the same reasoning that made §11am's seed fix a trigger. The check extends `enforce_server_dealt_hand` rather than adding a second trigger, so one function decides whether a row may be claimed and there is no ordering question between two.
+
+**TWO ENFORCEMENT POINTS, BECAUSE ONE LEAVES A HOLE.** The trigger stops a suspended player *claiming*, which covers the normal case — but somebody suspended after they already claimed still holds an unfinished row, and without a second check in `submit-run` they could bank it. That is a narrow window and it is the one an admin would actually hit, since you suspend somebody *because* they are mid-mischief.
+
+**The two halves fail in OPPOSITE directions, deliberately.** The client's read resolves null on any error, so an unapplied migration 026 or one bad request cannot lock every player out of a game they are entitled to play — it decides what to *display*. `submit-run` fails closed and returns 503, because it decides whether a score is *recorded*, and an unreadable suspensions table is not a reason to accept a run from someone who may be banned. Same premise, opposite remedy, chosen by what each one is deciding. A missing relation is the one error allowed through the closed side, or deploy order alone would reject everybody.
+
+**`is_suspended()` is SECURITY INVOKER, which is the opposite of most helpers here.** As definer, any signed-in player could call `is_suspended('<somebody-else>')` over PostgREST and get a truthful answer — handing back the exact private fact the separate table exists to protect. As invoker, RLS applies and a player can only ever learn about themselves. §11j's rule read forwards: elevate only where the caller must do something they cannot, and here they must not. The trigger runs as the inserting player checking their own id, so invoker suffices; `submit-run` uses the service role and bypasses RLS anyway.
+
+**`suspended_until is null` means PERMANENT, and conflating that with "no row" is the bug this shape invites.** Absent means never suspended; a row with no end date means forever. Every function separates them and a test states it outright, because the failure mode — a permanent ban silently becoming no ban — is both plausible and invisible.
+
+**History is kept rather than deleted.** Lifting sets `lifted_at`, and issuing a new suspension lifts the previous one first, so "have they been suspended before" stays answerable and the partial unique index (`at most one un-lifted row per player`) never blocks a legitimate re-suspend. §11al's two-states-one-nullable-column discipline.
+
+**Admins cannot be suspended, including by themselves.** A guard rather than a security boundary — a suspended admin can still reach the admin functions, since suspension only blocks playing — but locking yourself out of your own game is a bad afternoon, and the panel says so instead of offering a button that would fail.
+
+**A past end date is REFUSED, not accepted as a no-op.** Silently storing a suspension that has already expired would look exactly like the feature being broken. §11al: refusal beats repair.
+
+**The banner is built with `textContent`, not `innerHTML` and not `escapeHtml` either.** The reason is admin-authored and therefore untrusted (§11y), and the way to be certain it cannot become markup is to never hand it to a parser — which is stronger than escaping correctly, because it cannot be got wrong by a later edit. Length is capped in the database as well, since the client owning a validation rule is not a rule (§11x).
+
+**The end date is rendered in New York, not the viewer's locale.** The game day already rolls at 19:00 there, and a suspension reading "ends 9:00 PM" in one timezone and "2:00 AM" in another describes one instant while looking like two different punishments. One clock for the whole game (§11l).
+
+**INSERTED INTO THE BOARD, NOT SWAPPED FOR IT.** The first version called `replaceChildren` on the container, which would have destroyed `#hand-row`, `#controls` and `#result` — nodes this module and the countdown still hold references to, leaving live code writing into a detached tree. Hiding the interactive parts and inserting the panel is the same result with none of that.
+
+**Suspensions expire on their own with nothing to run.** `is_suspended()` compares against `now()` at read time, so there is no job to schedule, nothing to fail overnight, and no window where a lapsed ban still bites.
+
+**Verified.** 697 unit tests (19 new) covering the pure half — active/expired/permanent/lifted, the whitespace-reason collapse, the New-York formatting, and singular-vs-plural lengths. The migration self-tests behaviourally as `authenticated` with the JWT claim set, asserting BOTH that a suspended player is refused AND that lifting restores play, because a check that only proves the first would pass against a trigger blocking everybody. It skips itself rather than risk a real run if the sampled account already has today's hand. The whole module graph was resolved with esbuild, which catches a missing export in `board.js`/`admin.js` — files Node cannot import without a DOM.
+
+**Known and accepted: a suspension breaks a streak.** Missed days are missed days, and the streak is derived from `daily_plays` (§11d), so there is nothing to special-case. Worth stating before somebody reports it as a bug.
+
 ---
 
 ## 12. Implementation Status
@@ -2060,6 +2092,19 @@ None of the three touch `dailySeed`/`hashSeed` or persistence — every redeal d
     - **World-readable is a property of the table, not of the data you put in it.** `game_config` was the obvious home and would have published the list. A table with RLS on and no policies at all is unreachable over REST for everyone, which is what a private list actually needs.
     - **Normalisation is where the difficulty lives, and it cuts both ways.** Folding leetspeak and padding is what stops `5L_UR`; the same folding is what makes `ASS` match `CLASSIC`. Tiered matching plus an explicit allow list is the price of folding aggressively.
     - **If two rules mean different things, they need different normalisation.** One folder served both tiers and was wrong for each in opposite directions — too aggressive for `exact` (`Card_le_99` became `CARDLE`), and the naive fix would have been too lax for `substring` (`N9I9G9G9E9R` stops matching). "Does this appear in here" and "is the whole thing this" are not the same question.
+98. **Suspensions** (§11ap).
+    - **Where a feature's data lives is a privacy decision, not a schema one.** `profiles` is world-readable, so a `suspended_until` column there would publish who is banned. Third occurrence of §11ac, and the first where the policy and the column were each fine alone.
+    - **Enforce against the person the feature is FOR.** A suspension checked in the browser is checked by the one user with a motive to patch it out. It belongs in the trigger that already guards the claim.
+    - **One enforcement point leaves the window you actually care about.** The trigger stops a suspended player claiming; somebody suspended mid-run already holds a row, and `submit-run` is what stops them banking it — which is precisely the moment you would be reaching for the ban.
+    - **Two halves of one feature should fail in opposite directions when they decide different things.** The client read fails open (it picks a message, and failing closed would lock out innocent players); the server check fails closed (it picks whether a score exists). Same premise, opposite remedy.
+    - **`security definer` on a predicate turns it into an oracle.** `is_suspended(<anyone>)` as definer answers questions about other people over PostgREST — handing back the exact fact the private table was created to protect. Invoker plus RLS means a player can only ask about themselves.
+    - **Absent and permanent are different states and one nullable column holds both.** "No row" is never suspended; "row with no end date" is forever. Conflating them turns a permanent ban into no ban, silently.
+    - **Refuse a past end date rather than storing a no-op.** A suspension that expired before it began is indistinguishable from a broken feature.
+    - **`textContent` beats escaping correctly**, because it cannot be got wrong by a later edit. For untrusted text, never hand it to a parser at all.
+    - **Render a punishment in ONE timezone.** The same instant shown as "9 PM" and "2 AM" reads as two different sentences. The game already has a clock; use it.
+    - **Hiding beats replacing when other code holds references.** `replaceChildren` on the board container would have detached nodes the countdown and this module still write into. Hide the interactive parts and insert.
+    - **Expire by comparison, not by a job.** Checking `now()` at read time means no scheduler to fail and no window where a lapsed ban still bites.
+    - **A self-test must assert the negative too.** "A suspended player is refused" passes against a trigger that refuses everyone; pairing it with "and lifting restores play" is what makes it a test.
 97. **A claim is for today, exactly** (§11ao).
     - **Read the reporter's aside as evidence.** "I think they are random this time" said the seed trigger was firing, and the date check lives in the same function — which narrowed the cause to one possibility before a line was read.
     - **A tolerance window is a feature you are shipping, whether you meant to or not.** 024 bought clock-skew safety with a day of pre-claiming. The reasoning was right and the remedy was wrong, and somebody stood in the gap within a day of it existing.

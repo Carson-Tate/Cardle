@@ -50,6 +50,8 @@ import {
 import { announceXpUpdate } from '../state/profile.js';
 import { getSession, resolveSession } from '../state/auth.js';
 import { claimTodaySeed, saveTodayResultForUser, pendingRunMatches } from '../state/daily-play.js';
+import { fetchMySuspension, isSuspendedError } from '../state/suspension.js';
+import { describeSuspension, formatSuspensionEnd, suspensionRemaining, formatSuspensionLength } from '../core/suspension.js';
 import { generateStory, getStoryOptions, getDefaultSelections } from '../story/generator.js';
 import { SLOT_META } from '../story/templates.js';
 import { RARITIES, TOTAL_SPECIAL_CHANCE, WILD_CHANCE, isWild } from '../core/rarity.js';
@@ -470,10 +472,31 @@ export function initBoard(root) {
     const { status, session } = await resolveSession();
 
     if (status === 'signed-in') {
+      // CHECKED BEFORE THE CLAIM so the player gets the real reason rather than
+      // the generic failure screen. This is presentation only — the insert
+      // trigger refuses a suspended player whether or not this read worked, and
+      // it resolves null on any error precisely so an unapplied migration 026
+      // cannot lock anybody out (see state/suspension.js).
+      const suspension = describeSuspension(await fetchMySuspension(session.user.id));
+      if (suspension) {
+        renderSuspended(suspension);
+        return;
+      }
+
       let claimed;
       try {
         claimed = await claimTodaySeed(session.user.id, today);
       } catch (error) {
+        // THE BACKSTOP FOR THE RACE ABOVE: suspended between the read and the
+        // claim, or the read failed and the trigger is the only thing that
+        // knows. Without this the player would be told their connection is
+        // broken, which is §11ak's lesson — copy that guesses the user's state
+        // guesses wrong at the worst moment.
+        if (isSuspendedError(error)) {
+          const late = describeSuspension(await fetchMySuspension(session.user.id));
+          renderSuspended(late ?? { permanent: true, until: null, reason: null, headline: 'Your account has been suspended' });
+          return;
+        }
         // NEVER FALLS THROUGH TO A FRESH LOCAL HAND (§11ak). This used to, and
         // the consequence was the worst kind: the server is holding a claimed
         // seed for this player, and dealing them `getOrCreateTodaySeed()`
@@ -582,6 +605,69 @@ export function initBoard(root) {
   // Shown instead of dealing, whenever dealing would mean dealing the WRONG
   // hand. Deliberately offers only a reload: there is nothing useful the page
   // can do without the backend, and a Draw button here is the bug.
+  // The suspended screen (§11ap). Replaces the board entirely rather than
+  // sitting above it — a Draw button next to a suspension notice invites a
+  // click that can only fail, and the failure would come from the database with
+  // a message nobody wrote for a player to read.
+  //
+  // BUILT WITH textContent, NOT innerHTML, and not with escapeHtml either. The
+  // reason is admin-authored and therefore untrusted (§11y), and the way to be
+  // sure it cannot become markup is to never hand it to a parser. That is
+  // stronger than escaping correctly, because it cannot be got wrong later.
+  function renderSuspended(suspension) {
+    drawBtn.hidden = true;
+    if (dayLabel) dayLabel.textContent = 'Account suspended';
+
+    const panel = document.createElement('section');
+    panel.className = 'suspension-panel';
+    panel.setAttribute('role', 'alert');
+
+    const headline = document.createElement('p');
+    headline.className = 'suspension-headline';
+    headline.textContent = suspension.headline;
+    panel.append(headline);
+
+    if (!suspension.permanent) {
+      const remaining = suspensionRemaining({ suspended_until: suspension.until.toISOString() });
+      const length = formatSuspensionLength(remaining);
+      const ends = formatSuspensionEnd(suspension.until);
+
+      const detail = document.createElement('p');
+      detail.className = 'suspension-detail';
+      // The length is the headline fact and the exact instant is the one that
+      // answers "when exactly", so both are shown rather than picking one.
+      detail.textContent = length
+        ? `You can't play for about ${length}.`
+        : "You can't play right now.";
+      panel.append(detail);
+
+      if (ends) {
+        const until = document.createElement('p');
+        until.className = 'suspension-until';
+        until.textContent = `Your access returns on ${ends}.`;
+        panel.append(until);
+      }
+    }
+
+    if (suspension.reason) {
+      const reason = document.createElement('p');
+      reason.className = 'suspension-reason';
+      reason.textContent = `Reason: ${suspension.reason}`;
+      panel.append(reason);
+    }
+
+    // INSERTED, NOT SWAPPED IN. Replacing the container's children would
+    // destroy #hand-row, #controls and #result — nodes this module and the
+    // countdown still hold references to, which would leave live code writing
+    // into a detached tree. Hiding the interactive parts is the same result
+    // with none of that.
+    for (const el of [handRow, root.querySelector('#controls'), resultPanel, wagerPrompt]) {
+      if (el) el.hidden = true;
+    }
+    root.querySelector('.suspension-panel')?.remove();
+    (anonHint ?? dayLabel)?.insertAdjacentElement('afterend', panel);
+  }
+
   function renderConnectionFailure(what) {
     drawBtn.hidden = true;
     renderAnonHint(`${what} Check your connection — or pause any content blocker — and reload. Your hand is safe.`);

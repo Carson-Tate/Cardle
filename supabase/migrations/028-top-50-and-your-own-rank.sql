@@ -136,7 +136,7 @@ create function public.leaderboard_my_rank(
   sort_ascending boolean default false
 )
 returns table (
-  position bigint,
+  place bigint,
   total_players bigint,
   user_id uuid,
   username text,
@@ -185,11 +185,11 @@ as $fn$
                       case when not sort_ascending then b.score end desc,
                       b.play_date desc,
                       b.user_id
-           ) as position,
+           ) as place,
            count(*) over () as total_players
       from best b
   )
-  select r.position, r.total_players, r.user_id, r.username, r.equipped_badge,
+  select r.place, r.total_players, r.user_id, r.username, r.equipped_badge,
          r.equipped_title, r.equipped_paint, r.admin_unlocks, r.score,
          r.play_date, r.final_hand
     from ranked r
@@ -204,7 +204,7 @@ grant execute on function public.leaderboard_my_rank(int, boolean) to authentica
 drop function if exists public.leaderboard_my_career_rank();
 create function public.leaderboard_my_career_rank()
 returns table (
-  position bigint,
+  place bigint,
   total_players bigint,
   user_id uuid,
   username text,
@@ -236,11 +236,11 @@ as $fn$
      group by dp.user_id, p.username, p.equipped_badge, p.equipped_title, p.equipped_paint, p.admin_unlocks
   ), ranked as (
     select t.*,
-           row_number() over (order by t.total_points desc, t.user_id) as position,
+           row_number() over (order by t.total_points desc, t.user_id) as place,
            count(*) over () as total_players
       from totals t
   )
-  select r.position, r.total_players, r.user_id, r.username, r.equipped_badge,
+  select r.place, r.total_players, r.user_id, r.username, r.equipped_badge,
          r.equipped_title, r.equipped_paint, r.admin_unlocks, r.total_points, r.runs
     from ranked r
    where r.user_id = auth.uid();
@@ -273,7 +273,7 @@ begin
   select r.user_id into ranked_top
     from (
       select b.user_id,
-             row_number() over (order by b.score desc, b.play_date desc, b.user_id) as position
+             row_number() over (order by b.score desc, b.play_date desc, b.user_id) as place
         from (
           select distinct on (dp.user_id)
                  dp.user_id,
@@ -286,7 +286,7 @@ begin
            order by dp.user_id, (dp.result->'score'->>'total')::numeric desc, dp.play_date desc
         ) b
     ) r
-   where r.position = 1;
+   where r.place = 1;
 
   if board_top is distinct from ranked_top then
     raise exception '028 self-test: the board and the ranking disagree about first place (% vs %).', board_top, ranked_top;

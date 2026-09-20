@@ -200,7 +200,7 @@ export async function fetchMyRank({ boardId, ascending = false }) {
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return null;
   return {
-    position: Number(row.position),
+    position: Number(row.place),
     total: Number(row.total_players),
     row: mapRow(board)(row),
   };

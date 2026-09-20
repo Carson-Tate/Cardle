@@ -4956,3 +4956,33 @@ header h1 {
   color: var(--text);
   font: inherit;
 }
+
+/* ---------------------------------------------------------------------------
+   Your own position, when you are past the visible page (DESIGN.md §11ar)
+   ---------------------------------------------------------------------------
+   The divider is an <li> inside the same <ol> so the list stays one list
+   semantically; it is aria-hidden because "⋯" announces as nothing useful and
+   the sentence below the board already says where you are in words. */
+.lb-gap {
+  display: block;
+  padding: 0.35rem 0;
+  color: var(--text-muted);
+  text-align: center;
+  letter-spacing: 0.4em;
+  line-height: 1;
+  user-select: none;
+}
+
+/* Same row, marked as detached from the run of positions above it. Deliberately
+   NOT a different layout — it has to read as a row of this board rather than as
+   a separate widget, so only the rule above it and a faint tint differ. */
+.lb-row--trailing {
+  border-top: 1px dashed var(--border);
+}
+
+.lb-rank-note {
+  margin: 0.5rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+}

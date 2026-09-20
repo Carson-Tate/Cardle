@@ -17,10 +17,20 @@
 
 import { requireSupabase } from './supabase-client.js';
 import { getFriends } from './friends.js';
+import { viewerPositionIn } from '../core/leaderboard-rank.js';
 
-export const BOARD_SIZE = 25;
+export const BOARD_SIZE = 50;
 // Friends-only boards filter a global page down, so they ask for more rows to
 // begin with. Capped by the SQL function at 100 regardless.
+//
+// WORTH KNOWING NOW THAT THE PAGE IS 50: this is the ceiling on how far down
+// the global list a friend can be and still appear. It was comfortable at a
+// display size of 25 and is only 2x the page now, so a player whose friends are
+// mostly mid-table may see fewer than 50 friend rows. Fixing it properly means
+// joining friendships inside the SQL, which §11j deliberately avoided; raising
+// the cap past 100 means changing every board function's `least(...)`. Left as
+// it is because the boards are read top-down and the trailing "your position"
+// row covers the case that actually matters — you finding yourself.
 const FRIENDS_FETCH_LIMIT = 100;
 
 export const BOARDS = [
@@ -69,9 +79,12 @@ export function invalidateFriendCircle() {
  * @param {string} options.boardId - one of BOARDS' ids
  * @param {boolean} [options.friendsOnly]
  * @param {string} [options.userId] - required when friendsOnly is set
- * @returns {Promise<Array<{userId: string, profile: object, value: number, playDate?: string, runs?: number}>>}
- *   `profile` is shaped for ui/nameplate.js so a leaderboard row shows the same
- *   badge/title/paint as everywhere else.
+ * @returns {Promise<{rows: Array<object>, viewer: {position: number, total: number, row: object}|null}>}
+ *   Each row's `profile` is shaped for ui/nameplate.js so a leaderboard row
+ *   shows the same badge/title/paint as everywhere else. `viewer` is set only
+ *   on a FRIENDS board and only when the player falls past the visible page —
+ *   see the note at the return statement for why the global board cannot be
+ *   answered here.
  */
 export async function fetchLeaderboard({ boardId, friendsOnly = false, userId = null, ascending = false }) {
   const board = BOARDS.find((b) => b.id === boardId) ?? BOARDS[0];
@@ -94,7 +107,34 @@ export async function fetchLeaderboard({ boardId, friendsOnly = false, userId = 
       });
   if (error) throw error;
 
-  let rows = (data ?? []).map((row) => ({
+  let rows = (data ?? []).map(mapRow(board));
+
+  if (friendsOnly) {
+    if (!userId) return { rows: [], viewer: null };
+    const circle = await friendCircle(userId);
+    rows = rows.filter((row) => circle.has(row.userId));
+  }
+
+  return {
+    rows: rows.slice(0, BOARD_SIZE),
+    // THE FRIENDS HALF OF "show their position on the bottom", answered from
+    // the rows already in hand. A global rank says nothing about a friends
+    // board — 143rd overall can be 2nd among four friends — and friends
+    // filtering is client-side (§11j), so the filtered array IS the friends
+    // ranking. The global half needs the server and is `fetchMyRank` below.
+    viewer: friendsOnly ? viewerPositionIn(rows, userId, BOARD_SIZE) : null,
+  };
+}
+
+/**
+ * Turns an RPC row into what ui/nameplate.js and the board rows expect.
+ *
+ * Shared by the board and the rank lookup so the trailing "you are 143rd" entry
+ * renders as the same kind of object as every row above it — and so a future
+ * column is mapped once rather than in two places that drift.
+ */
+function mapRow(board) {
+  return (row) => ({
     userId: row.user_id,
     // Exactly the columns nameplateHtml reads, so a leaderboard row renders
     // identically to a profile header or a friends-list entry.
@@ -117,15 +157,53 @@ export async function fetchLeaderboard({ boardId, friendsOnly = false, userId = 
     // a career total isn't a single hand. Comes straight out of the stored
     // result, so nothing extra is recorded.
     finalHand: Array.isArray(row.final_hand) ? row.final_hand : null,
-  }));
+  });
+}
 
-  if (friendsOnly) {
-    if (!userId) return [];
-    const circle = await friendCircle(userId);
-    rows = rows.filter((row) => circle.has(row.userId));
+/**
+ * Where the signed-in player sits on a GLOBAL board, when they are not on it.
+ *
+ * A second request, made only when the first page did not contain them — so the
+ * common case (you are on the board, or you are signed out) costs nothing. The
+ * server ranks every player to answer this, which the board functions never do,
+ * so it is not work to spend on every load.
+ *
+ * RESOLVES NULL ON ANY FAILURE, including migration 028 not being applied yet
+ * (`PGRST202`). This is a nicety at the bottom of a page that is already fully
+ * useful without it, so the client bundle and the SQL can land in either order
+ * — the same rollout rule §11z set for submit-run, and the reason there is no
+ * "couldn't load your rank" error state to design.
+ *
+ * @returns {Promise<{position: number, total: number, row: object}|null>}
+ */
+export async function fetchMyRank({ boardId, ascending = false }) {
+  const board = BOARDS.find((b) => b.id === boardId) ?? BOARDS[0];
+  const client = await requireSupabase();
+  const sortAscending = ascending && board.id === 'daily';
+
+  const { data, error } = board.career
+    ? await client.rpc('leaderboard_my_career_rank')
+    : await client.rpc('leaderboard_my_rank', {
+        window_days: board.windowDays,
+        sort_ascending: sortAscending,
+      });
+  if (error) {
+    if (error.code !== 'PGRST202') {
+      console.warn('Could not read your leaderboard position:', error?.message ?? error);
+    }
+    return null;
   }
 
-  return rows.slice(0, BOARD_SIZE);
+  // `returns table` comes back as an array; no row means the player has no
+  // qualifying run in this window, which is not an error — it is why the
+  // trailing entry simply does not appear.
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return null;
+  return {
+    position: Number(row.position),
+    total: Number(row.total_players),
+    row: mapRow(board)(row),
+  };
 }
 
 /**
@@ -134,7 +212,7 @@ export async function fetchLeaderboard({ boardId, friendsOnly = false, userId = 
  *
  * A SEPARATE request rather than a wider `leaderboard_top_scores`, because the
  * blob is several KB — hands, every bonus, meters — and widening the RPC would
- * put 25 of them on the wire on every tab switch to serve the at most one a
+ * put 50 of them on the wire on every tab switch to serve the at most one a
  * player actually opens. That is the same arithmetic that put the daily
  * standing in Postgres instead of the browser (§11aa), pointing the other way:
  * there the answer was to send less, here it is to send it later.

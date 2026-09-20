@@ -1832,6 +1832,36 @@ The parity modifier is parameterised — `resolveModifier` rolls `ctx.parity` as
 
 **A pre-existing issue this surfaced but did not fix:** a player who claims at 18:59 and locks in at 19:01 has their run submitted against a game day that has already rolled, and `submit-run` will not find the row. Unrelated to the pin, older than it, and worth its own pass.
 
+### 11ar. Top 50, And Your Own Position When You Are Not In It ✅ built (owner: "make the leaderboards top 50 instead of top 25, if someone is out of the top 50, show their position on the bottom")
+
+**Two asks, and only one of them is a number.** Raising the page size is a constant. "Show their position" means RANKING EVERY PLAYER, which no board function did — they take the top N and stop, which is exactly why they are cheap.
+
+**ONLY THE CALLER'S OWN RANK IS RETURNABLE.** `auth.uid()` is evaluated inside `leaderboard_my_rank`, so there is no parameter naming whose rank to fetch and therefore no way to ask about somebody else. That is a deliberate boundary rather than an accident of implementation: being 143rd is a fact the top-50 list does not publish about anyone, and an RPC taking a user id would have made every player's standing queryable by anyone who read the bundle. Same instinct as §11ap keeping `is_suspended()` invoker-only, arrived at from the opposite direction — there the danger was a definer function answering about others, here it is a parameter.
+
+**A DETERMINISTIC FINAL TIE-BREAK WAS THE PREREQUISITE, not a tidy-up alongside it.** The board ordered by score then `play_date` with nothing after, so two players level on both could swap places between loads. That was invisible while it only shuffled two adjacent rows — and becomes a flat contradiction the moment a second query says "you are 51st" while the list draws somebody else there. Both now end with `user_id`.
+
+**`row_number()`, not `rank()`.** The list numbers its rows by position, so a tie already shows as 7th and 8th rather than two 7ths. `rank()` would have returned 7 for the player the list would have drawn 8th — a number that is defensible in isolation and wrong for the thing it is attached to.
+
+**THE FRIENDS BOARD CANNOT USE THE SERVER'S ANSWER, and that is not a limitation to work around.** A global rank says nothing about a friends board: 143rd overall can be 2nd among four friends. Friends filtering is client-side (§11j), so the already-filtered array *is* the friends ranking, and `viewerPositionIn` reads the index straight out of it. Two boards, two genuinely different questions, answered in the two different places that can answer them.
+
+**Absent is not a position.** When the viewer is missing from a friends page entirely — possible, because that page is a global top-100 filtered down — we do not know their friend rank, and `viewerPositionIn` returns null rather than inventing one. A made-up number here would be indistinguishable from a real one.
+
+**The extra request is skipped for nearly every load.** It fires only when the player is signed in, on a global board, and not already listed. Everyone on the board and everyone signed out pays nothing, which matters because this is the one query that ranks the whole table.
+
+**FAILS OPEN, including on an unapplied migration.** `fetchMyRank` resolves null on any error and swallows `PGRST202` silently, so the bundle and the SQL can land in either order and the page is fully useful without the trailing row — the same rollout rule §11z set for `submit-run`. There is deliberately no "couldn't load your rank" error state, because there is nothing a player could do about one.
+
+**One row template, used twice.** The trailing entry is built by the same `rowHtml` as every row above it. The whole point is that it reads as a distant row of this board rather than a separate widget, and two near-identical templates would have drifted into exactly the difference the design is trying to avoid — only the dashed rule and the `⋯` divider distinguish it.
+
+**The divider is inside the `<ol>` and `aria-hidden`.** It keeps the list one list semantically; "⋯" announces as nothing useful, and the sentence under the board says the position in words anyway.
+
+**`ordinal()` exists because of the teens.** 1st/2nd/3rd sets a last-digit pattern that 11th, 12th and 13th break — and 111th breaks again at a place a last-digit fix would miss. Checked against 100, and tested at both hundreds.
+
+**A stale count in three comments.** "Cheap at 25 rows" and "25 of them on the wire" both described the old page size and would have quietly become wrong guidance for the next person sizing a query. Grepped rather than remembered (§11q).
+
+**Worth knowing, and left alone on purpose:** `FRIENDS_FETCH_LIMIT` is 100 and the SQL caps there, so a friends board is a global top-100 filtered down. That was comfortable at a display size of 25 and is only 2x the page now, so a player whose friends sit mid-table may see fewer than 50 friend rows. Fixing it properly means joining friendships inside the SQL, which §11j deliberately avoided; the trailing row covers the case that actually matters, which is finding yourself.
+
+**Verified.** 712 unit tests (13 new) on the pure half — the boundary in both directions (50th shown, 51st returned), absent-is-null, the teens at two hundreds, and that an ascending board says "Bottom 50" rather than lying. The migration self-tests that the board and the ranking agree on first place, which is the property that catches the two queries drifting apart. The whole module graph was resolved with esbuild, which is what catches a missing export in a file Node cannot import without a DOM.
+
 ### 11aq. A Suspension Cannot Be Shed By The Suspended ✅ fixed (owner: "add the year its suspended till too, and make sure there is no way to get around it or lift it themselves")
 
 **THE BYPASS WAS A BUTTON IN THE PRODUCT, not an exploit anyone had to find.** `delete_own_account()` deletes the `auth.users` row, and `suspensions.user_id` references `profiles(id) on delete cascade`, which cascades from it. So a suspended player could open their own profile — a page the suspension deliberately leaves reachable, since the owner scoped this to *playing only* — click Delete Account, and sign up again on the same email with a clean slate. The most obvious control on the screen they were already looking at.
@@ -2110,6 +2140,18 @@ None of the three touch `dailySeed`/`hashSeed` or persistence — every redeal d
     - **World-readable is a property of the table, not of the data you put in it.** `game_config` was the obvious home and would have published the list. A table with RLS on and no policies at all is unreachable over REST for everyone, which is what a private list actually needs.
     - **Normalisation is where the difficulty lives, and it cuts both ways.** Folding leetspeak and padding is what stops `5L_UR`; the same folding is what makes `ASS` match `CLASSIC`. Tiered matching plus an explicit allow list is the price of folding aggressively.
     - **If two rules mean different things, they need different normalisation.** One folder served both tiers and was wrong for each in opposite directions — too aggressive for `exact` (`Card_le_99` became `CARDLE`), and the naive fix would have been too lax for `substring` (`N9I9G9G9E9R` stops matching). "Does this appear in here" and "is the whole thing this" are not the same question.
+100. **Top 50, and your own position when you are not in it** (§11ar).
+    - **Half of a two-part request can be a constant and half can be a new capability.** "Top 50" is a number; "show their position" means ranking every player, which the boards never did because taking the top N and stopping is what makes them cheap.
+    - **Make the private thing unaskable rather than guarded.** Evaluating `auth.uid()` inside the function means there is no parameter for whose rank to fetch — so a rank the list does not publish cannot be queried about anyone else, with no check to get wrong.
+    - **A non-deterministic sort is harmless until something else claims to know the order.** Ties on score and date could swap between loads, which only ever shuffled two rows — and becomes a flat contradiction the moment a second query says "you are 51st".
+    - **Pick the ranking function that matches how the list is drawn.** `rank()` gives two 7ths; a list numbered by position draws 7th and 8th. Defensible in isolation, wrong for the thing it is attached to.
+    - **Two boards can ask genuinely different questions.** A global rank says nothing about a friends board — 143rd overall can be 2nd among four friends — so the friends answer comes from the filtered array and the global one from the server. Not a workaround; the right place for each.
+    - **Absent is not a position.** When the viewer is missing from a filtered page we do not know their rank, and an invented number is indistinguishable from a real one.
+    - **Put the expensive query behind the condition that makes it necessary.** It runs only for a signed-in player on a global board who is not already listed — which is almost nobody, almost always.
+    - **A nicety should fail open and have no error state.** Resolving null on an unapplied migration lets the bundle and the SQL land in either order, and there is nothing a player could do about "couldn't load your rank" anyway.
+    - **One template used twice, not two that look alike.** The trailing entry must read as a distant row of the same board; a near-copy would drift into being a different thing.
+    - **`ordinal()` is a function because of the teens** — 11th/12th/13th break the last-digit rule, and 111th breaks it again where a last-digit fix would miss.
+    - **A count in a comment goes stale silently.** "Cheap at 25 rows" became wrong guidance for whoever sizes the next query. Grep for the number you just changed.
 99. **A suspension cannot be shed by the suspended** (§11aq).
     - **Look for the bypass that is a supported feature, not the one that needs an exploit.** Delete Account cascaded the suspension away — a labelled button on a page the design deliberately left reachable. The clever attack is rarely the one available.
     - **`on delete cascade` is a policy decision wearing a schema keyword.** It is right for a player's own data and wrong for a record kept *about* them; the two live in the same table graph and only one of them should vanish.

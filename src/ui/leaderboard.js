@@ -4,7 +4,8 @@
 // friends-only toggle, per the owner's spec.
 
 import { resolveSession } from '../state/auth.js';
-import { BOARDS, BOARD_SIZE, fetchLeaderboard, fetchRunResult } from '../state/leaderboard.js';
+import { BOARDS, BOARD_SIZE, fetchLeaderboard, fetchMyRank, fetchRunResult } from '../state/leaderboard.js';
+import { ordinal, boardSummary } from '../core/leaderboard-rank.js';
 import { loadGameConfig } from '../state/game-config.js';
 import { getDailyModifier, modifierBoardIsAscending } from '../core/modifiers.js';
 import { modifierOverrideFor } from '../core/game-config.js';
@@ -34,7 +35,7 @@ function formatDate(isoDate) {
 // here rather than stored alongside the score — the same "derived, not
 // accumulated" rule the career stats follow: the cards are the record, and a
 // stored label could only ever drift out of step with them if the evaluator's
-// categories ever change. Cheap at 25 rows.
+// categories ever change. Cheap at 50 rows.
 //
 // Guarded because a row's `final_hand` is whatever the database holds, not
 // something this page controls: evaluateHand THROWS on anything that isn't
@@ -83,6 +84,10 @@ export async function initLeaderboard(root) {
   let boardId = 'daily';
   let friendsOnly = false;
   let rows = [];
+  // The trailing "you are 143rd" entry, when the player is not on the page
+  // above it (§11ar). Null the rest of the time, which includes signed out,
+  // already-listed, and "no qualifying run in this window".
+  let viewerRank = null;
   let loadError = null;
   let loading = true;
 
@@ -94,9 +99,19 @@ export async function initLeaderboard(root) {
     loadError = null;
     render();
     try {
-      rows = await fetchLeaderboard({ boardId, friendsOnly, userId, ascending });
+      const result = await fetchLeaderboard({ boardId, friendsOnly, userId, ascending });
+      rows = result.rows;
+      // A friends board answers this from the page it already filtered; a
+      // global one has to ask the server, and ONLY when the player is not
+      // already listed — so the request is skipped for everyone on the board
+      // and for everyone signed out, which between them is nearly every load.
+      viewerRank = result.viewer;
+      if (!viewerRank && userId && !friendsOnly && !rows.some((row) => row.userId === userId)) {
+        viewerRank = await fetchMyRank({ boardId, ascending });
+      }
     } catch (error) {
       rows = [];
+      viewerRank = null;
       loadError = error;
     }
     loading = false;
@@ -228,8 +243,45 @@ export async function initLeaderboard(root) {
 
     return `
       <ol class="lb-list">
-        ${rows
-          .map((row, index) => {
+        ${rows.map((row, index) => rowHtml(row, board, index + 1)).join('')}
+        ${
+          // "If someone is out of the top 50, show their position on the
+          // bottom" (§11ar). Inside the same <ol> so it is the same list
+          // semantically and screen readers announce it as one — separated by a
+          // divider rather than by living in its own element, because it IS a
+          // row of this board, just a distant one.
+          viewerRank
+            ? `<li class="lb-gap" aria-hidden="true">⋯</li>${rowHtml(viewerRank.row, board, viewerRank.position, {
+                trailing: true,
+              })}`
+            : ''
+        }
+      </ol>
+      ${
+        viewerRank
+          ? `<p class="lb-rank-note">You're ${escapeHtml(ordinal(viewerRank.position))}${
+              viewerRank.total ? ` of ${viewerRank.total.toLocaleString()}` : ''
+            }${friendsOnly ? ' among you and your friends' : ''}.</p>`
+          : ''
+      }
+      <p class="admin-hint">
+        ${escapeHtml(boardSummary({ size: BOARD_SIZE, ascending: ascending && board.id === 'daily', friendsOnly }))}.
+        Click any name to see their profile${board.career ? '' : ', or a hand to see how it scored'}.${
+          // The one thing a signed-out visitor genuinely cannot do here is
+          // appear on the board, so that is what the nudge says — rather than
+          // "log in for more", which would imply the page is withholding
+          // something it isn't.
+          userId ? '' : ' Play a hand and log in to get your own name up here.'
+        }
+      </p>
+    `;
+  }
+
+  // ONE definition of a board row, used by the list and by the trailing "you
+  // are 143rd" entry. Two copies would drift, and the whole point of the
+  // trailing row is that it looks like the rows above it — a near-copy that
+  // slowly diverged would read as a different kind of thing.
+  function rowHtml(row, board, position, { trailing = false } = {}) {
             // Highlighting your own row is the whole reason to look at a board
             // you're not at the top of.
             const isMe = row.userId === userId;
@@ -245,8 +297,14 @@ export async function initLeaderboard(root) {
             const gradeClass = grade ? ` lb-value--graded score-grade--${grade.id}` : '';
             const gradeTip = grade ? ` title="${escapeHtml(`${grade.label} — ${row.value.toLocaleString()} points`)}"` : '';
             return `
-            <li class="lb-row${isMe ? ' lb-row--me' : ''}">
-              <span class="lb-rank${index < 3 ? ` lb-rank--${index + 1}` : ''}">${index + 1}</span>
+            <li class="lb-row${isMe ? ' lb-row--me' : ''}${trailing ? ' lb-row--trailing' : ''}">
+              <span class="lb-rank${
+                // Medal styling is for the actual podium. The trailing entry is
+                // never in the top three by definition, but guarding it here
+                // keeps that true even if the caller ever passes a small
+                // position by mistake.
+                !trailing && position <= 3 ? ` lb-rank--${position}` : ''
+              }">${position}</span>
               <a class="lb-name" href="/?profile=${encodeURIComponent(row.profile.username ?? '')}">
                 ${nameplateHtml(row.profile, { custom })}
               </a>
@@ -292,24 +350,5 @@ export async function initLeaderboard(root) {
                 }</small>
               </span>
             </li>`;
-          })
-          .join('')}
-      </ol>
-      <p class="admin-hint">
-        ${
-          // "Top 25" is a lie on an Upside Down day — these are the 25 LOWEST
-          // scores, which is the whole point of the board.
-          ascending && board.id === 'daily' ? 'Bottom' : 'Top'
-        } ${BOARD_SIZE}${friendsOnly ? ' among you and your friends' : ''}. Click any name to see their profile${
-          board.career ? '' : ', or a hand to see how it scored'
-        }.${
-          // The one thing a signed-out visitor genuinely cannot do here is
-          // appear on the board, so that is what the nudge says — rather than
-          // "log in for more", which would imply the page is withholding
-          // something it isn't.
-          userId ? '' : ' Play a hand and log in to get your own name up here.'
-        }
-      </p>
-    `;
   }
 }

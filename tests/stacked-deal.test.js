@@ -16,7 +16,12 @@ const NO_DRAWS = [null, null, null, null, null];
 const validDeal = (over = {}) => ({ hand: ROYAL, slotDraws: NO_DRAWS, ...over });
 
 // A day with no modifier surprises, so these test the deal rather than a rule.
-const plainModifier = getDailyModifier(new Date('2026-01-15T12:00:00Z'));
+// An explicitly INERT modifier rather than whatever a fixed date rotates to.
+// Pinning a date was quietly fragile: adding five modifiers in §4i reshuffled
+// the rotation and this date became Wild Wednesday, so the 'ordinary deal'
+// baseline started dealing a wild and two tests failed for a reason that had
+// nothing to do with stacked deals. A literal cannot drift with the roster.
+const plainModifier = { id: '__test_plain__', type: 'scoring' };
 
 describe('normalizeStackedDeal', () => {
   test('a well-formed deal passes and comes back normalized', () => {

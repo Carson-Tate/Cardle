@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyAndScoreRun, discardRoundLimitsFor } from '../src/core/verify-run.js';
-import { dealHand, freshSeed } from '../src/core/deck.js';
+import { dealHand, freshSeed, dealForRun } from '../src/core/deck.js';
 import { scoreRun } from '../src/core/scoring.js';
 import { getDailyModifier, modifierScoringMultiplier, buildModifierById, MODIFIERS } from '../src/core/modifiers.js';
 
@@ -10,7 +10,12 @@ import { getDailyModifier, modifierScoringMultiplier, buildModifierById, MODIFIE
 // on submit — which is a far worse failure than the cheating this prevents.
 // So this reproduces board.js's own scoring call and compares.
 function clientScore(seed, discardIndices, modifier) {
-  const { hand: originalHand, drawPile } = dealHand(seed);
+  // dealForRun, not dealHand: the real board routes every deal through it, so
+  // a 'deal' modifier (Wild Wednesday, Loaded Deck — §4i) reshapes the hand on
+  // BOTH sides. Simulating the client with a bare dealHand made this test pass
+  // only on days with no deal effect, which is exactly the agreement it exists
+  // to prove.
+  const { hand: originalHand, drawPile } = dealForRun({ seed, modifier });
   const replacements = drawPile.slice(0, discardIndices.length);
   const finalHand = originalHand.map((card, index) => {
     const position = discardIndices.indexOf(index);

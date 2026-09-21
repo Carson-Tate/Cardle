@@ -4,7 +4,7 @@
 // tier. Older stored cards instead carry `rarity: 'joker'` with a `jokerTier`;
 // read wildness through `isWild()` so both shapes work.
 
-import { RARITIES, TOTAL_SPECIAL_CHANCE, WILD_CHANCE } from './rarity.js';
+import { RARITIES, TOTAL_SPECIAL_CHANCE, WILD_CHANCE, isWild } from './rarity.js';
 
 export const SUITS = ['S', 'H', 'D', 'C'];
 export const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
@@ -321,4 +321,85 @@ export function dealHand(seed, count = 5, { luckMultiplier = 1 } = {}) {
     hand: withRarity.slice(0, count),
     drawPile: withRarity.slice(count),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Deal-shaping modifiers (DESIGN.md §4i)
+// ---------------------------------------------------------------------------
+// Wild Wednesday and Loaded Deck change WHAT YOU ARE DEALT rather than what it
+// scores, which makes them the second kind of two-sided feature after Stack the
+// Deck (§11al): the board and `submit-run` are different machines, and they
+// agree only because this is a pure function of the row's own seed. A
+// `freshSeed()` or a `Math.random()` anywhere in here would pass every local
+// test and reject every real run on one of these days.
+//
+// A SEPARATE RNG STREAM, derived from the seed rather than continuing the
+// deal's own. Consuming extra rolls from the deal's rng would shift every card
+// after them, so a Wild Wednesday seed would deal different RANKS than the same
+// seed on an ordinary day — a far bigger change than the one being asked for,
+// and invisible until someone compared two days. §3x's rule: when you change
+// what a roll means, keep the call count identical.
+export const DEAL_EFFECTS = {
+  GUARANTEED_WILD: 'guaranteedWild',
+  GUARANTEED_RARE: 'guaranteedRare',
+};
+
+// "Gold or better" for Loaded Deck.
+const RARE_OR_BETTER = new Set(['gold', 'diamond']);
+
+/**
+ * Applies a modifier's deal effect to an already-dealt hand.
+ *
+ * Returns the deal UNCHANGED when there is no effect, which is the path every
+ * ordinary day takes — so this cannot alter a normal deal even by accident, and
+ * there is a test whose whole job is to hold that.
+ *
+ * ALREADY-SATISFIED HANDS ARE LEFT ALONE. The promise is "at least one", so a
+ * hand that already contains a wild does not get a second one forced into it.
+ * That keeps the modifier's effect as small as its wording, and means these
+ * days differ from ordinary days by exactly one card or not at all.
+ */
+export function applyDealModifier(dealt, modifier, seed) {
+  const effect = modifier?.dealEffect;
+  if (!effect) return dealt;
+  const hand = dealt?.hand;
+  if (!Array.isArray(hand) || hand.length === 0) return dealt;
+
+  const satisfied =
+    effect === DEAL_EFFECTS.GUARANTEED_WILD
+      ? hand.some((card) => isWild(card))
+      : hand.some((card) => RARE_OR_BETTER.has(card?.rarity));
+  if (satisfied) return dealt;
+
+  // XORed with a constant so the slot choice cannot coincide with anything the
+  // deal's own stream produced, while staying a pure function of the seed.
+  const rng = createRng((seed ^ 0x5bf03635) >>> 0);
+  const index = Math.floor(rng() * hand.length);
+
+  const upgraded = hand.map((card, i) => {
+    if (i !== index) return card;
+    return effect === DEAL_EFFECTS.GUARANTEED_WILD
+      ? { ...card, wild: true }
+      : // Gold rather than a roll among gold/diamond: the modifier promises a
+        // floor, and handing out Diamonds (15x, ~1 in 1000) on a schedule would
+        // quietly become the biggest score source in the game.
+        { ...card, rarity: 'gold' };
+  });
+
+  return { ...dealt, hand: upgraded };
+}
+
+/**
+ * THE ONE PLACE A RUN'S CARDS COME FROM — used by the board and by the server's
+ * verifier, so they cannot build different hands.
+ *
+ * A STACKED DEAL WINS AND THE MODIFIER IS SKIPPED. An admin who pinned five
+ * exact cards (§11al) meant those cards; silently making one of them wild would
+ * contradict the one feature whose entire point is "these cards, exactly".
+ */
+export function dealForRun({ seed, modifier = null, stackedDeal = null, luckMultiplier = 1 }) {
+  const stack = stackedDeal ? normalizeStackedDeal(stackedDeal) : { ok: false };
+  if (stack.ok) return { ...dealFromStack(seed, stackedDeal), stacked: true };
+  const dealt = dealHand(seed, 5, { luckMultiplier });
+  return { ...applyDealModifier(dealt, modifier, seed), stacked: false };
 }

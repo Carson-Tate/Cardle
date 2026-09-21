@@ -12,6 +12,7 @@ import {
   shuffle,
   rarityForRoll,
   freshSeed,
+  dealForRun,
 } from '../core/deck.js';
 import { evaluateHand } from '../core/hand-evaluator.js';
 import { scoreRun } from '../core/scoring.js';
@@ -755,7 +756,17 @@ export function initBoard(root) {
       if (stackedDeal && !validStack) {
         console.warn('Ignoring a malformed stacked deal; dealing normally.', normalizeStackedDeal(stackedDeal).errors);
       }
-      dealt = validStack ? dealFromStack(usedSeed, stackedDeal) : dealHand(usedSeed, 5, { luckMultiplier });
+      // dealForRun, not dealHand directly — it is the ONE place a run's
+      // cards come from, and the server's verifier calls the same function with
+      // the same seed and the same modifier (§4i). A 'deal' modifier (Wild
+      // Wednesday, Loaded Deck) reshapes the hand here, and if this call and the
+      // server's ever diverge the player is shown one hand and paid for another.
+      dealt = dealForRun({
+        seed: usedSeed,
+        modifier: dailyModifier,
+        stackedDeal: validStack ? stackedDeal : null,
+        luckMultiplier,
+      });
       if (forceRarity || forceWild) {
         const index = Math.floor(Math.random() * dealt.hand.length);
         dealt.hand[index] = {

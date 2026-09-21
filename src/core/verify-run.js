@@ -32,7 +32,7 @@
 // Edge Function (supabase/functions/submit-run) is only an HTTP shell that reads
 // the seed, calls this, and writes the answer.
 
-import { dealHand, dealFromStack, normalizeStackedDeal, applyDiscards } from './deck.js';
+import { dealHand, dealFromStack, normalizeStackedDeal, applyDiscards, dealForRun } from './deck.js';
 import { scoreRun, OPTIMAL_DISCARD_MAX_BONUS } from './scoring.js';
 import { modifierScoringMultiplier } from './modifiers.js';
 
@@ -140,7 +140,13 @@ export function verifyAndScoreRun({ seed, discardRounds, modifier, wagered = fal
   // halves ignoring the same unreadable stack is the only pairing where they
   // agree AND nobody is punished.
   const stack = stackedDeal ? normalizeStackedDeal(stackedDeal) : { ok: false };
-  const dealt = stack.ok ? dealFromStack(seed, stackedDeal) : dealHand(seed);
+  // The SAME function the board calls, with the same seed and the same
+  // modifier. A 'deal' modifier (Wild Wednesday, Loaded Deck — §4i) reshapes
+  // the dealt hand, so this is the second half of the §11al contract: two
+  // machines, one pure function, or the player is shown one hand and paid for
+  // another. A stacked deal still wins and skips the modifier, decided inside
+  // dealForRun so neither caller can decide it differently.
+  const dealt = dealForRun({ seed, modifier, stackedDeal: stack.ok ? stackedDeal : null });
   let slotDraws = stack.ok ? dealt.slotDraws : null;
 
   const limits = discardRoundLimitsFor(modifier, { wagered });

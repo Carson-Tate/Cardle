@@ -14,7 +14,7 @@
 // "vanilla" day. `getDailyModifier()` is the single entry point; everything
 // else here is either the registry or private helpers.
 
-import { hashSeed, createRng, shuffle, SUITS, suitGlyph } from './deck.js';
+import { hashSeed, createRng, shuffle, SUITS, suitGlyph, DEAL_EFFECTS } from './deck.js';
 import { handStrengthIndex, HAND_RANKS } from './hand-evaluator.js';
 import { gameDayFor, gameDayNumber } from './game-day.js';
 
@@ -39,6 +39,18 @@ const SECOND_LOOK_ROUND_2_MAX_DISCARDS = 1; // fewer, per owner request: "the se
 // it's exactly the boundary the hand-rank table already treats as a miss.
 const DOUBLE_OR_NOTHING_THRESHOLD_ID = 'PAIR';
 const DOUBLE_OR_NOTHING_MULTIPLIER = 2;
+
+// §4i's batch (owner request: Escalator, Bookends, Wild Wednesday, Refund,
+// Loaded Deck). The two discard-economy ones are deliberately the SAME rate in
+// opposite directions — Escalator pays for throwing cards away, Refund for
+// keeping them — so a player who has learned one already knows the other's
+// arithmetic, and the only thing to read each day is which way it points.
+const ESCALATOR_PER_DISCARD = 0.4; // 3 discards = x2.2
+const REFUND_PER_KEPT = 0.4; // stand pat on all 5 = x3.0
+// Sized between HIGH_ROLLER's unconditional 1.5x and FLUSH_FRENZY's 4x: the
+// condition is narrow (two specific slots) but reachable without giving up the
+// hand you were building, which is the balance Rainbow struck at 3x.
+const BOOKENDS_MULTIPLIER = 3;
 // §4f's batch (owner request). All four are multiplier inputs, sized against
 // the existing ones rather than picked freshly: HIGH_ROLLER's unconditional
 // 1.5x is the floor for "always available", and FLUSH_FRENZY's 4x is the
@@ -75,6 +87,8 @@ const FLUSH_HAND_IDS = new Set(['FLUSH', 'STRAIGHT_FLUSH', 'ROYAL_FLUSH']);
 //   'discardLimit'    → board.js reads `.maxDiscards` to override the default of 3
 //   'lockedCard'      → board.js reads `.lockedIndex` (added at selection time, see getDailyModifier) to disable one card's discard toggle
 //   'twoRoundDiscard' → board.js reads `.round1MaxDiscards`/`.round2MaxDiscards` and runs an extra discard/draw pass before the normal single-round flow (§4d)
+//   'deal'            → core/deck.js's applyDealModifier() reshapes the DEALT hand before play; run by the board AND the server, since §11z scores from the seed (§4i)
+//   'leaderboardOrder' → flips only the board's sort; the hand plays and scores normally (§4f)
 //   'peekWager'       → board.js reveals only 2 cards, offers a wager, then reveals the rest with no discards (gamble) or a normal discard round (safe) (§4e)
 export const MODIFIERS = [
   {
@@ -206,6 +220,65 @@ export const MODIFIERS = [
     ascending: true,
     describe: () =>
       "Today's leaderboard is upside down — the LOWEST score sits on top. Your hand plays and scores exactly as normal, so career points still reward a big number. Winning today means going small.",
+  },
+  {
+    id: 'escalator',
+    emoji: '🎢',
+    label: 'Escalator',
+    // The first modifier keyed to the DECISION rather than to the cards. Every
+    // other scoring one reads the final hand; this one reads what you threw
+    // away, which is why it needed `discardIndices` in the context bag — the
+    // same input Held Card added (§4f).
+    type: 'scoring',
+    describe: () =>
+      `Every card you throw away multiplies your score by ×${1 + ESCALATOR_PER_DISCARD} — discard all three and that's ×${(
+        1 +
+        3 * ESCALATOR_PER_DISCARD
+      ).toFixed(1)}. Standing pat pays nothing today.`,
+  },
+  {
+    id: 'refund',
+    emoji: '💰',
+    label: 'Refund',
+    type: 'scoring',
+    describe: () =>
+      `Every card you KEEP multiplies your score by ×${1 + REFUND_PER_KEPT} — stand pat on all five and that's ×${(
+        1 +
+        5 * REFUND_PER_KEPT
+      ).toFixed(1)}. Throwing cards away costs you today.`,
+  },
+  {
+    id: 'bookends',
+    emoji: '📖',
+    label: 'Bookends',
+    // The first modifier that cares about card POSITION. Nothing else in the
+    // game reads a slot index for scoring, so this is the one day a player has
+    // to look at their hand as an ordered row rather than a set.
+    type: 'scoring',
+    describe: () =>
+      `If your first and last card match — same rank or same suit — your score is multiplied by ×${BOOKENDS_MULTIPLIER}. The three in the middle don't matter.`,
+  },
+  {
+    id: 'wildWednesday',
+    emoji: '🃏',
+    label: 'Wild Wednesday',
+    // 'deal', a new type: the first modifier that changes WHAT YOU ARE DEALT.
+    // Everything before this either rescored the hand or changed the discard
+    // rules. See applyDealModifier() in core/deck.js for why both the board and
+    // the server have to run it.
+    type: 'deal',
+    dealEffect: DEAL_EFFECTS.GUARANTEED_WILD,
+    describe: () =>
+      'One card in your opening hand is guaranteed Wild 🃏 — it counts as whatever card makes your hand best. If the deal already handed you one, that one counts.',
+  },
+  {
+    id: 'loadedDeck',
+    emoji: '💎',
+    label: 'Loaded Deck',
+    type: 'deal',
+    dealEffect: DEAL_EFFECTS.GUARANTEED_RARE,
+    describe: () =>
+      'One card in your opening hand is guaranteed 🥇 Gold or better — rarity is a floor today, not a lottery. If the deal already dealt you one, that one counts.',
   },
 ];
 
@@ -407,6 +480,23 @@ export function modifierScoringMultiplier(dailyModifier) {
       // you whether index 3 is the card you started with.
       const kept = !discardIndices.includes(dailyModifier.markedIndex);
       return kept ? HELD_CARD_MULTIPLIER : 1;
+    }
+    if (dailyModifier.id === 'escalator') {
+      return 1 + discardIndices.length * ESCALATOR_PER_DISCARD;
+    }
+    if (dailyModifier.id === 'refund') {
+      // Counted from the hand rather than as `5 - discarded`, so a future hand
+      // size does not silently make this wrong.
+      return 1 + (finalHand.length - discardIndices.length) * REFUND_PER_KEPT;
+    }
+    if (dailyModifier.id === 'bookends') {
+      // Reads the LOGICAL hand, like Suit Bonus and Rainbow — a Wild in an end
+      // slot matches as whatever it played as, which is the only reading that
+      // agrees with the hand the player was shown.
+      const first = finalHand[0];
+      const last = finalHand[finalHand.length - 1];
+      if (!first || !last || finalHand.length < 2) return 1;
+      return first.rank === last.rank || first.suit === last.suit ? BOOKENDS_MULTIPLIER : 1;
     }
     if (dailyModifier.id === 'rainbow') {
       // Reads the LOGICAL hand, so a Wild counts as the suit it actually plays

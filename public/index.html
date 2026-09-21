@@ -108,6 +108,34 @@
   }
   </script>
 
+  <!-- The WebSite half of the pair the comment above has claimed since §11ad,
+       and which was never actually here — §11y's lesson arriving again: a
+       comment describing the code is an assertion, and this one was false.
+
+       `alternateName` is the load-bearing field for a brand query. "Cardle" is
+       a contested name — there is an established car-guessing game using it —
+       so the job of this block is to state plainly that this domain IS the
+       entity called Cardle, rather than leaving a search engine to infer it
+       from the title tag alone. It is a hint, not a lever: it helps a crawler
+       connect a name to a site it already trusts, and does nothing on its own. -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Cardle",
+    "alternateName": ["Cardle Game", "Cardle Poker", "Cardle Daily Poker Puzzle"],
+    "url": "https://cardle.lol/",
+    "description": "A free daily poker puzzle. One five-card hand a day, dealt fresh for every player.",
+    "inLanguage": "en",
+    "publisher": {
+      "@type": "Organization",
+      "name": "Cardle",
+      "url": "https://cardle.lol/",
+      "logo": "https://cardle.lol/public/favicon.svg"
+    }
+  }
+  </script>
+
   <!-- The auth SDK is fetched from these at sign-in time (state/supabase-client.js).
        Warming the connection here means the TLS handshake is already done when a
        player taps Log In, which matters most on the mobile connections where
@@ -175,6 +203,17 @@
   </header>
   <div id="app">
     <header>
+      <!-- The page had NO h1 at all until §11as, which is both an SEO gap and
+           an accessibility one: the only heading-shaped element was a <p>
+           reading "Loading today's hand…", so a screen reader's heading list
+           was empty and a crawler had no stated subject for the page.
+
+           Visually hidden rather than displayed, because the Cardle wordmark in
+           the site header already does this job for sighted users and a second
+           title would be a design change nobody asked for. The clip-rect
+           pattern, not display:none — that would hide it from assistive tech
+           too, which is exactly the audience it is for. -->
+      <h1 class="visually-hidden">Cardle — the daily poker puzzle</h1>
       <p id="day-label">Loading today's hand…</p>
       <p id="modifier-banner" class="modifier-banner" hidden></p>
       <p id="anon-hint" class="anon-hint" hidden></p>
@@ -182,6 +221,24 @@
       <p id="next-reset" class="next-reset" hidden></p>
     </header>
     <main>
+      <!-- What a crawler sees on its FIRST pass (§11as). Google renders
+           JavaScript, but on a second pass that can lag by days, and Bing and
+           most unfurlers largely do not — so until now the only prose about
+           this game anywhere in the document was the meta description.
+
+           A noscript block rather than markup the app overwrites: the browser
+           hides it whenever scripting is on, so no real player ever sees it and
+           there is no flash of placeholder text to design around. It is also
+           honest — this genuinely is what the page offers without JavaScript. -->
+      <noscript>
+        <p>
+          <strong>Cardle</strong> is a free daily poker puzzle. Every day you are dealt one
+          five-card hand, choose which cards to discard, and draw replacements — then see how
+          your score compares with everyone else's on the daily, weekly and all-time
+          leaderboards. One hand per player per day, with a different twist rule each day.
+          Cardle needs JavaScript to deal your hand.
+        </p>
+      </noscript>
       <button type="button" id="draw-btn" class="draw-btn" hidden>🂠 Draw</button>
       <div id="hand-row" class="hand-row"></div>
       <div id="controls">

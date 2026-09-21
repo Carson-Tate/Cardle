@@ -89,6 +89,13 @@ function rarityBadgeLabel(item, logicalCard) {
 // English `description` of why it fired, and `highlightIndices` — which of
 // the 5 final-hand card positions are the actual proof — on top of the
 // existing label/value.
+// The badges whose value is a MULTIPLIER's effect on the whole total rather
+// than points added to it. Keyed by badge id rather than sniffed from the label
+// (both currently start with "×", and one of them stops doing so the moment
+// Double or Nothing busts and it reads "Busted — Nothing"), so a rename of the
+// player-facing text cannot silently move a badge out of this set.
+const MULTIPLIER_KEYS = new Set(['synergy', 'modifier']);
+
 export function buildScoreBadges(score, finalHand, discardIndices = []) {
   const badges = [];
 
@@ -261,7 +268,22 @@ export function buildScoreBadges(score, finalHand, discardIndices = []) {
   // follow-up request) — see insertLineAtTop(). Callers that render without
   // that insertion sequence (the static "already played" panel, the hand
   // modal) want breakdownListHtml() below, which reverses for them.
-  return badges.sort((a, b) => a.value - b.value);
+  //
+  // MULTIPLIERS COME LAST WHATEVER THEIR SIZE (owner request, §3ac). Sorting
+  // purely by value put a ×1.5 on a small hand early in the reveal, which is
+  // backwards twice over: dramatically, because a multiplier is the beat the
+  // whole count-up should build to; and mathematically, because a multiplier
+  // applies to the WHOLE score (§3n) rather than adding a slice of it, so
+  // showing it before the additive badges it multiplies describes an order of
+  // operations the scorer does not use. Pinning them means the running total
+  // accumulates every additive point first and then jumps, which is exactly
+  // what scoreRun() does internally.
+  const byValue = (a, b) => a.value - b.value;
+  const isMultiplier = (badge) => MULTIPLIER_KEYS.has(badge.key);
+  return [
+    ...badges.filter((badge) => !isMultiplier(badge)).sort(byValue),
+    ...badges.filter(isMultiplier).sort(byValue),
+  ];
 }
 
 function tagClassName(tag) {

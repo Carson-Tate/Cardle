@@ -37,9 +37,51 @@ describe('buildScoreBadges', () => {
     assert.equal(hand.value, result.score.baseScore);
   });
 
-  test('returns ASCENDING — the reveal order the animated path depends on', () => {
-    const values = buildScoreBadges(result.score, result.finalHand, result.discardIndices).map((b) => b.value);
+  // Rewritten rather than re-passed when multipliers were pinned last (§3ac).
+  // The old assertion was "the whole array ascends", which stopped being the
+  // rule — the rule is now "the additive badges ascend, and the multipliers
+  // follow them". §11t's lesson: a test encoding an owner request needs
+  // re-reading against the new request, not just coaxing back to green.
+  const MULTIPLIER_KEYS = ['synergy', 'modifier'];
+
+  test('additive badges ascend — the reveal order the animated path depends on', () => {
+    const badges = buildScoreBadges(result.score, result.finalHand, result.discardIndices);
+    const values = badges.filter((b) => !MULTIPLIER_KEYS.includes(b.key)).map((b) => b.value);
     assert.deepEqual(values, [...values].sort((a, b) => a - b));
+  });
+
+  test('no additive badge is revealed after a multiplier', () => {
+    const badges = buildScoreBadges(result.score, result.finalHand, result.discardIndices);
+    const firstMultiplier = badges.findIndex((b) => MULTIPLIER_KEYS.includes(b.key));
+    if (firstMultiplier === -1) return; // this fixture has none, which is fine
+    for (const badge of badges.slice(firstMultiplier)) {
+      assert.ok(MULTIPLIER_KEYS.includes(badge.key), `${badge.key} came after a multiplier`);
+    }
+  });
+
+  // THE DEFECT STATED DIRECTLY. Sorting purely by value put a small multiplier
+  // early in the reveal; the fixture forces exactly that case, so this fails
+  // against the previous implementation and survives any future re-tuning of
+  // what the multipliers are worth.
+  test('a multiplier reveals last even when it is the smallest number', () => {
+    const score = { ...result.score, modifierBonusAmount: 1, modifierMultiplier: 1.01 };
+    const badges = buildScoreBadges(score, result.finalHand, result.discardIndices);
+    assert.ok(badges.length > 1, 'expected several badges');
+    assert.equal(badges.at(-1).key, 'modifier');
+    assert.ok(
+      badges.some((b) => b.value > 1),
+      'the fixture must contain a bigger additive badge, or this proves nothing',
+    );
+  });
+
+  // Busting is the case a label-sniffing implementation would miss: the badge
+  // reads "Busted — Nothing" with no "×" in it, and its value is NEGATIVE, so
+  // a value sort would bury it first instead of last.
+  test('a busted Double or Nothing still reveals last, despite being negative', () => {
+    const score = { ...result.score, modifierBonusAmount: -500, modifierMultiplier: 0 };
+    const badges = buildScoreBadges(score, result.finalHand, result.discardIndices);
+    assert.equal(badges.at(-1).key, 'modifier');
+    assert.equal(badges.at(-1).label, 'Busted — Nothing');
   });
 
   test('every badge carries the description and proof the badge card renders', () => {
@@ -65,6 +107,18 @@ describe('breakdownListHtml', () => {
     );
     assert.ok(values.length > 1, 'expected several badges');
     assert.deepEqual(values, [...values].sort((a, b) => b - a));
+  });
+
+  // The static list is the reveal order reversed, so pinning multipliers to the
+  // END of the reveal necessarily puts them at the TOP here — the same place
+  // the animation leaves them, since revealScore() inserts each badge above the
+  // last. Asserted because the two orderings are derived from one array and a
+  // future "just reverse it differently" would break the agreement silently.
+  test('a multiplier sits at the top of the static list, matching where the reveal leaves it', () => {
+    const score = { ...result.score, modifierBonusAmount: 1, modifierMultiplier: 1.01 };
+    const html = breakdownListHtml({ ...result, score });
+    const firstTag = html.match(/score-badge-tag [^"]*">([A-Z ]+)</)?.[1];
+    assert.equal(firstTag, 'MODIFIER');
   });
 
   test('renders one <li> per badge', () => {

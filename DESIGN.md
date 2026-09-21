@@ -1832,6 +1832,44 @@ The parity modifier is parameterised — `resolveModifier` rolls `ctx.parity` as
 
 **A pre-existing issue this surfaced but did not fix:** a player who claims at 18:59 and locks in at 19:01 has their run submitted against a game day that has already rolled, and `submit-run` will not find the row. Unrelated to the pin, older than it, and worth its own pass.
 
+### 4i. Five More Modifiers, Two Of Which Change The Deal ✅ built (owner picked Escalator, Bookends and Wild Wednesday from a list, then added Refund and Loaded Deck)
+
+**Escalator and Refund are one idea pointing both ways, and that is the reason to ship them together.** Both pay ×1.4 per card — Escalator for every card thrown away, Refund for every card kept. A player who has learned one already knows the other's arithmetic, so the only thing to read on either day is which direction it points. Shipped as a pair deliberately: alone, either is a quirk; together they make "check the modifier before you look at your cards" a habit.
+
+**Escalator is the first modifier keyed to the DECISION rather than to the cards.** Every other scoring modifier reads the final hand; this one reads what you discarded, which is only possible because §4f's Held Card had already added `discardIndices` to the context bag. A hook added for one feature paying for a second.
+
+**Bookends is the first modifier that reads a slot index.** Nothing else in the game scores positionally, so it is the one day a hand has to be read as an ordered row rather than a set. It matches on rank OR suit to keep it reachable, and the middle three are explicitly irrelevant — a test asserts that, so a future "any two matching cards" rewrite has to change it on purpose.
+
+**WILD WEDNESDAY AND LOADED DECK ARE THE SECOND TWO-SIDED FEATURE AFTER STACK THE DECK.** They change what you are DEALT, and §11z scores from the seed — so the board and `submit-run` are different machines that agree only because `applyDealModifier` is a pure function of the row's own seed. A `freshSeed()` in there passes every local test and rejects every real run on one of these days. That is a property test, not a case: *same seed and modifier ⇒ identical hand*.
+
+**A SEPARATE RNG STREAM, and this is the subtle half.** Consuming extra rolls from the deal's own rng would shift every card after them, so a Wild Wednesday seed would deal different RANKS than the same seed on an ordinary day — a far larger change than the one being asked for, and invisible until somebody compared two days. §3x's rule restated: when you change what a roll means, keep the call count identical.
+
+**An already-satisfied hand is left completely alone.** The promise is "at least one", so a deal that already contains a wild does not get a second forced in. That keeps the effect as small as its wording and means these days differ from an ordinary deal by exactly one card, or not at all.
+
+**Loaded Deck grants Gold, never Diamond.** The modifier promises a FLOOR, not a roll. Handing out Diamonds (×15, roughly 1 in 1000 naturally) on a schedule would quietly make this the largest score source in the game — the sort of thing that is obvious in hindsight and invisible in a one-line description.
+
+**`dealForRun` is now the only place a run's cards come from.** §11al's "four copies of which-card-lands-where had to become one" applied *before* the bug rather than after it: the board and the verifier call one function, and the rule that a stacked deal WINS and skips the modifier lives inside it, so neither caller can decide it differently. An admin who pinned five exact cards meant those cards.
+
+**ADDING MODIFIERS RESHUFFLES THE ROTATION FOR EVERY DATE, INCLUDING TODAY.** Found through a test failure, not by reasoning: two fixtures pinned a fixed date and took whatever it rotated to, and with five new entries those dates became Wild Wednesday — so the "ordinary deal" baselines started dealing a wild and failed for a reason unrelated to what they tested. Pinning a date was quietly fragile all along; they now use an explicit inert modifier that cannot drift with the roster.
+
+**The same fact is a DEPLOY hazard, which is the part worth remembering.** A player who claimed before the deploy has the old modifier on screen and is scored by the new one on submit. For a scoring modifier that is a wrong multiplier; for a *deal* modifier the server re-deals a different hand, which is precisely the failure §11al exists to prevent. The mitigation is to pin today's modifier in the admin panel before deploying, which makes the day immune to the reshuffle. This batch happened to land on three consecutive `scoring` days, so the risk was a multiplier and not a re-deal — luck, not design.
+
+**A test was passing for the wrong reason and the fix made it stronger.** `verify-run.test.js` simulated the client with a bare `dealHand`, so its "the server reproduces the client exactly" assertion held only on days with no deal effect — exactly the agreement it exists to prove. It now deals through `dealForRun` like the real board.
+
+**Verified.** 730 unit tests (14 new). The load-bearing regression is that a day with no deal effect leaves the deal byte-identical to `dealHand`, because that path is every player every ordinary day. Plus the determinism property over 50 random seeds, that 200 consecutive seeds all satisfy each guarantee, that exactly one card changes and the draw pile never does, and that a stacked deal overrides the modifier.
+
+### 11as. The Page Had No Heading ✅ built (owner: "do whatever you can to make cardle.lol be higher up on the google search when you look up 'cardle'")
+
+**Three gaps, and the first is an accessibility bug that happened to also be an SEO one.** There was no `<h1>` anywhere in the document — the only heading-shaped element was a `<p>` reading "Loading today's hand…", so a screen reader's heading list was empty and a crawler had no stated subject for the page. Added visually hidden, via the clip-rect pattern rather than `display: none`, which would have removed it from the accessibility tree as well and defeated half the point.
+
+**A `<noscript>` block, because the first crawl is the one without JavaScript.** Google renders JS on a second pass that can lag by days; most unfurlers never do. Until now the only prose about the game anywhere in the document was the meta description. `<noscript>` rather than markup the app overwrites: the browser hides it whenever scripting is on, so no player ever sees it and there is no flash of placeholder text to design around — and it is honest, since that genuinely is what the page offers without JavaScript.
+
+**THE `WebSite` SCHEMA THE HEAD COMMENT HAS CLAIMED SINCE §11ad WAS NEVER THERE.** Only `VideoGame` existed. §11y's lesson arriving for the third time: a comment describing the code is an assertion, and nothing type-checks it. Added with `alternateName`, which is the field that matters for a contested brand query — "Cardle" is also an established car-guessing game, so the block's job is to state that this domain IS the entity called Cardle rather than leaving a crawler to infer it from the title tag.
+
+**Said plainly rather than implied: none of this wins a one-word brand query on its own.** Ranking for "cardle" against an incumbent with years of links is an authority problem, not a tag problem. On-page work helps a search engine CONNECT the name to the domain; it cannot outrank history. The Search Console data bears that out — "cardle poker" converts at 61% (80 clicks from 132 impressions, a query this site owns) while "cardle" draws 275 impressions for 8 clicks, which is the signature of ranking present but low.
+
+**Verified live, not assumed.** Every change was re-fetched from production after deploying, including through the §11an minifier, which strips comments from `index.html` and could plausibly have eaten a `<noscript>`.
+
 ### 11ar. Top 50, And Your Own Position When You Are Not In It ✅ built (owner: "make the leaderboards top 50 instead of top 25, if someone is out of the top 50, show their position on the bottom")
 
 **Two asks, and only one of them is a number.** Raising the page size is a constant. "Show their position" means RANKING EVERY PLAYER, which no board function did — they take the top N and stop, which is exactly why they are cheap.
@@ -2140,6 +2178,23 @@ None of the three touch `dailySeed`/`hashSeed` or persistence — every redeal d
     - **World-readable is a property of the table, not of the data you put in it.** `game_config` was the obvious home and would have published the list. A table with RLS on and no policies at all is unreachable over REST for everyone, which is what a private list actually needs.
     - **Normalisation is where the difficulty lives, and it cuts both ways.** Folding leetspeak and padding is what stops `5L_UR`; the same folding is what makes `ASS` match `CLASSIC`. Tiered matching plus an explicit allow list is the price of folding aggressively.
     - **If two rules mean different things, they need different normalisation.** One folder served both tiers and was wrong for each in opposite directions — too aggressive for `exact` (`Card_le_99` became `CARDLE`), and the naive fix would have been too lax for `substring` (`N9I9G9G9E9R` stops matching). "Does this appear in here" and "is the whole thing this" are not the same question.
+102. **The page had no heading** (§11as).
+    - **An SEO audit is often an accessibility audit.** The missing `<h1>` was found looking for crawlable content and was equally a broken heading list for screen readers. The same three fixes served both.
+    - **Hide from sight, not from the accessibility tree.** `display: none` removes an element for exactly the users a hidden heading exists to serve; the clip-rect pattern is the one that keeps it.
+    - **A comment claiming a tag exists is not a tag.** The `WebSite` schema was described in the head comment since §11ad and had never been written. Third occurrence of §11y's rule.
+    - **Say what a change cannot buy.** On-page work helps connect a name to a domain; it does not outrank an incumbent on a one-word brand query, and implying otherwise would have set up a disappointment in three months.
+    - **Read the query report before theorising.** 61% CTR on "cardle poker" versus 3% on "cardle" says the site owns one query and ranks low on the other — two different problems that generic advice would have treated as one.
+101. **Five more modifiers, two of which change the deal** (§4i).
+    - **Ship an inverse alongside the original.** Escalator and Refund are the same rate in opposite directions, so learning either teaches the other — and together they make reading the modifier a habit rather than a quirk.
+    - **A hook added for one feature pays for the next.** Escalator reads `discardIndices`, which only reaches the scorer because Held Card needed it; it is the first modifier keyed to the decision rather than the cards.
+    - **Changing what is DEALT makes a feature two-sided.** Server-authoritative scoring means the board and the verifier must build the identical hand, so the deal effect has to be a pure function of the row's own seed — and the test is the property, not a case.
+    - **A new RNG must not borrow the old stream.** Consuming extra rolls shifts every card after them, so a modifier meant to change one card would change every rank. Keep the call count identical.
+    - **Honour a promise exactly, no more.** "At least one wild" means leaving an already-wild hand alone, which keeps these days one card away from an ordinary deal instead of subtly different everywhere.
+    - **A floor is not a roll.** Guaranteeing Gold is the stated promise; quietly including Diamond would have made a scheduled modifier the biggest score source in the game.
+    - **Extract the shared step before the feature needs it.** `dealForRun` became the only source of a run's cards, so the "a stacked deal wins" rule lives in one place and neither caller can decide it differently.
+    - **Adding to a rotation re-maps every date, including today.** A test pinned to a fixed date silently changed meaning — and the same fact is a deploy hazard, since a player who claimed under the old rotation is scored under the new one.
+    - **A fixture should state what it needs, not sample what exists.** "Whatever this date rotates to" was fragile from the day it was written; an explicit inert modifier cannot drift with the roster.
+    - **A test that passes for the wrong reason is worth more after the fix.** Simulating the client with a bare `dealHand` made the client/server agreement hold only on days with no deal effect — the exact case it exists to prove.
 100. **Top 50, and your own position when you are not in it** (§11ar).
     - **Half of a two-part request can be a constant and half can be a new capability.** "Top 50" is a number; "show their position" means ranking every player, which the boards never did because taking the top N and stopping is what makes them cheap.
     - **Make the private thing unaskable rather than guarded.** Evaluating `auth.uid()` inside the function means there is no parameter for whose rank to fetch — so a rank the list does not publish cannot be queried about anyone else, with no check to get wrong.

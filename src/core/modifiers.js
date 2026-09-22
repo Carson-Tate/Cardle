@@ -65,7 +65,7 @@ const RAINBOW_MULTIPLIER = 2.5;
 // Per-card like Suit Bonus, and deliberately smaller than its 0.5: roughly half
 // the deck matches a parity, where only a quarter matches a suit.
 const PARITY_MULTIPLIER_PER_CARD = 0.25;
-// Hot Hand names ONE exact category, so it is priced like Flush Frenzy.
+// Hot Hand names ONE category, so it is priced like Flush Frenzy.
 const HOT_HAND_MULTIPLIER = 4;
 
 // The categories Hot Hand can name. HIGH_CARD is excluded because it is
@@ -74,6 +74,35 @@ const HOT_HAND_MULTIPLIER = 4;
 // unreachable often enough to matter: a day whose bonus effectively never pays
 // out is indistinguishable from no modifier at all.
 const HOT_HAND_EXCLUDED_IDS = new Set(['HIGH_CARD', 'ROYAL_FLUSH']);
+
+// What a named category actually pays out on, and how that day describes
+// itself. Almost every category is its own family: a Straight day means a
+// Straight, and landing Three of a Kind instead is a different (better) hand
+// that had its own reward. PAIR is the exception (owner request: "keep the
+// pairs score 4x, but so it can also be 2 pair") — a pair day pays on Two Pair
+// as well, which is the same family reasoning that makes Flush Frenzy span
+// Straight Flush and Royal Flush.
+//
+// It reads in the PLURAL because it spans — "Pairs score 4x today", the exact
+// shape Flush Frenzy already uses. Every other day keeps the singular, which is
+// what now carries "one named hand, not a family" in the sentence: the blunt
+// "that exact hand, nothing else" clause is gone (owner request).
+//
+// A TWO_PAIR day is still exactly Two Pair, and the asymmetry is deliberate.
+// Widening that one to match would leave the two days paying out identically
+// and reading as near-duplicates of each other; as it stands the pair day is
+// the broad forgiving one and the Two Pair day asks for the better hand.
+const HOT_HAND_FAMILIES = {
+  PAIR: { subject: 'Pairs score', ids: ['PAIR', 'TWO_PAIR'] },
+};
+
+// Derived from `hotHandId` alone rather than stamped onto the resolved object
+// by resolveModifier(), so no new field has to survive a round trip: §11z
+// re-scores from the seed server-side, and verify-run.js spreads whatever
+// modifier object it was handed rather than rebuilding one.
+function hotHandFamilyIds(hotHandId) {
+  return HOT_HAND_FAMILIES[hotHandId]?.ids ?? [hotHandId];
+}
 
 // Every hand category that IS a flush. Flush Frenzy used to check
 // `id === 'FLUSH'` exactly, which meant the two best flushes in the game —
@@ -208,7 +237,10 @@ export const MODIFIERS = [
     emoji: '🔥',
     label: 'Hot Hand',
     type: 'scoring',
-    describe: (ctx) => `${ctx.hotHandLabel ?? 'One hand'} scores ×${HOT_HAND_MULTIPLIER} today — that exact hand, nothing else.`,
+    describe: (ctx) => {
+      const subject = HOT_HAND_FAMILIES[ctx.hotHandId]?.subject ?? `${ctx.hotHandLabel ?? 'One hand'} scores`;
+      return `${subject} ${HOT_HAND_MULTIPLIER}x today.`;
+    },
   },
   {
     id: 'flippedBoard',
@@ -513,12 +545,12 @@ export function modifierScoringMultiplier(dailyModifier) {
       return 1 + matching * PARITY_MULTIPLIER_PER_CARD;
     }
     if (dailyModifier.id === 'hotHand') {
-      // EXACT category, deliberately — "Two Pair scores x4 today" means Two
-      // Pair, and landing Three of a Kind instead is a different (better) hand
-      // that had its own reward. Contrast Flush Frenzy, which spans every flush
-      // because Straight and Royal Flush ARE flushes; there is no equivalent
-      // family relationship here.
-      return finalHandResult.id === dailyModifier.hotHandId ? HOT_HAND_MULTIPLIER : 1;
+      // The named category's FAMILY, which for all but one of them is just
+      // itself — landing a different category is a different hand with its own
+      // reward. See HOT_HAND_FAMILIES for the pair day, the one that spans.
+      return hotHandFamilyIds(dailyModifier.hotHandId).includes(finalHandResult.id)
+        ? HOT_HAND_MULTIPLIER
+        : 1;
     }
     return 1;
   };

@@ -321,17 +321,36 @@ describe('Even Money (parity)', () => {
 describe('Hot Hand', () => {
   const pair = [c(9, 'S'), c(9, 'H'), c(2, 'D'), c(4, 'C'), c(7, 'S')];
   const twoPair = [c(9, 'S'), c(9, 'H'), c(4, 'D'), c(4, 'C'), c(7, 'S')];
+  const trips = [c(9, 'S'), c(9, 'H'), c(9, 'D'), c(4, 'C'), c(7, 'S')];
   const mult = (hand, hotHandId) =>
     modifierScoringMultiplier({ id: 'hotHand', hotHandId })(evaluateHand(hand), hand);
 
-  test('pays out on the exact named category', () => {
+  test('pays out on the named category', () => {
     assert.equal(mult(pair, 'PAIR'), 4);
     assert.equal(mult(twoPair, 'TWO_PAIR'), 4);
   });
 
-  test('pays nothing for a different category, better or worse', () => {
-    assert.equal(mult(twoPair, 'PAIR'), 1, 'a better hand is still not the named one');
+  // Owner request: "keep the pairs score 4x, but so it can also be 2 pair".
+  test('a pair day pays on Two Pair as well', () => {
+    assert.equal(mult(twoPair, 'PAIR'), 4);
+  });
+
+  test('a pair day stops at the pair family', () => {
+    // Three of a Kind is a different category with its own larger reward.
+    // Widening the day to "anything holding two matching cards" would swallow
+    // Full House and Four of a Kind too, which is not what was asked for.
+    assert.equal(mult(trips, 'PAIR'), 1);
+  });
+
+  test('a Two Pair day is still exactly Two Pair', () => {
+    // Deliberately NOT the mirror of the pair day: if it also paid on a bare
+    // Pair, the two days would pay out identically and read as duplicates.
     assert.equal(mult(pair, 'TWO_PAIR'), 1);
+  });
+
+  test('every other category pays nothing for a different one, better or worse', () => {
+    assert.equal(mult(twoPair, 'THREE_OF_A_KIND'), 1, 'a worse hand is not the named one');
+    assert.equal(mult(trips, 'TWO_PAIR'), 1, 'a better hand is still not the named one');
   });
 
   test('only ever names a category that can actually pay out', () => {
@@ -346,6 +365,27 @@ describe('Hot Hand', () => {
       assert.notEqual(modifier.hotHandId, 'ROYAL_FLUSH');
       assert.ok(modifier.description.includes(modifier.hotHandLabel));
     }
+  });
+
+  // The description is the only place a player learns which hands pay today, so
+  // it has to track HOT_HAND_FAMILIES rather than be written once by hand. The
+  // plural is load-bearing now that "that exact hand, nothing else" is gone
+  // (owner request): it is what distinguishes the day that spans from the ones
+  // that name a single hand.
+  test('names the pair family in the plural, every other category in the singular', () => {
+    const seen = new Set();
+    for (let d = 0; d < 400; d++) {
+      const date = new Date('2026-07-27T12:00:00Z');
+      date.setUTCDate(date.getUTCDate() + d);
+      const modifier = getDailyModifier(date, 'hotHand');
+      seen.add(modifier.hotHandId);
+      assert.equal(
+        modifier.description,
+        modifier.hotHandId === 'PAIR' ? 'Pairs score 4x today.' : `${modifier.hotHandLabel} scores 4x today.`,
+      );
+    }
+    assert.ok(seen.has('PAIR'), 'the rotation reaches a pair day');
+    assert.ok(seen.size > 1, 'and days that name a single category');
   });
 });
 
